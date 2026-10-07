@@ -1,0 +1,13 @@
+; lang.xon -- what this bundle is.
+
+(lang "git")
+
+; Self-contained: this bundle depends on nothing but the platform.
+;
+; Helium, plus exactly the libraries this bundle imports and nothing
+; ambient: objects are bytes, digests and files, none of the tower.
+(dialect he)
+
+(requires-release "v0.26.0")
+
+(entry "run.x")
