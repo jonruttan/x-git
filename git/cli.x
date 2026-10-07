@@ -40,10 +40,10 @@
       ((null? ops) (list (lit out) %git-usage 1))
       ((if (str=? (first ops) "--version") #t
          (if (str=? (first ops) "-v") #t (str=? (first ops) "version")))
-        (list (lit out) (Str8 append "git version " (Str8 append git-version " (x-git)\n")) 0))
+        (list (lit out) (Str8 append "git version " git-version " (x-git)\n") 0))
       (#t
         (list (lit err)
-          (Str8 append "git: '" (Str8 append (first ops) "' is not a git command. See 'git --help'.\n"))
+          (Str8 append "git: '" (first ops) "' is not a git command. See 'git --help'.\n")
           1)))))
 
 (def git-main
