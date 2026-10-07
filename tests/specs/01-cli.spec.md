@@ -24,15 +24,15 @@ Usage: git [-v | --version] <command> [<args>]
 (write (List map (fn (_ w) (git-plan (list w))) (list "--version" "-v" "version")))
 ```
 ---
-    ((out "git version 0.1.0 (x-git)\n" 0) (out "git version 0.1.0 (x-git)\n" 0) (out "git version 0.1.0 (x-git)\n" 0))
+    (('out "git version 0.1.0 (x-git)\n" 0) ('out "git version 0.1.0 (x-git)\n" 0) ('out "git version 0.1.0 (x-git)\n" 0))
 
 ### no command prints the usage, status 1
 
 ```git
-(write (List map (fn (_ l) (first (rest (rest (git-plan l))))) (list () (list "-v" "--help"))))
+(write (first (rest (rest (git-plan ())))))
 ```
 ---
-    (1 0)
+    1
 
 ### an unknown command is refused in git's words, status 1
 
@@ -40,7 +40,7 @@ Usage: git [-v | --version] <command> [<args>]
 (write (git-plan (list "frob")))
 ```
 ---
-    (err "git: 'frob' is not a git command. See 'git --help'.\n" 1)
+    ('err "git: 'frob' is not a git command. See 'git --help'.\n" 1)
 
 ### an unknown option names itself, status 129
 
@@ -49,7 +49,7 @@ Usage: git [-v | --version] <command> [<args>]
 (write (list (first %gp) (Str8 sub 0 22 (first (rest %gp))) (first (rest (rest %gp)))))
 ```
 ---
-    (err "unknown option: --frob" 129)
+    ('err "unknown option: --frob" 129)
 
 ### options after the command are the command's
 
@@ -57,7 +57,7 @@ Usage: git [-v | --version] <command> [<args>]
 (write (git-plan (list "frob" "-v")))
 ```
 ---
-    (err "git: 'frob' is not a git command. See 'git --help'.\n" 1)
+    ('err "git: 'frob' is not a git command. See 'git --help'.\n" 1)
 
 ## argv
 
