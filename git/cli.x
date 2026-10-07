@@ -6,12 +6,17 @@
 ; @copyright 2026 Jon Ruttan
 ; @license MIT No Attribution (MIT-0)
 ;
-; x -l git -- [--version] COMMAND [ARGS] runs COMMAND.  git-plan turns a
-; line into what to do, with no side effects; git-main does it.  The words
-; are git's own: its usage line, its refusal of an unknown command, and its
-; exit statuses (1 for both).
+; x -l git -- [OPTIONS] COMMAND [ARGS] runs COMMAND.  git's own options are
+; declared once, in git-options: the declaration is what --help prints and
+; what the line is parsed against.  They come before the command, so the
+; parse stops at the first operand; what follows belongs to the command.
+; git-plan turns a line into what to do, with no side effects; git-main
+; does it.  The refusals and exit statuses are git's: 1 for no command or
+; an unknown one, 129 for an unknown option.
 
-(provide git/cli git-argv git-plan git-main)
+(import x/sys/opts)
+
+(provide git/cli git-argv git-options git-plan git-main)
 
 (def %git-byte-len (prim-ref (lit str) (lit byte-len)))
 
@@ -29,21 +34,32 @@
         (if (pair? raw) (rest raw) ())))
     (if (if (pair? ops) (str=? (first ops) "--") #f) (rest ops) ops)))
 
-(def %git-usage
-  "usage: git [-v | --version] <command> [<args>]\n")
+(def git-options
+  (Opts declare "git" "[-v | --version] <command> [<args>]" ()
+    (list
+      (Opts flag "-v" "--version" "Print the version"))))
 
-; A line to (LABEL TEXT STATUS): what to print, where, and the exit status.
-; LABEL is out or err.
+(def %git-version-line
+  (fn (_) (Str8 append "git version " git-version " (x-git)\n")))
+
+; A line to (STREAM TEXT STATUS): what to print, on out or err, and the
+; exit status.
 (def git-plan
   (fn (_ ops)
+    (def o (Opts parse-leading git-options ops))
+    (def cmd (Opts operands o))
     (match
-      ((null? ops) (list (lit out) %git-usage 1))
-      ((if (str=? (first ops) "--version") #t
-         (if (str=? (first ops) "-v") #t (str=? (first ops) "version")))
-        (list (lit out) (Str8 append "git version " git-version " (x-git)\n") 0))
+      ((Opts help? git-options ops) (list (lit out) (Opts usage git-options) 0))
+      ((not (null? (Opts unknown o)))
+        (list (lit err)
+          (Str8 append "unknown option: " (Opts unknown o) "\n" (Opts usage git-options))
+          129))
+      ((Opts on? o "-v") (list (lit out) (%git-version-line) 0))
+      ((null? cmd) (list (lit out) (Opts usage git-options) 1))
+      ((str=? (first cmd) "version") (list (lit out) (%git-version-line) 0))
       (#t
         (list (lit err)
-          (Str8 append "git: '" (first ops) "' is not a git command. See 'git --help'.\n")
+          (Str8 append "git: '" (first cmd) "' is not a git command. See 'git --help'.\n")
           1)))))
 
 (def git-main

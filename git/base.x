@@ -11,7 +11,7 @@
 ; through those names at run time, so the order below is only the order of
 ; loading.
 
-(provide git/base git-version git-main git-argv git-plan)
+(provide git/base git-version git-main git-argv git-options git-plan)
 
 (def git-version "0.1.0")
 

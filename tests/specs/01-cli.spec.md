@@ -1,46 +1,70 @@
 # @weight 1
 
-The command line.  git-plan turns a line into (STREAM TEXT STATUS) without
-doing it; the words and statuses are git's own.
+The command line.  git-options is one declaration: what --help prints and
+what a line is parsed against.  git-plan turns a line into (STREAM TEXT
+STATUS) without doing it; the refusals and statuses are git's own.
 
 ## plan
 
-### no command prints the usage line, status 1
+### --help prints the declaration, status 0
 
 ```git
-(display (git-plan ()))
+(display (first (rest (git-plan (list "--help")))))
 ```
 ---
 ```output
-(out usage: git [-v | --version] <command> [<args>]
- 1)
+Usage: git [-v | --version] <command> [<args>]
+
+	-v,--version	Print the version
 ```
 
-### --version, -v and version name the version, status 0
+### the version, by option or by command, status 0
 
 ```git
-(display (List map (fn (_ w) (first (rest (rest (git-plan (list w)))))) (list "--version" "-v" "version")))
+(write (List map (fn (_ w) (git-plan (list w))) (list "--version" "-v" "version")))
 ```
 ---
-    (0 0 0)
+    ((out "git version 0.1.0 (x-git)\n" 0) (out "git version 0.1.0 (x-git)\n" 0) (out "git version 0.1.0 (x-git)\n" 0))
+
+### no command prints the usage, status 1
+
+```git
+(write (List map (fn (_ l) (first (rest (rest (git-plan l))))) (list () (list "-v" "--help"))))
+```
+---
+    (1 0)
 
 ### an unknown command is refused in git's words, status 1
 
 ```git
-(display (git-plan (list "frob")))
+(write (git-plan (list "frob")))
 ```
 ---
-```output
-(err git: 'frob' is not a git command. See 'git --help'.
- 1)
+    (err "git: 'frob' is not a git command. See 'git --help'.\n" 1)
+
+### an unknown option names itself, status 129
+
+```git
+(def %gp (git-plan (list "--frob" "status")))
+(write (list (first %gp) (Str8 sub 0 22 (first (rest %gp))) (first (rest (rest %gp)))))
 ```
+---
+    (err "unknown option: --frob" 129)
+
+### options after the command are the command's
+
+```git
+(write (git-plan (list "frob" "-v")))
+```
+---
+    (err "git: 'frob' is not a git command. See 'git --help'.\n" 1)
 
 ## argv
 
 ### the launcher's flags and the -- are dropped
 
 ```git
-(display (git-argv (list "run.x" "--batch" "--" "status" "-s")))
+(write (git-argv (list "run.x" "--batch" "--" "status" "-s")))
 ```
 ---
-    (status -s)
+    ("status" "-s")
