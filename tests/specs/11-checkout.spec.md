@@ -38,7 +38,8 @@ cumulative down the cases.
 (def %co (git-fixture-refs))
 (File write-all (Str8 append %co "/f.txt") "dirty\n")
 (def %co-r (git-text-in %co "checkout" "side"))
-(write (list %co-r (equal? %co-r (git-oracle-in %co "checkout" "side"))
+(def %co-g (git-oracle-in %co "checkout" "side"))
+(write (list %co-r (if (equal? %co-r %co-g) #t %co-g)
              (Str8 trim (File read-all (Str8 append %co "/.git/HEAD")))))
 ```
 ---
