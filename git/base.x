@@ -11,7 +11,7 @@
 ; file stays unscoped, so those imports bind in the root, where run.x and
 ; the spec harness reach them; the exports carry the git- prefix for that.
 
-(provide git/base git-version git-main git-argv git-options git-plan git-run
+(provide git/base git-version git-main git-options git-plan git-run
   git-dir git-hash git-object-write! git-object-read git-resolve git-tree-pretty
   git-ref-read git-rev-parse git-cat-file git-hash-object git-rev-parse-command
   git-ls-tree git-log git-index-read git-status-lists git-status git-ls-files
@@ -29,4 +29,4 @@
 (import git/diff git-diff git-edit-script git-hunks)
 (import git/repo git-init git-branch git-tag)
 (import git/checkout git-checkout git-switch git-restore)
-(import git/cli git-argv git-options git-plan git-run git-main)
+(import git/cli git-options git-plan git-run git-main)
