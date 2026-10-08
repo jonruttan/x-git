@@ -232,4 +232,23 @@
       (let ((base (%rev-base gitdir (Str8 sub 0 i rev))))
         (if (null? base) () (Str8 sub 0 i rev))))))
 
-(provide git/refs git-ref-read git-rev-parse git-rev-path-missing)
+; A revision's tree: a commit's, a tag's through the tag, a tree itself;
+; () when the revision does not resolve or has no tree.
+(def git-tree-of
+  (fn (_ gitdir rev)
+    (def sha (git-rev-parse gitdir rev))
+    (if (null? sha) () (%tree-of gitdir sha))))
+
+; A revision's commit: itself, or what its tag peels to; () when the
+; revision does not resolve or does not reach a commit.
+(def git-commit-of
+  (fn (_ gitdir rev)
+    (def c (%peel-tags gitdir (git-rev-parse gitdir rev)))
+    (if (and (not (null? c)) (str=? (%type-of gitdir c) "commit")) c ())))
+
+; A commit's header lines, ((KEY . VALUE) ...), for the commands that
+; print them; () for a name that is not a commit or tag.
+(def git-headers
+  (fn (_ gitdir sha) (%headers gitdir sha)))
+
+(provide git/refs git-ref-read git-rev-parse git-rev-path-missing git-tree-of git-commit-of git-headers)

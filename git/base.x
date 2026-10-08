@@ -13,11 +13,13 @@
 
 (provide git/base git-version git-main git-argv git-options git-plan git-run
   git-dir git-hash git-object-write! git-object-read git-resolve git-tree-pretty
-  git-ref-read git-rev-parse git-cat-file git-hash-object git-rev-parse-command)
+  git-ref-read git-rev-parse git-cat-file git-hash-object git-rev-parse-command
+  git-ls-tree git-log)
 
 (def git-version "0.1.0")
 
 (import git/objects git-dir git-hash git-object-write! git-object-read git-resolve git-tree-pretty)
 (import git/refs git-ref-read git-rev-parse)
 (import git/commands git-cat-file git-hash-object git-rev-parse-command)
+(import git/history git-ls-tree git-log)
 (import git/cli git-argv git-options git-plan git-run git-main)

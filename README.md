@@ -20,6 +20,8 @@ the kernel and x are installed (x-os).
   on loose and packed objects (OFS and REF deltas applied); a tree printed
   as git prints one
 - `rev-parse <revision>...`
+- `ls-tree [-r] [-t] [-l] [--name-only] <tree-ish> [<path>...]`
+- `log [--oneline] [-n <number>] [<revision>]`, newest committer time first
 - an object named in full, by a unique hex prefix of four digits or more,
   or by a revision: `HEAD`, a branch or tag (loose or in `packed-refs`,
   looked up as gitrevisions(7) does), with `~N`, `^N`, `^{tree}`,
@@ -47,6 +49,7 @@ path for its fixture and as the reference.
     git/packs.x       packed objects: the index, entries, deltas
     git/refs.x        refs, loose and packed; revision names to objects
     git/commands.x    cat-file, hash-object, rev-parse
+    git/history.x     ls-tree, log
     git/cli.x         the command line: git-options, git-plan, git-run, git-main
     tests/            the spec suite and its runner, gate and harness
 

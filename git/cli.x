@@ -22,6 +22,7 @@
 (import x/sys/posix Sys)
 (import git/objects git-dir)
 (import git/commands git-cat-file git-hash-object git-rev-parse-command)
+(import git/history git-ls-tree git-log)
 
 (def %byte-len (prim-ref (lit str) (lit byte-len)))
 
@@ -53,7 +54,9 @@
 (def %commands
   (list (pair "cat-file" git-cat-file)
         (pair "hash-object" git-hash-object)
-        (pair "rev-parse" git-rev-parse-command)))
+        (pair "rev-parse" git-rev-parse-command)
+        (pair "ls-tree" git-ls-tree)
+        (pair "log" git-log)))
 
 ; The command a name runs, or ().
 (def %command
