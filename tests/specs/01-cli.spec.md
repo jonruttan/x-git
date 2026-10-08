@@ -1,27 +1,29 @@
 # @weight 1
 
 The command line.  git-options is one declaration: what --help prints and
-what a line is parsed against.  git-plan turns a line into (STREAM TEXT
-STATUS) without doing it; the refusals and statuses are git's own.
+what a line is parsed against.  git-plan turns a line into a plan without
+doing it, and git-run does the plan, answering (STREAM TEXT STATUS); the
+refusals and statuses are git's own.
 
 ## plan
 
 ### --help prints the declaration, status 0
 
 ```git
-(display (first (rest (git-plan (list "--help")))))
+(display (first (rest (git-run (git-plan (list "--help"))))))
 ```
 ---
 ```output
-Usage: git [-v | --version] <command> [<args>]
+Usage: git [-v | --version] [-C <path>] <command> [<args>]
 
 	-v,--version	Print the version
+	-C <path>	Run as if started in <path>
 ```
 
 ### the version, by option or by command, status 0
 
 ```git
-(write (List map (fn (_ w) (git-plan (list w))) (list "--version" "-v" "version")))
+(write (List map (fn (_ w) (git-run (git-plan (list w)))) (list "--version" "-v" "version")))
 ```
 ---
     (('out "git version 0.1.0 (x-git)\n" 0) ('out "git version 0.1.0 (x-git)\n" 0) ('out "git version 0.1.0 (x-git)\n" 0))
@@ -29,7 +31,7 @@ Usage: git [-v | --version] <command> [<args>]
 ### no command prints the usage, status 1
 
 ```git
-(write (first (rest (rest (git-plan ())))))
+(write (first (rest (rest (git-run (git-plan ()))))))
 ```
 ---
     1
@@ -37,7 +39,7 @@ Usage: git [-v | --version] <command> [<args>]
 ### an unknown command is refused in git's words, status 1
 
 ```git
-(write (git-plan (list "frob")))
+(write (git-run (git-plan (list "frob"))))
 ```
 ---
     ('err "git: 'frob' is not a git command. See 'git --help'.\n" 1)
@@ -45,7 +47,7 @@ Usage: git [-v | --version] <command> [<args>]
 ### an unknown option names itself, status 129
 
 ```git
-(def %gp (git-plan (list "--frob" "status")))
+(def %gp (git-run (git-plan (list "--frob" "status"))))
 (write (list (first %gp) (Str8 sub 0 22 (first (rest %gp))) (first (rest (rest %gp)))))
 ```
 ---
@@ -54,10 +56,18 @@ Usage: git [-v | --version] <command> [<args>]
 ### options after the command are the command's
 
 ```git
-(write (git-plan (list "frob" "-v")))
+(write (git-run (git-plan (list "frob" "-v"))))
 ```
 ---
     ('err "git: 'frob' is not a git command. See 'git --help'.\n" 1)
+
+### -C and the command's arguments ride the plan
+
+```git
+(write (git-plan (list "-C" "/somewhere" "cat-file" "-t" "abc")))
+```
+---
+    ('run "/somewhere" "cat-file" ("-t" "abc"))
 
 ## argv
 
