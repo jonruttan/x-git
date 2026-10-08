@@ -68,3 +68,16 @@ Usage: git [-v | --version] <command> [<args>]
 ```
 ---
     ("status" "-s")
+
+## main
+
+### what main writes and exits through is bound in its module
+
+main exits the process, so a spec cannot call it; this holds the names it
+reaches for, from inside the module, as main sees them.
+
+```git
+(write (List map (fn (_ s) (not (null? (eval s (module git/cli))))) (list (lit File) (lit Sys))))
+```
+---
+    (#t #t)
