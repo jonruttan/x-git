@@ -12,5 +12,6 @@
 (set! %lang-version git-version)
 (set! %repl-prompt "git> ")
 
-(unless (null? (git-argv args))
-  (git-main args))
+; The operands: what follows the "--" after the launcher's own options.
+(let ((ops (rest (Sys args (lit program)))))
+  (unless (null? ops) (git-main ops)))
