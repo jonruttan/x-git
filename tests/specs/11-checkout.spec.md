@@ -39,7 +39,10 @@ cumulative down the cases.
 (File write-all (Str8 append %co "/f.txt") "dirty\n")
 (def %co-r (git-text-in %co "checkout" "side"))
 (def %co-g (git-oracle-in %co "checkout" "side"))
-(write (list %co-r (if (equal? %co-r %co-g) #t %co-g)
+; git prints the "Please commit ..." line only with advice.commitBeforeMerge on
+; (a blank line stands where it was); both sides are compared without it.
+(def %co-plain (fn (_ r) (pair (first r) (Str8 join "\n" (List filter (fn (_ l) (not (or (str=? l "") (Str8 starts? "Please " l)))) (Str8 split "\n" (rest r)))))))
+(write (list %co-r (if (equal? (%co-plain %co-r) (%co-plain %co-g)) #t %co-g)
              (Str8 trim (File read-all (Str8 append %co "/.git/HEAD")))))
 ```
 ---
