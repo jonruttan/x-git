@@ -13,10 +13,21 @@
 
 (provide git/base git-version git-main git-options git-plan git-run
   git-dir git-hash git-object-write! git-object-read git-resolve git-tree-pretty
-  git-cat-file git-hash-object)
+  git-ref-read git-rev-parse git-cat-file git-hash-object git-rev-parse-command
+  git-ls-tree git-log git-index-read git-status-lists git-status git-ls-files
+  git-add git-commit git-diff git-edit-script git-hunks git-init git-branch git-tag
+  git-checkout git-switch git-restore git-clone)
 
 (def git-version "0.1.0")
 
 (import git/objects git-dir git-hash git-object-write! git-object-read git-resolve git-tree-pretty)
-(import git/commands git-cat-file git-hash-object)
+(import git/refs git-ref-read git-rev-parse)
+(import git/commands git-cat-file git-hash-object git-rev-parse-command)
+(import git/history git-ls-tree git-log)
+(import git/index git-index-read git-status-lists git-status git-ls-files)
+(import git/stage git-add git-commit)
+(import git/diff git-diff git-edit-script git-hunks)
+(import git/repo git-init git-branch git-tag)
+(import git/checkout git-checkout git-switch git-restore)
+(import git/clone git-clone)
 (import git/cli git-options git-plan git-run git-main)

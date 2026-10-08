@@ -21,7 +21,14 @@
 (import x/sys/file File)
 (import x/sys/posix Sys)
 (import git/objects git-dir)
-(import git/commands git-cat-file git-hash-object)
+(import git/commands git-cat-file git-hash-object git-rev-parse-command)
+(import git/history git-ls-tree git-log)
+(import git/index git-status git-ls-files)
+(import git/stage git-add git-commit)
+(import git/diff git-diff)
+(import git/repo git-init git-branch git-tag)
+(import git/checkout git-checkout git-switch git-restore)
+(import git/clone git-clone)
 
 (def %byte-len (prim-ref (lit str) (lit byte-len)))
 
@@ -38,7 +45,22 @@
 ; working directory and gitdir the repository's .git, or ().
 (def %commands
   (list (pair "cat-file" git-cat-file)
-        (pair "hash-object" git-hash-object)))
+        (pair "hash-object" git-hash-object)
+        (pair "rev-parse" git-rev-parse-command)
+        (pair "ls-tree" git-ls-tree)
+        (pair "log" git-log)
+        (pair "status" git-status)
+        (pair "ls-files" git-ls-files)
+        (pair "add" git-add)
+        (pair "commit" git-commit)
+        (pair "diff" git-diff)
+        (pair "init" git-init)
+        (pair "branch" git-branch)
+        (pair "tag" git-tag)
+        (pair "checkout" git-checkout)
+        (pair "switch" git-switch)
+        (pair "restore" git-restore)
+        (pair "clone" git-clone)))
 
 ; The command a name runs, or ().
 (def %command
@@ -86,13 +108,18 @@
 (def %text-count
   (fn (_ text) (if (pair? text) (rest text) (%byte-len text))))
 
-; ops are the operands: (Sys args 'program) past the engine's path.
+; ops are the operands: (Sys args 'program) past the engine's path.  A
+; result is (STREAM TEXT STATUS), or with a fourth element text for
+; standard output after the stream's own, as git prints an unknown
+; revision's echo after its refusal.
 (def git-main
   (fn (_ ops)
     (def r (git-run (git-plan ops)))
     (def text (first (rest r)))
     (File write (if (eq? (first r) (lit out)) 1 2)
       (if (pair? text) (first text) text) (%text-count text))
+    (let ((more (rest (rest (rest r)))))
+      (unless (null? more) (File write 1 (first more) (%byte-len (first more)))))
     (Sys exit (first (rest (rest r))))))
 
 (provide git/cli git-options git-plan git-run git-main)
