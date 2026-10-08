@@ -30,20 +30,6 @@
 
 (def %byte-len (prim-ref (lit str) (lit byte-len)))
 
-(def %engine-flag?
-  (fn (_ s)
-    (if (str=? s "--batch") #t
-      (if (str=? s "--no-color") #t (str=? s "--verbose")))))
-
-; The operands the launcher hands the entry: its own flags dropped, and the
-; "--" that ends x's options.
-(def git-argv
-  (fn (_ raw)
-    (def ops
-      (List filter (fn (_ a) (not (%engine-flag? a)))
-        (if (pair? raw) (rest raw) ())))
-    (if (if (pair? ops) (str=? (first ops) "--") #f) (rest ops) ops)))
-
 (def git-options
   (Opts declare "git" "[-v | --version] [-C <path>] <command> [<args>]" ()
     (list
@@ -116,12 +102,13 @@
 (def %text-count
   (fn (_ text) (if (pair? text) (rest text) (%byte-len text))))
 
-; A result is (STREAM TEXT STATUS), or with a fourth element text for
+; ops are the operands: (Sys args 'program) past the engine's path.  A
+; result is (STREAM TEXT STATUS), or with a fourth element text for
 ; standard output after the stream's own, as git prints an unknown
 ; revision's echo after its refusal.
 (def git-main
-  (fn (_ raw)
-    (def r (git-run (git-plan (git-argv raw))))
+  (fn (_ ops)
+    (def r (git-run (git-plan ops)))
     (def text (first (rest r)))
     (File write (if (eq? (first r) (lit out)) 1 2)
       (if (pair? text) (first text) text) (%text-count text))
@@ -129,4 +116,4 @@
       (unless (null? more) (File write 1 (first more) (%byte-len (first more)))))
     (Sys exit (first (rest (rest r))))))
 
-(provide git/cli git-argv git-options git-plan git-run git-main)
+(provide git/cli git-options git-plan git-run git-main)

@@ -69,16 +69,6 @@ Usage: git [-v | --version] [-C <path>] <command> [<args>]
 ---
     ('run "/somewhere" "cat-file" ("-t" "abc"))
 
-## argv
-
-### the launcher's flags and the -- are dropped
-
-```git
-(write (git-argv (list "run.x" "--batch" "--" "status" "-s")))
-```
----
-    ("status" "-s")
-
 ## main
 
 ### what main writes and exits through is bound in its module
