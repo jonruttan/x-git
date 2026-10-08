@@ -122,6 +122,11 @@
     (def tree (git-tree-of gitdir "HEAD"))
     (if (null? tree) () (%flat-tree gitdir tree ""))))
 
+; Every blob under a tree, (PATH . SHA) each, for the commands that set
+; a tree against the index.
+(def git-tree-files
+  (fn (_ gitdir tree) (if (null? tree) () (%flat-tree gitdir tree ""))))
+
 ; --- the working directory ---
 
 ; Does a directory hold a file anywhere beneath it?  git shows no
@@ -222,7 +227,11 @@
         (List map (fn (_ p) (Str8 append (code-of staged p) (code-of unstaged p) " " p "\n")) paths)
         (List map (fn (_ p) (Str8 append "?? " p "\n")) (first (rest (rest lists))))))))
 
-; status as git lays it out, hints and all.
+; status as git lays it out, hints and all -- also what commit prints when
+; there is nothing to commit.
+(def git-long-status
+  (fn (_ gitdir lists) (%long-status gitdir lists)))
+
 (def %long-status
   (fn (_ gitdir lists)
     (def staged (first lists))
@@ -293,4 +302,9 @@
               (git-index-read gitdir)))
           0)))))
 
-(provide git/index git-index-read git-status-lists git-status git-ls-files)
+; The untracked paths under wd, given the tracked ones, as status lists
+; them.
+(def git-untracked
+  (fn (_ wd tracked) (%untracked wd tracked)))
+
+(provide git/index git-index-read git-status-lists git-status git-ls-files git-tree-files git-untracked git-long-status)

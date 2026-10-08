@@ -22,7 +22,13 @@ the kernel and x are installed (x-os).
 - `rev-parse <revision>...`
 - `ls-tree [-r] [-t] [-l] [--name-only] <tree-ish> [<path>...]`
 - `log [--oneline] [-n <number>] [<revision>]`, newest committer time first
-- `ls-files [--stage]` and `status [-s | --porcelain]` from the index (read; nothing writes it yet; .gitignore is not read)
+- `ls-files [--stage]` and `status [-s | --porcelain]` from the index
+  (.gitignore is not read)
+- `add [-A] <pathspec>...`: the blobs written, the index written (version 2)
+- `commit -m <message> [-q]`: the trees from the index, the commit with the
+  identity `.git/config` holds (the global config is not read) and the
+  clock's time in the local offset, the branch moved; the summary as git
+  prints it, its line counts from a line diff
 - an object named in full, by a unique hex prefix of four digits or more,
   or by a revision: `HEAD`, a branch or tag (loose or in `packed-refs`,
   looked up as gitrevisions(7) does), with `~N`, `^N`, `^{tree}`,
@@ -52,6 +58,7 @@ path for its fixture and as the reference.
     git/commands.x    cat-file, hash-object, rev-parse
     git/history.x     ls-tree, log
     git/index.x       the index read; ls-files, status
+    git/stage.x       the index written; add, commit
     git/cli.x         the command line: git-options, git-plan, git-run, git-main
     tests/            the spec suite and its runner, gate and harness
 
