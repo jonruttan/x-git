@@ -14,7 +14,7 @@
 (provide git/base git-version git-main git-argv git-options git-plan git-run
   git-dir git-hash git-object-write! git-object-read git-resolve git-tree-pretty
   git-ref-read git-rev-parse git-cat-file git-hash-object git-rev-parse-command
-  git-ls-tree git-log)
+  git-ls-tree git-log git-index-read git-status-lists git-status git-ls-files)
 
 (def git-version "0.1.0")
 
@@ -22,4 +22,5 @@
 (import git/refs git-ref-read git-rev-parse)
 (import git/commands git-cat-file git-hash-object git-rev-parse-command)
 (import git/history git-ls-tree git-log)
+(import git/index git-index-read git-status-lists git-status git-ls-files)
 (import git/cli git-argv git-options git-plan git-run git-main)

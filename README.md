@@ -22,6 +22,7 @@ the kernel and x are installed (x-os).
 - `rev-parse <revision>...`
 - `ls-tree [-r] [-t] [-l] [--name-only] <tree-ish> [<path>...]`
 - `log [--oneline] [-n <number>] [<revision>]`, newest committer time first
+- `ls-files [--stage]` and `status [-s | --porcelain]` from the index (read; nothing writes it yet; .gitignore is not read)
 - an object named in full, by a unique hex prefix of four digits or more,
   or by a revision: `HEAD`, a branch or tag (loose or in `packed-refs`,
   looked up as gitrevisions(7) does), with `~N`, `^N`, `^{tree}`,
@@ -50,6 +51,7 @@ path for its fixture and as the reference.
     git/refs.x        refs, loose and packed; revision names to objects
     git/commands.x    cat-file, hash-object, rev-parse
     git/history.x     ls-tree, log
+    git/index.x       the index read; ls-files, status
     git/cli.x         the command line: git-options, git-plan, git-run, git-main
     tests/            the spec suite and its runner, gate and harness
 
