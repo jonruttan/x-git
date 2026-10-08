@@ -274,4 +274,10 @@
       ((null? (Opts operands o)) (list (lit err) "fatal: you must specify path(s) to restore\n" 128))
       (#t (%restore! wd gitdir (Opts operands o))))))
 
-(provide git/checkout git-checkout git-checkout-options git-switch git-switch-options git-restore git-restore-options)
+; The working directory and index set to a commit's tree, for clone;
+; answers () when done, or the paths whose own changes stop it.
+(def git-checkout-tree!
+  (fn (_ wd gitdir commit) (%move-to! wd gitdir commit)))
+
+(provide git/checkout git-checkout git-checkout-options git-switch git-switch-options
+  git-restore git-restore-options git-checkout-tree!)

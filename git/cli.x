@@ -28,6 +28,7 @@
 (import git/diff git-diff)
 (import git/repo git-init git-branch git-tag)
 (import git/checkout git-checkout git-switch git-restore)
+(import git/clone git-clone)
 
 (def %byte-len (prim-ref (lit str) (lit byte-len)))
 
@@ -58,7 +59,8 @@
         (pair "tag" git-tag)
         (pair "checkout" git-checkout)
         (pair "switch" git-switch)
-        (pair "restore" git-restore)))
+        (pair "restore" git-restore)
+        (pair "clone" git-clone)))
 
 ; The command a name runs, or ().
 (def %command

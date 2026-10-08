@@ -40,6 +40,10 @@ the kernel and x are installed (x-os).
   the working directory and index set to the tree, a path with changes of
   its own stopping the move in git's words; `checkout -- <path>...` and
   `restore <path>...` from the index
+- `clone <path> [<directory>]` from a local path: the objects copied, the
+  source's branches as `refs/remotes/origin/*`, its tags, one local branch
+  for its HEAD branch, the remote and branch config, the tree checked out
+  (nothing over a network yet)
 - an object named in full, by a unique hex prefix of four digits or more,
   or by a revision: `HEAD`, a branch or tag (loose or in `packed-refs`,
   looked up as gitrevisions(7) does), with `~N`, `^N`, `^{tree}`,
@@ -73,6 +77,7 @@ path for its fixture and as the reference.
     git/diff.x        lines compared: diff, and the summary commit prints
     git/repo.x        init, branch, tag
     git/checkout.x    the working directory set to a tree: checkout, switch, restore
+    git/clone.x       a repository copied from a path
     git/cli.x         the command line: git-options, git-plan, git-run, git-main
     tests/            the spec suite and its runner, gate and harness
 
