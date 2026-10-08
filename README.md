@@ -17,13 +17,17 @@ the kernel and x are installed (x-os).
   and with `-w` the object written loose, as a zlib stream of stored
   blocks (git reads it; the writer does not compress yet)
 - `cat-file (-t | -s | -p | -e) <object>` and `cat-file <type> <object>`
-  on loose and packed objects (OFS and REF deltas applied), named in full or by a unique hex prefix of four
-  digits or more; a tree printed as git prints one
+  on loose and packed objects (OFS and REF deltas applied); a tree printed
+  as git prints one
+- `rev-parse <revision>...`
+- an object named in full, by a unique hex prefix of four digits or more,
+  or by a revision: `HEAD`, a branch or tag (loose or in `packed-refs`,
+  looked up as gitrevisions(7) does), with `~N`, `^N`, `^{tree}`,
+  `^{commit}`, `^{}` and `:PATH`
 - the repository found from the working directory or any parent
 - an unknown command or option, refused as git refuses it
 
-Not served yet: refs (`HEAD`, branch names), and every
-other command.
+Not served yet: reflogs (`@{N}`), `:/text`, and every other command.
 
 ## Install and test
 
@@ -41,7 +45,8 @@ path for its fixture and as the reference.
     git/base.x        the parts, assembled
     git/objects.x     the object store: loose objects read and written, names, trees
     git/packs.x       packed objects: the index, entries, deltas
-    git/commands.x    cat-file, hash-object
+    git/refs.x        refs, loose and packed; revision names to objects
+    git/commands.x    cat-file, hash-object, rev-parse
     git/cli.x         the command line: git-options, git-plan, git-run, git-main
     tests/            the spec suite and its runner, gate and harness
 

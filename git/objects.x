@@ -213,24 +213,40 @@
     (Hex encode-bytes
       ((fn (self k acc) (if (< k 0) acc (self (%sub k 1) (pair (%byte p (%add i k)) acc)))) 19 ()))))
 
-; A tree body as `cat-file -p` prints it: a line an entry, the mode padded
-; to six digits, its type, the entry's name in hex, a tab, the file name.
-(def git-tree-pretty
-  (fn (_ r start size)
-    (def end (%add start size))
-    (def lines
+; A tree object's entries, in order: (MODE NAME SHA) each, MODE as the
+; tree spells it, SHA in hex.  o is (TYPE SIZE REGION START).
+(def git-tree-entries
+  (fn (_ o)
+    (def r (first (rest (rest o))))
+    (def start (first (rest (rest (rest o)))))
+    (def end (%add start (first (rest o))))
+    (List reverse
       ((fn (self i acc)
          (if (>= i end) acc
            (let ((sp (%find-byte r i end 32)))
              (let ((nul (%find-byte r sp end 0)))
-               (let ((mode (%bytes->string r i (%sub sp i)))
-                     (name (%bytes->string r (%add sp 1) (%sub (%sub nul sp) 1))))
-                 (self (%add nul 21)
-                   (pair (Str8 append (Str8 pad-left 6 #\0 mode) " " (%mode-type mode) " "
-                                      (%sha-hex r (%add nul 1)) "\t" name "\n")
-                         acc)))))))
-       start ()))
-    (Str8 join "" (List reverse lines))))
+               (self (%add nul 21)
+                 (pair (list (%bytes->string r i (%sub sp i))
+                             (%bytes->string r (%add sp 1) (%sub (%sub nul sp) 1))
+                             (%sha-hex r (%add nul 1)))
+                       acc))))))
+       start ()))))
+
+; A tree body as `cat-file -p` prints it: a line an entry, the mode padded
+; to six digits, its type, the entry's name in hex, a tab, the file name.
+(def git-tree-pretty
+  (fn (_ r start size)
+    (Str8 join ""
+      (List map
+        (fn (_ e)
+          (Str8 append (Str8 pad-left 6 #\0 (first e)) " " (%mode-type (first e)) " "
+                       (first (rest (rest e))) "\t" (first (rest e)) "\n"))
+        (git-tree-entries (list "tree" size r start))))))
+
+; An object's body as a string: for commits and tags, which are text.
+(def git-object-text
+  (fn (_ o)
+    (%bytes->string (first (rest (rest o))) (first (rest (rest (rest o)))) (first (rest o)))))
 
 (provide git/objects git-dir git-parent git-read-file git-write-file! git-hash
-  git-object-write! git-object-read git-resolve git-tree-pretty)
+  git-object-write! git-object-read git-resolve git-tree-pretty git-tree-entries git-object-text)

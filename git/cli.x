@@ -21,7 +21,7 @@
 (import x/sys/file File)
 (import x/sys/posix Sys)
 (import git/objects git-dir)
-(import git/commands git-cat-file git-hash-object)
+(import git/commands git-cat-file git-hash-object git-rev-parse-command)
 
 (def %byte-len (prim-ref (lit str) (lit byte-len)))
 
@@ -52,7 +52,8 @@
 ; working directory and gitdir the repository's .git, or ().
 (def %commands
   (list (pair "cat-file" git-cat-file)
-        (pair "hash-object" git-hash-object)))
+        (pair "hash-object" git-hash-object)
+        (pair "rev-parse" git-rev-parse-command)))
 
 ; The command a name runs, or ().
 (def %command
@@ -100,12 +101,17 @@
 (def %text-count
   (fn (_ text) (if (pair? text) (rest text) (%byte-len text))))
 
+; A result is (STREAM TEXT STATUS), or with a fourth element text for
+; standard output after the stream's own, as git prints an unknown
+; revision's echo after its refusal.
 (def git-main
   (fn (_ raw)
     (def r (git-run (git-plan (git-argv raw))))
     (def text (first (rest r)))
     (File write (if (eq? (first r) (lit out)) 1 2)
       (if (pair? text) (first text) text) (%text-count text))
+    (let ((more (rest (rest (rest r)))))
+      (unless (null? more) (File write 1 (first more) (%byte-len (first more)))))
     (Sys exit (first (rest (rest r))))))
 
 (provide git/cli git-argv git-options git-plan git-run git-main)

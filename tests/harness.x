@@ -56,6 +56,29 @@
             (set! %git-fx-packed (rest t)))))
     %git-fx-packed))
 
+; A third repository, for refs: two commits, an annotated tag on the first,
+; a lightweight tag and a branch, all packed by `git pack-refs --all`, then
+; one loose branch made after; HEAD stays symbolic.
+(def %git-fx-refs ())
+
+(def git-fixture-refs
+  (fn (_)
+    (when (null? %git-fx-refs)
+      (let ((t (File temp "/tmp/x-git-rf-")))
+        (do (File close (first t))
+            (File unlink (rest t))
+            (File mkdir (rest t))
+            (Proc run!
+              (list "/bin/sh" "-c"
+                (Str8 append "cd " (rest t)
+                  " && git init -q -b main . && git config user.email a@b.c && git config user.name A"
+                  " && printf 'hello\\n' > f.txt && mkdir sub && printf x > sub/g && git add . && git commit -q -m one"
+                  " && printf 'more\\n' >> f.txt && git commit -q -am two"
+                  " && git tag -a v1 -m 'tag one' HEAD~1 && git tag light HEAD && git branch side HEAD~1"
+                  " && git pack-refs --all && git branch loose HEAD~1")))
+            (set! %git-fx-refs (rest t)))))
+    %git-fx-refs))
+
 ; git run in a directory, its standard error joined to its output: a
 ; refusal is what a case compares.
 (def git-oracle-in
@@ -75,8 +98,10 @@
   (fn (_ dir . ops)
     (def r (git-run (git-plan (pair "-C" (pair dir ops)))))
     (def text (first (rest r)))
+    (def more (rest (rest (rest r))))
     (pair (first (rest (rest r)))
-          (if (pair? text) (Str8 sub 0 (rest text) (first text)) text))))
+          (Str8 append (if (pair? text) (Str8 sub 0 (rest text) (first text)) text)
+                       (if (null? more) "" (first more))))))
 
 ; A full object name from the fixture: HEAD, HEAD^{tree}, HEAD:f.txt, ...
 (def git-sha

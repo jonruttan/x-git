@@ -16,7 +16,8 @@
 (import x/sys/opts Opts)
 (import x/sys/file File)
 (import x/sys/posix Sys)
-(import git/objects git-hash git-object-write! git-object-read git-resolve git-tree-pretty git-read-file)
+(import git/objects git-hash git-object-write! git-object-read git-tree-pretty git-read-file)
+(import git/refs git-rev-parse git-rev-path-missing)
 
 (def %add (prim-ref 'int '+))
 (def %make-str (prim-ref (lit str) (lit make)))
@@ -75,9 +76,13 @@
       ((null? gitdir) (%no-repo))
       (#t
         (let ((name (if (null? mode) (first (rest operands)) (first operands))))
-          (let ((sha (git-resolve gitdir name)))
+          (let ((sha (git-rev-parse gitdir name)))
             (match
-              ((and (null? sha) (str=? mode "-e") (= (Str8 length name) 40)) (list (lit out) "" 1))
+              ((and (null? sha) (not (null? mode)) (str=? mode "-e") (= (Str8 length name) 40)) (list (lit out) "" 1))
+              ((and (null? sha) (not (null? (git-rev-path-missing gitdir name))))
+                (let ((i (Str8 index-of ":" name)))
+                  (%fatal (Str8 append "path '" (Str8 sub (+ i 1) (- (Str8 length name) (+ i 1)) name)
+                                       "' does not exist in '" (Str8 sub 0 i name) "'"))))
               ((null? sha) (%fatal (Str8 append "Not a valid object name " name)))
               (#t
                 (let ((obj (git-object-read gitdir sha)))
@@ -163,4 +168,39 @@
               (let ((f (git-read-file (%in-wd wd (first fs)))))
                 (go (rest fs) (pair (Str8 append (name-of (first f) (rest f)) "\n") lines))))))))))
 
-(provide git/commands git-cat-file git-cat-file-options git-hash-object git-hash-object-options)
+; --- rev-parse ---
+
+(def git-rev-parse-options
+  (Opts declare "git rev-parse" "<revision>..." () ()))
+
+; git's refusal of a revision nothing answers to, hint lines and all, on
+; standard error; on standard output the names resolved before it and
+; then the argument itself, which git echoes as a path.  The fourth
+; element is that standard-output text.
+(def %ambiguous
+  (fn (_ rev resolved)
+    (list (lit err)
+      (Str8 join "\n"
+        (list (Str8 append "fatal: ambiguous argument '" rev "': unknown revision or path not in the working tree.")
+              "Use '--' to separate paths from revisions, like this:"
+              "'git <command> [<revision>...] -- [<file>...]'"
+              ""))
+      128
+      (Str8 append resolved rev "\n"))))
+
+(def git-rev-parse-command
+  (fn (_ wd gitdir ops)
+    (def o (Opts parse git-rev-parse-options ops))
+    (match
+      ((Opts help? git-rev-parse-options ops) (list (lit out) (Opts usage git-rev-parse-options) 0))
+      ((not (null? (Opts unknown o))) (%unknown-option (Opts unknown o) (Opts usage git-rev-parse-options)))
+      ((null? gitdir) (%no-repo))
+      (#t
+        (let go ((revs (Opts operands o)) (lines ()))
+          (if (null? revs) (list (lit out) (Str8 join "" (List reverse lines)) 0)
+            (let ((sha (git-rev-parse gitdir (first revs))))
+              (if (null? sha) (%ambiguous (first revs) (Str8 join "" (List reverse lines)))
+                (go (rest revs) (pair (Str8 append sha "\n") lines))))))))))
+
+(provide git/commands git-cat-file git-cat-file-options git-hash-object git-hash-object-options
+  git-rev-parse-command git-rev-parse-options)
