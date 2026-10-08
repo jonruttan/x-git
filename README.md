@@ -17,12 +17,12 @@ the kernel and x are installed (x-os).
   and with `-w` the object written loose, as a zlib stream of stored
   blocks (git reads it; the writer does not compress yet)
 - `cat-file (-t | -s | -p | -e) <object>` and `cat-file <type> <object>`
-  on loose objects, named in full or by a unique hex prefix of four
+  on loose and packed objects (OFS and REF deltas applied), named in full or by a unique hex prefix of four
   digits or more; a tree printed as git prints one
 - the repository found from the working directory or any parent
 - an unknown command or option, refused as git refuses it
 
-Not served yet: packed objects, refs (`HEAD`, branch names), and every
+Not served yet: refs (`HEAD`, branch names), and every
 other command.
 
 ## Install and test
@@ -40,6 +40,7 @@ path for its fixture and as the reference.
     run.x             the entry
     git/base.x        the parts, assembled
     git/objects.x     the object store: loose objects read and written, names, trees
+    git/packs.x       packed objects: the index, entries, deltas
     git/commands.x    cat-file, hash-object
     git/cli.x         the command line: git-options, git-plan, git-run, git-main
     tests/            the spec suite and its runner, gate and harness

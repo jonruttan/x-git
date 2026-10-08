@@ -8,11 +8,12 @@
 ;
 ; A git object is `TYPE SP SIZE NUL BODY`, named by the SHA-1 of those
 ; bytes, and kept loose as a zlib stream at .git/objects/AA/BBBB... (the
-; name split after two hex digits).  This file reads and writes loose
-; objects, finds the repository a directory sits in, resolves an object
-; name to a full SHA-1, and lays a tree out as `cat-file -p` prints one.
-; Bodies are byte regions with a count, never strings: a blob holds any
-; byte.  Packed objects are not read yet.
+; name split after two hex digits), or packed (git/packs).  This file reads
+; and writes loose objects, reads packed ones through git/packs when no
+; loose one answers, finds the repository a directory sits in, resolves an
+; object name to a full SHA-1, and lays a tree out as `cat-file -p` prints
+; one.  Bodies are byte regions with a count, never strings: a blob holds
+; any byte.
 
 (module git/objects)
 
@@ -22,6 +23,7 @@
 (import x/codec/inflate Inflate)
 (import x/codec/deflate Deflate)
 (import x/codec/hex Hex)
+(import git/packs git-pack-read git-pack-prefix git-pack-has?)
 
 (def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
@@ -130,13 +132,14 @@
             (git-write-file! path (first z) (first (rest z))))))
     sha))
 
-; The loose object named by a full SHA-1: (TYPE SIZE REGION START), the
-; body SIZE bytes from byte START of REGION; () when there is no such
-; loose object.  A malformed one raises a label 'value.
+; The object named by a full SHA-1: (TYPE SIZE REGION START), the body
+; SIZE bytes from byte START of REGION; loose first, then the packs; ()
+; when neither has it.  A malformed one raises a label 'value.
 (def git-object-read
-  (fn (_ gitdir sha)
+  (fn (self gitdir sha)
     (def path (%object-path gitdir sha))
-    (if (not (File exists? path)) ()
+    (if (not (File exists? path))
+      (git-pack-read gitdir sha (fn (_ s) (self gitdir s)))
       (let ((f (git-read-file path)))
         (let ((z (Inflate zlib (first f) 0 (rest f))))
           (let ((out (first z)) (n (first (rest z))))
@@ -161,25 +164,37 @@
     (def n (%str-byte-len s))
     ((fn (self i) (if (>= i n) #t (if (%hex-digit? (%byte p i)) (self (%add i 1)) #f))) 0)))
 
-; An object name to the full SHA-1 of a loose object: a full name that is
-; there, or a hex prefix of four digits or more that exactly one object
+; The loose names a hex prefix begins, in full.
+(def %loose-prefix
+  (fn (_ gitdir name)
+    (def dir (Str8 append gitdir "/objects/" (Str8 sub 0 2 name)))
+    (def tail (Str8 sub 2 (%sub (%str-byte-len name) 2) name))
+    (if (not (File exists? dir)) ()
+      (List map (fn (_ f) (Str8 append (Str8 sub 0 2 name) f))
+        (List filter (fn (_ f) (Str8 starts? tail f)) (File list-dir dir))))))
+
+; The list with each name once: an object may be loose and packed both.
+(def %unique
+  (fn (self names)
+    (match
+      ((null? names) ())
+      ((List any? (fn (_ s) (str=? s (first names))) (rest names)) (self (rest names)))
+      (#t (pair (first names) (self (rest names)))))))
+
+; An object name to a full SHA-1: a full name that is there, loose or
+; packed, or a hex prefix of four digits or more that exactly one object
 ; starts with.  () otherwise.  Refs are not read yet.
 (def git-resolve
   (fn (_ gitdir name)
     (def n (%str-byte-len name))
     (match
       ((not (%hex-text? name)) ())
-      ((= n 40) (if (File exists? (%object-path gitdir name)) name ()))
+      ((= n 40) (if (or (File exists? (%object-path gitdir name)) (git-pack-has? gitdir name)) name ()))
       ((< n 4) ())
       ((> n 40) ())
       (#t
-        (let ((dir (Str8 append gitdir "/objects/" (Str8 sub 0 2 name)))
-              (tail (Str8 sub 2 (%sub n 2) name)))
-          (if (not (File exists? dir)) ()
-            (let ((hits (List filter (fn (_ f) (Str8 starts? tail f)) (File list-dir dir))))
-              (if (= (List length hits) 1)
-                (Str8 append (Str8 sub 0 2 name) (first hits))
-                ()))))))))
+        (let ((hits (%unique (List append (%loose-prefix gitdir name) (git-pack-prefix gitdir name)))))
+          (if (= (List length hits) 1) (first hits) ()))))))
 
 ; --- trees ---
 
