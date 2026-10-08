@@ -28,7 +28,7 @@
             (Proc run!
               (list "/bin/sh" "-c"
                 (Str8 append "cd " (rest t)
-                  " && git init -q . && git config user.email a@b.c && git config user.name A"
+                  " && git init -q -b main . && git config user.email a@b.c && git config user.name A"
                   " && printf 'hello\\n' > f.txt && mkdir sub && printf x > sub/g"
                   " && git add . && git commit -q -m init")))
             (set! %git-fx (rest t)))))
@@ -48,7 +48,7 @@
             (Proc run!
               (list "/bin/sh" "-c"
                 (Str8 append "cd " (rest t)
-                  " && git init -q . && git config user.email a@b.c && git config user.name A"
+                  " && git init -q -b main . && git config user.email a@b.c && git config user.name A"
                   " && awk 'BEGIN { for (i = 0; i < 400; i++) print \"line \" i \" of a longish file\" }' > big.txt"
                   " && printf 'hello\\n' > f.txt && git add . && git commit -q -m one"
                   " && awk 'NR == 200 { print \"CHANGED\"; next } { print }' big.txt > big.new && mv big.new big.txt"
