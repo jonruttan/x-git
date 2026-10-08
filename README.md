@@ -29,6 +29,13 @@ the kernel and x are installed (x-os).
   identity `.git/config` holds (the global config is not read) and the
   clock's time in the local offset, the branch moved; the summary as git
   prints it, its line counts from a line diff
+- `diff [--cached] [--stat] [<revision> [<revision>]] [--] [<path>...]`:
+  git's unified form, hunks with three lines of context; the edit script
+  is by longest common subsequence, so where several are shortest the
+  hunks may differ from git's (Myers)
+- `init [-b <branch>] [<directory>]` (the hints git prints for an unnamed
+  first branch are not printed), `branch [-d] [<branch> [<start>]]`,
+  `tag [-d] [<tag> [<object>]]` (lightweight tags only)
 - an object named in full, by a unique hex prefix of four digits or more,
   or by a revision: `HEAD`, a branch or tag (loose or in `packed-refs`,
   looked up as gitrevisions(7) does), with `~N`, `^N`, `^{tree}`,
@@ -59,6 +66,8 @@ path for its fixture and as the reference.
     git/history.x     ls-tree, log
     git/index.x       the index read; ls-files, status
     git/stage.x       the index written; add, commit
+    git/diff.x        lines compared: diff, and the summary commit prints
+    git/repo.x        init, branch, tag
     git/cli.x         the command line: git-options, git-plan, git-run, git-main
     tests/            the spec suite and its runner, gate and harness
 

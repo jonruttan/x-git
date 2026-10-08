@@ -27,6 +27,7 @@
 (import git/objects git-hash git-object-write! git-object-read git-object-text git-read-file git-write-file!)
 (import git/refs git-ref-read git-rev-parse git-tree-of git-commit-of)
 (import git/index git-index-read git-status-lists git-tree-files git-untracked git-long-status)
+(import git/diff git-commit-summary)
 
 (def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
@@ -310,78 +311,6 @@
 (def %int-div (prim-ref (lit int) (lit /)))
 (def %int-mod (prim-ref (lit int) (lit %)))
 
-; A text's lines, a trailing newline closing the last rather than opening
-; an empty one.
-(def %lines
-  (fn (_ s)
-    (def ls (Str8 split "\n" s))
-    (if (and (not (null? ls)) (= (Str8 length (List last ls)) 0)) (List take (%sub (List length ls) 1) ls) ls)))
-
-; Insertions and deletions between two line lists: (INS . DEL), by the
-; longest common subsequence.  Past a million cells the files are taken
-; as wholly replaced.
-(def %line-diff
-  (fn (_ a b)
-    (def n (List length a))
-    (def m (List length b))
-    (if (> (%mul n m) 1000000) (pair m n)
-      (let ((av (Vector from-list a)) (bv (Vector from-list b)))
-        ; row by row: prev holds L[i-1][*], cur fills L[i][*]
-        (let ((lcs
-                ((fn (rows i prev)
-                   (if (> i n) (Vector ref m prev)
-                     (let ((cur (Vector make (%add m 1) 0)))
-                       (do ((fn (cols j)
-                              (when (<= j m)
-                                (do (%vset! cur j
-                                      (if (str=? (Vector ref (%sub i 1) av) (Vector ref (%sub j 1) bv))
-                                        (%add (Vector ref (%sub j 1) prev) 1)
-                                        (let ((up (Vector ref j prev)) (left (Vector ref (%sub j 1) cur)))
-                                          (if (> up left) up left))))
-                                    (cols (%add j 1)))))
-                            1)
-                           (rows (%add i 1) cur)))))
-                 1 (Vector make (%add m 1) 0))))
-          (pair (%sub m lcs) (%sub n lcs)))))))
-
-; Vector set! takes the index, the value, then the vector; the diff reads
-; better with the vector first.
-(def %vset! (fn (_ v i x) (Vector set! i x v)))
-
-(def %blob-lines
-  (fn (_ gitdir sha)
-    (def o (git-object-read gitdir sha))
-    (if (null? o) () (%lines (git-object-text o)))))
-
-; The summary lines after the header: files changed, insertions,
-; deletions, and a line a mode created or deleted.
-(def %summary
-  (fn (_ gitdir before after)
-    (def in (fn (_ files path) (List find (fn (_ f) (str=? (first f) path)) files)))
-    (def added (List filter (fn (_ f) (null? (in before (first f)))) after))
-    (def deleted (List filter (fn (_ f) (null? (in after (first f)))) before))
-    (def modified (List filter (fn (_ f) (let ((b (in before (first f)))) (and (not (null? b)) (not (str=? (rest b) (rest f)))))) after))
-    (def counts
-      (List fold
-        (fn (_ acc d) (pair (%add (first acc) (first d)) (%add (rest acc) (rest d))))
-        (pair 0 0)
-        (List append
-          (List map (fn (_ f) (pair (List length (%blob-lines gitdir (rest f))) 0)) added)
-          (List map (fn (_ f) (pair 0 (List length (%blob-lines gitdir (rest f))))) deleted)
-          (List map (fn (_ f) (%line-diff (%blob-lines gitdir (rest (in before (first f)))) (%blob-lines gitdir (rest f)))) modified))))
-    (def nfiles (%add (%add (List length added) (List length deleted)) (List length modified)))
-    (def plural (fn (_ n one many) (Str8 append (Str8 str n) " " (if (= n 1) one many))))
-    (def mode-of (fn (_ path) (let ((e (List find (fn (_ x) (str=? (first x) path)) (git-index-read gitdir)))) (if (null? e) "100644" (first (rest e))))))
-    (Str8 append
-      " " (plural nfiles "file changed" "files changed")
-      (if (> (first counts) 0) (Str8 append ", " (plural (first counts) "insertion(+)" "insertions(+)")) "")
-      (if (> (rest counts) 0) (Str8 append ", " (plural (rest counts) "deletion(-)" "deletions(-)")) "")
-      "\n"
-      (Str8 join "" (List map (fn (_ f) (Str8 append " create mode " (mode-of (first f)) " " (first f) "\n"))
-                      (List sort (fn (_ a b) (Str8 <? (first a) (first b))) added)))
-      (Str8 join "" (List map (fn (_ f) (Str8 append " delete mode 100644 " (first f) "\n"))
-                      (List sort (fn (_ a b) (Str8 <? (first a) (first b))) deleted))))))
-
 (def git-commit-options
   (Opts declare "git commit" "-m <message> [-q]" ()
     (list
@@ -433,8 +362,8 @@
                               (list (lit out)
                                 (Str8 append
                                   "[" (if (null? branch) "detached HEAD" branch) (if (null? parent) " (root-commit) " " ") (Str8 sub 0 7 sha) "] "
-                                  (first (%lines text)) "\n"
-                                  (%summary gitdir (git-tree-files gitdir parent-tree) (git-tree-files gitdir tree)))
+                                  (first (Str8 split "\n" text)) "\n"
+                                  (git-commit-summary gitdir (git-tree-files gitdir parent-tree) (git-tree-files gitdir tree)))
                                 0)))))))))))))))
 
 (provide git/stage git-add git-add-options git-commit git-commit-options)

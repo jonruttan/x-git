@@ -25,6 +25,8 @@
 (import git/history git-ls-tree git-log)
 (import git/index git-status git-ls-files)
 (import git/stage git-add git-commit)
+(import git/diff git-diff)
+(import git/repo git-init git-branch git-tag)
 
 (def %byte-len (prim-ref (lit str) (lit byte-len)))
 
@@ -62,7 +64,11 @@
         (pair "status" git-status)
         (pair "ls-files" git-ls-files)
         (pair "add" git-add)
-        (pair "commit" git-commit)))
+        (pair "commit" git-commit)
+        (pair "diff" git-diff)
+        (pair "init" git-init)
+        (pair "branch" git-branch)
+        (pair "tag" git-tag)))
 
 ; The command a name runs, or ().
 (def %command
