@@ -1,6 +1,10 @@
 # @weight 4
+# @timeout-scale 3
 
-Packed objects, against git itself.  The packed fixture is two commits of
+Packed objects, against git itself.  The scale is for the pure-x inflate:
+the fixture's longish file is a 10 KB object read many times over, under
+the size at which the compiled engine is worth building, and a slow
+runner spent the whole unit on it.  The packed fixture is two commits of
 a longish file, repacked: every object is in the one pack, nothing is
 loose, and the older file is a delta against the newer.  Every expectation
 is git's own answer on the same repository.
