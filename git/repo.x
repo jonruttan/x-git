@@ -45,6 +45,26 @@
 (def %mkdir-p
   (fn (_ path) (unless (File exists? path) (File mkdir path))))
 
+(def %core-config
+  "[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n\tlogallrefupdates = true\n")
+
+; The .git layout made under dir, HEAD naming branch; answers whether it
+; was there already (then nothing but the directories is touched).
+(def git-init-layout!
+  (fn (_ dir branch)
+    (def g (Str8 append dir "/.git"))
+    (def again? (File exists? g))
+    (%mkdir-p dir)
+    (%mkdir-p g)
+    (List for-each (fn (_ d) (%mkdir-p (Str8 append g "/" d)))
+      (list "objects" "objects/info" "objects/pack" "refs" "refs/heads" "refs/tags" "hooks" "info"))
+    (unless again?
+      (do (File write-all (Str8 append g "/HEAD") (Str8 append "ref: refs/heads/" branch "\n"))
+          (File write-all (Str8 append g "/config") %core-config)
+          (File write-all (Str8 append g "/description")
+            "Unnamed repository; edit this file 'description' to name the repository.\n")))
+    again?))
+
 (def git-init
   (fn (_ wd gitdir ops)
     (def o (Opts parse git-init-options ops))
@@ -54,23 +74,11 @@
       ((not (null? (Opts unknown o))) (%unknown-option (Opts unknown o) (Opts usage git-init-options)))
       (#t
         (let ((dir (if (null? operands) wd
-                     (if (Str8 starts? "/" (first operands)) (first operands) (Str8 append wd "/" (first operands)))))
-              (branch (Opts value o "-b" "master")))
-          (let ((g (Str8 append dir "/.git")))
-            (let ((again? (File exists? g)))
-              (do (%mkdir-p dir)
-                  (%mkdir-p g)
-                  (List for-each (fn (_ d) (%mkdir-p (Str8 append g "/" d)))
-                    (list "objects" "objects/info" "objects/pack" "refs" "refs/heads" "refs/tags" "hooks" "info"))
-                  (unless again?
-                    (do (File write-all (Str8 append g "/HEAD") (Str8 append "ref: refs/heads/" branch "\n"))
-                        (File write-all (Str8 append g "/config")
-                          "[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n\tlogallrefupdates = true\n")
-                        (File write-all (Str8 append g "/description")
-                          "Unnamed repository; edit this file 'description' to name the repository.\n")))
-                  (list (lit out)
-                    (Str8 append (if again? "Reinitialized existing" "Initialized empty") " Git repository in " g "/\n")
-                    0)))))))))
+                     (if (Str8 starts? "/" (first operands)) (first operands) (Str8 append wd "/" (first operands))))))
+          (let ((again? (git-init-layout! dir (Opts value o "-b" "master"))))
+            (list (lit out)
+              (Str8 append (if again? "Reinitialized existing" "Initialized empty") " Git repository in " dir "/.git/\n")
+              0)))))))
 
 ; --- branch and tag ---
 
@@ -202,4 +210,9 @@
       ((null? gitdir) (%no-repo))
       (#t (%ref-command gitdir "tag" "refs/tags/" (Opts usage git-tag-options) o)))))
 
-(provide git/repo git-init git-init-options git-branch git-branch-options git-tag git-tag-options)
+; The names under a refs prefix, for clone.
+(def git-refs-under
+  (fn (_ gitdir prefix) (%refs-under gitdir prefix)))
+
+(provide git/repo git-init git-init-options git-init-layout! git-refs-under
+  git-branch git-branch-options git-tag git-tag-options)
