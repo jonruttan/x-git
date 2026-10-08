@@ -38,9 +38,10 @@ porcelain form is compared whole.
 (File mkdir (Str8 append %ix "/newdir"))
 (File write-all (Str8 append %ix "/newdir/inside") "x\n")
 (def %ix-no-hints (fn (_ r) (pair (first r) (Str8 join "\n" (List filter (fn (_ l) (not (Str8 starts? "  (use" l))) (Str8 split "\n" (rest r)))))))
+(def %ix-same (fn (_ a b) (if (equal? a b) #t (list a b))))
 (write (list (git-text "status" "--porcelain")
              (equal? (git-text "status" "--porcelain") (git-oracle "status" "--porcelain"))
-             (equal? (%ix-no-hints (git-text "status")) (%ix-no-hints (git-oracle "status")))))
+             (%ix-same (%ix-no-hints (git-text "status")) (%ix-no-hints (git-oracle "status")))))
 ```
 ---
     ((0 . " M f.txt\n?? newdir/\n?? untracked.txt\n") #t #t)
@@ -55,10 +56,11 @@ untracked.
 (File unlink (Str8 append %ix "/sub/g"))
 (git-oracle "add" "untracked.txt")
 (def %ix-no-hints (fn (_ r) (pair (first r) (Str8 join "\n" (List filter (fn (_ l) (not (Str8 starts? "  (use" l))) (Str8 split "\n" (rest r)))))))
+(def %ix-same (fn (_ a b) (if (equal? a b) #t (list a b))))
 (write (list (git-text "status" "--porcelain")
              (equal? (git-text "status" "--porcelain") (git-oracle "status" "--porcelain"))
              (equal? (git-text "ls-files" "--stage") (git-oracle "ls-files" "--stage"))
-             (equal? (%ix-no-hints (git-text "status")) (%ix-no-hints (git-oracle "status")))))
+             (%ix-same (%ix-no-hints (git-text "status")) (%ix-no-hints (git-oracle "status")))))
 ```
 ---
     ((0 . " M f.txt\n D sub/g\nA  untracked.txt\n?? newdir/\n") #t #t #t)
@@ -69,9 +71,10 @@ untracked.
 (def %ix (git-fixture))
 (git-oracle "add" "-A")
 (def %ix-no-hints (fn (_ r) (pair (first r) (Str8 join "\n" (List filter (fn (_ l) (not (Str8 starts? "  (use" l))) (Str8 split "\n" (rest r)))))))
+(def %ix-same (fn (_ a b) (if (equal? a b) #t (list a b))))
 (write (list (git-text "status" "--porcelain")
              (equal? (git-text "status" "--porcelain") (git-oracle "status" "--porcelain"))
-             (equal? (%ix-no-hints (git-text "status")) (%ix-no-hints (git-oracle "status")))))
+             (%ix-same (%ix-no-hints (git-text "status")) (%ix-no-hints (git-oracle "status")))))
 ```
 ---
     ((0 . "M  f.txt\nA  newdir/inside\nD  sub/g\nA  untracked.txt\n") #t #t)
