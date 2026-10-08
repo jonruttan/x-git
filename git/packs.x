@@ -208,6 +208,10 @@
     (if (if (>= n size) #t (= (rest got) n)) got
       (self fd off size (* n 2)))))
 
+; An object this large is worth the compiled inflate engine's build, which
+; the codec's own bar, on the compressed input, cannot foresee.
+(def %engine-worth 65536)
+
 ; The entry at off, decoded: (TYPE-NUMBER BODY N BASE), BASE () for a whole
 ; object, (ofs . OFFSET) or (ref . SHA) for a delta's base.
 (def %entry
@@ -216,6 +220,7 @@
        (let ((p (%str->ptr (first span))) (avail (rest span)))
          (let ((h (%entry-header p 0)))
            (let ((type (first h)) (at (first (rest (rest h)))))
+             (when (>= (first (rest h)) %engine-worth) (Inflate jit!))
              (let ((base (match
                            ((= type 6) (let ((d (%ofs-distance p at))) (pair (lit ofs) (%sub off (first d)))))
                            ((= type 7) (pair (lit ref) (%sha-hex p at)))
