@@ -366,4 +366,9 @@
                                   (git-commit-summary gitdir (git-tree-files gitdir parent-tree) (git-tree-files gitdir tree)))
                                 0)))))))))))))))
 
-(provide git/stage git-add git-add-options git-commit git-commit-options)
+; The index written from entries (PATH MODE-NUMBER SHA SIZE MTIME), for
+; checkout, which sets it to a tree.
+(def git-index-write!
+  (fn (_ gitdir entries) (%index-write! gitdir entries)))
+
+(provide git/stage git-add git-add-options git-commit git-commit-options git-index-write!)

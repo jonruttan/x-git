@@ -36,6 +36,10 @@ the kernel and x are installed (x-os).
 - `init [-b <branch>] [<directory>]` (the hints git prints for an unnamed
   first branch are not printed), `branch [-d] [<branch> [<start>]]`,
   `tag [-d] [<tag> [<object>]]` (lightweight tags only)
+- `checkout <branch> | <commit>`, `checkout -b <new> [<start>]`, `switch [-c <new>] <branch>`:
+  the working directory and index set to the tree, a path with changes of
+  its own stopping the move in git's words; `checkout -- <path>...` and
+  `restore <path>...` from the index
 - an object named in full, by a unique hex prefix of four digits or more,
   or by a revision: `HEAD`, a branch or tag (loose or in `packed-refs`,
   looked up as gitrevisions(7) does), with `~N`, `^N`, `^{tree}`,
@@ -68,6 +72,7 @@ path for its fixture and as the reference.
     git/stage.x       the index written; add, commit
     git/diff.x        lines compared: diff, and the summary commit prints
     git/repo.x        init, branch, tag
+    git/checkout.x    the working directory set to a tree: checkout, switch, restore
     git/cli.x         the command line: git-options, git-plan, git-run, git-main
     tests/            the spec suite and its runner, gate and harness
 
