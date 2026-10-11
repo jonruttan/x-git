@@ -122,4 +122,7 @@
                                   (unless (null? sha) (git-checkout-tree! dest g sha))
                                   (list (lit err) (Str8 append "Cloning into '" name "'...\ndone.\n") 0))))))))))))))))
 
-(provide git/clone git-clone git-clone-options)
+; The .git a path names, for the modules that read another repository.
+(def git-source-gitdir (fn (_ path) (%source-gitdir path)))
+
+(provide git/clone git-clone git-clone-options git-source-gitdir)

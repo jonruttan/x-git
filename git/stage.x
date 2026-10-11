@@ -371,4 +371,10 @@
 (def git-index-write!
   (fn (_ gitdir entries) (%index-write! gitdir entries)))
 
-(provide git/stage git-add git-add-options git-commit git-commit-options git-index-write!)
+; A value of .git/config, for the modules that read the remotes and the
+; branches' upstreams: SECTION is `user` or `remote "origin"`, say.
+(def git-config-get
+  (fn (_ gitdir section key) (%config-get gitdir section key)))
+
+(provide git/stage git-add git-add-options git-commit git-commit-options git-index-write!
+  git-config-get)
