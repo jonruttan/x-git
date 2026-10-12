@@ -26,7 +26,8 @@
 (import x/codec/hex Hex)
 (import git/objects git-hash git-object-write! git-object-read git-object-text git-read-file git-write-file!)
 (import git/refs git-ref-read git-rev-parse git-tree-of git-commit-of)
-(import git/index git-index-read git-status-lists git-tree-files git-untracked git-long-status)
+(import git/index git-index-read git-status-lists git-tree-files git-untracked-with git-long-status)
+(import git/ignore git-ignorer)
 (import git/diff git-commit-summary)
 
 (def %add (prim-ref 'int '+))
@@ -149,15 +150,18 @@
                       (first (rest (rest (rest (rest e))))) (first (rest (rest (rest (rest (rest e))))))))
       (git-index-read gitdir))))
 
-; Every file under a directory, by path from prefix; .git skipped.
+; Every file under a directory, by path from prefix; .git skipped, and
+; what ignored? says to.
 (def %files-under
-  (fn (self dir prefix)
+  (fn (self dir prefix ignored?)
     (List flat-map
       (fn (_ name)
         (let ((full (Str8 append dir "/" name)) (path (Str8 append prefix name)))
           (match
             ((str=? name ".git") ())
-            ((eq? (File type full) (lit dir)) (self full (Str8 append path "/")))
+            ((eq? (File type full) (lit dir))
+              (if (ignored? path #t) () (self full (Str8 append path "/") ignored?)))
+            ((ignored? path #f) ())
             (#t (list path)))))
       (File list-dir dir))))
 
@@ -167,20 +171,42 @@
 ; --- add ---
 
 (def git-add-options
-  (Opts declare "git add" "[-A | --all] [--] <pathspec>..." ()
+  (Opts declare "git add" "[-A | --all] [-f | --force] [--] <pathspec>..." ()
     (list
-      (Opts flag "-A" "--all" "Stage every change in the working tree: additions, modifications, removals"))))
+      (Opts flag "-A" "--all" "Stage every change in the working tree: additions, modifications, removals")
+      (Opts flag "-f" "--force" "Add a path .gitignore says to leave"))))
+
+; What git says of a path named outright that .gitignore covers.
+(def %ignored-refusal
+  (fn (_ paths)
+    (list (lit err)
+      (Str8 append "The following paths are ignored by one of your .gitignore files:\n"
+        (Str8 join "" (List map (fn (_ p) (Str8 append p "\n")) paths))
+        "hint: Use -f if you really want to add them.\n"
+        "hint: Disable this message with \"git config set advice.addIgnoredFile false\"\n")
+      1)))
 
 (def git-add
   (fn (_ wd gitdir ops)
     (def o (Opts parse git-add-options ops))
     (def specs (List map (fn (_ s) (%strip-slash s)) (Opts operands o)))
+    ; with -f nothing is ignored
+    (def ignored?
+      (if (or (null? gitdir) (Opts on? o "-f")) (fn (_ path dir?) #f) (git-ignorer wd gitdir)))
+    (def refused
+      (List filter
+        (fn (_ s)
+          (if (str=? s ".") #f
+            (do (def full (Str8 append wd "/" s))
+                (if (File exists? full) (ignored? s (eq? (File type full) (lit dir))) #f))))
+        specs))
     (match
       ((Opts help? git-add-options ops) (list (lit out) (Opts usage git-add-options) 0))
       ((not (null? (Opts unknown o))) (%unknown-option (Opts unknown o) (Opts usage git-add-options)))
       ((null? gitdir) (%no-repo))
       ((and (null? specs) (not (Opts on? o "-A")))
         (list (lit out) "Nothing specified, nothing added.\nhint: Maybe you wanted to say 'git add .'?\n" 0))
+      ((not (null? refused)) (%ignored-refusal refused))
       (#t
         (let ((index (%read-entries gitdir)))
           (let ((tracked (List map (fn (_ e) (first e)) index)))
@@ -198,7 +224,7 @@
                 (let ((all? (or (Opts on? o "-A") (List any? (fn (_ s) (str=? s ".")) specs))))
                   (let ((named
                           (if all?
-                            (List append tracked (git-untracked wd tracked))
+                            (List append tracked (git-untracked-with wd tracked ignored?))
                             (List flat-map
                               (fn (_ s)
                                 (let ((full (Str8 append wd "/" s)))
@@ -206,7 +232,7 @@
                                     ((not (File exists? full))
                                       (List filter (fn (_ t) (or (str=? t s) (Str8 starts? (Str8 append s "/") t))) tracked))
                                     ((eq? (File type full) (lit dir))
-                                      (List append (%files-under full (Str8 append s "/"))
+                                      (List append (%files-under full (Str8 append s "/") ignored?)
                                         (List filter (fn (_ t) (Str8 starts? (Str8 append s "/") t)) tracked)))
                                     (#t (list s)))))
                               specs))))
@@ -215,7 +241,7 @@
                     (let ((paths (List flat-map
                                    (fn (_ p)
                                      (if (Str8 ends? "/" p)
-                                       (%files-under (Str8 append wd "/" (%strip-slash p)) p)
+                                       (%files-under (Str8 append wd "/" (%strip-slash p)) p ignored?)
                                        (list p)))
                                    ((fn (self ps acc) (if (null? ps) (List reverse acc)
                                                         (self (rest ps) (if (List any? (fn (_ a) (str=? a (first ps))) acc) acc (pair (first ps) acc)))))
@@ -376,5 +402,10 @@
 (def git-config-get
   (fn (_ gitdir section key) (%config-get gitdir section key)))
 
+; The index's entries in the shape git-index-write! takes, for the
+; commands that change the index: (PATH MODE-NUMBER SHA SIZE MTIME).
+(def git-read-entries
+  (fn (_ gitdir) (%read-entries gitdir)))
+
 (provide git/stage git-add git-add-options git-commit git-commit-options git-index-write!
-  git-config-get)
+  git-config-get git-read-entries)
