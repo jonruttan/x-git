@@ -19,6 +19,7 @@
 (import x/sys/file File)
 (import git/objects git-object-read git-tree-entries git-hash git-read-file)
 (import git/refs git-ref-read git-tree-of git-rev-parse)
+(import git/ignore git-ignorer)
 
 (def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
@@ -139,12 +140,24 @@
           (if (eq? (File type full) (lit dir)) (self full) #t)))
       (File list-dir dir))))
 
+; Does a directory hold a file anywhere beneath it that is not ignored?
+(def %has-shown-file?
+  (fn (self dir prefix ignored?)
+    (List any?
+      (fn (_ name)
+        (let ((full (Str8 append dir "/" name)) (path (Str8 append prefix name)))
+          (if (eq? (File type full) (lit dir))
+            (if (ignored? path #t) #f (self full (Str8 append path "/") ignored?))
+            (not (ignored? path #f)))))
+      (File list-dir dir))))
+
 ; What the working directory holds that the index does not know: files
 ; by path, and a directory with nothing tracked under it once, as
 ; "DIR/", as git shows it -- when it holds a file at all; .git is
-; skipped.  Nothing reads .gitignore yet.
+; skipped, and so is what .gitignore says to (ignored? a path and whether
+; it is a directory, from git/ignore).
 (def %untracked
-  (fn (_ wd tracked)
+  (fn (_ wd tracked ignored?)
     (def tracked-under?
       (fn (_ dir) (List any? (fn (_ t) (Str8 starts? (Str8 append dir "/") t)) tracked)))
     (def tracked? (fn (_ path) (List any? (fn (_ t) (str=? t path)) tracked)))
@@ -157,9 +170,11 @@
                ((eq? (File type full) (lit dir))
                  (match
                    ((tracked-under? path) (self full (Str8 append path "/")))
-                   ((%has-file? full) (list (Str8 append path "/")))
+                   ((ignored? path #t) ())
+                   ((%has-shown-file? full (Str8 append path "/") ignored?) (list (Str8 append path "/")))
                    (#t ())))
                ((tracked? path) ())
+               ((ignored? path #f) ())
                (#t (list path)))))
          (List sort (fn (_ a b) (Str8 <? a b)) (File list-dir dir))))
      wd "")))
@@ -196,7 +211,7 @@
         index))
     (list (List sort (fn (_ a b) (Str8 <? (rest a) (rest b))) staged)
           (List sort (fn (_ a b) (Str8 <? (rest a) (rest b))) unstaged)
-          (%untracked wd (List map (fn (_ e) (first e)) index)))))
+          (%untracked wd (List map (fn (_ e) (first e)) index) (git-ignorer wd gitdir)))))
 
 (def %branch-line
   (fn (_ gitdir)
@@ -303,8 +318,13 @@
           0)))))
 
 ; The untracked paths under wd, given the tracked ones, as status lists
-; them.
+; them: .gitignore honoured.
 (def git-untracked
-  (fn (_ wd tracked) (%untracked wd tracked)))
+  (fn (_ wd gitdir tracked) (%untracked wd tracked (git-ignorer wd gitdir))))
 
-(provide git/index git-index-read git-status-lists git-status git-ls-files git-tree-files git-untracked git-long-status)
+; The same, with the caller's own ignored?: add -f takes everything.
+(def git-untracked-with
+  (fn (_ wd tracked ignored?) (%untracked wd tracked ignored?)))
+
+(provide git/index git-index-read git-status-lists git-status git-ls-files git-tree-files git-untracked
+  git-untracked-with git-long-status)

@@ -30,6 +30,7 @@
 (import git/checkout git-checkout git-switch git-restore)
 (import git/clone git-clone)
 (import git/remote git-fetch git-push)
+(import git/paths git-rm git-mv)
 
 (def %byte-len (prim-ref (lit str) (lit byte-len)))
 
@@ -63,7 +64,9 @@
         (pair "restore" git-restore)
         (pair "clone" git-clone)
         (pair "fetch" git-fetch)
-        (pair "push" git-push)))
+        (pair "push" git-push)
+        (pair "rm" git-rm)
+        (pair "mv" git-mv)))
 
 ; The command a name runs, or ().
 (def %command
