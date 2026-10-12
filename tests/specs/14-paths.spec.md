@@ -16,12 +16,15 @@ command line in both and answers (SAME-OUTPUT? X-GIT-OUTPUT SAME-STATUS?).
 (def %pt-git "git -c user.email=a@b.c -c user.name=A")
 (def %pt-make (fn (_ script) (def d (%pt-dir)) (Proc run! (list "/bin/sh" "-c" (Str8 append "cd " d " && git init -q -b main . && " script))) d))
 (def %pt-base (Str8 append "printf 'hello\\n' > f.txt && mkdir -p sub/deep && printf x > sub/g && printf y > sub/deep/h && printf z > k.txt && git add . && " %pt-git " commit -qm init"))
+; git prints rm's "(use --cached ...)" line only with advice.rmHints on, which the
+; macOS runner's git has off: both sides are compared without it.
+(def %pt-plain (fn (_ r) (pair (first r) (Str8 join "\n" (List filter (fn (_ l) (not (Str8 starts? "(use" l))) (Str8 split "\n" (rest r)))))))
 (def %pt-twin (fn (_ script . ops)
   (def a (%pt-make script))
   (def b (%pt-make script))
   (def x (apply git-text-in (pair a ops)))
   (def g (apply git-oracle-in (pair b ops)))
-  (list (equal? x g) x (equal? (git-oracle-in a "status" "--porcelain") (git-oracle-in b "status" "--porcelain"))
+  (list (equal? (%pt-plain x) (%pt-plain g)) x (equal? (git-oracle-in a "status" "--porcelain") (git-oracle-in b "status" "--porcelain"))
         (equal? (git-oracle-in a "ls-files") (git-oracle-in b "ls-files")))))
 (write (list (%pt-twin %pt-base "rm" "f.txt")
              (%pt-twin %pt-base "rm" "-r" "sub")
