@@ -33,7 +33,7 @@ git in it and `git-text` runs x-git's plan the same way, each answering
 
 ### -w writes an object git reads back
 
-The object is written as a zlib stream of stored blocks; git reads it with
+The object is written as a compressed zlib stream; git reads it with
 libz, so this holds the stream to be one libz takes.
 
 ```git
