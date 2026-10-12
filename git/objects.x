@@ -128,7 +128,7 @@
     (def path (%object-path gitdir sha))
     (unless (File exists? path)
       (do (unless (File exists? dir) (File mkdir dir))
-          (let ((z (Deflate zlib-stored (first a) 0 (rest a))))
+          (let ((z (Deflate zlib (first a) 0 (rest a))))
             (git-write-file! path (first z) (first (rest z))))))
     sha))
 
