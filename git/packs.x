@@ -20,7 +20,11 @@
 (module git/packs)
 
 (import x/sys/file File)
+(import x/type/vector Vector)
 (import x/codec/inflate Inflate)
+(import x/codec/deflate Deflate)
+(import x/codec/sha1 Sha1)
+(import x/codec/crc32 Crc32)
 (import x/codec/hex Hex)
 
 (def %add (prim-ref 'int '+))
@@ -312,4 +316,142 @@
                            (list (first o) (first (rest (rest o))) (first (rest o)) 0))))))))))
      (git-packs gitdir))))
 
-(provide git/packs git-packs git-pack-read git-pack-prefix git-pack-has?)
+; --- writing a pack ---
+;
+; A pack of whole objects, no deltas, as git accepts one from any
+; transport: the header, then each object's type and size in a varint and
+; its zlib stream, then the SHA-1 of all that, which names the pack.  Its
+; .idx (version 2) beside it: the fanout, the names sorted, each entry's
+; CRC-32 and offset, the pack's checksum, the index's own.  The bytes are
+; gathered in a buffer that doubles, then written once.
+
+(def %oref (prim-ref (lit obj) (lit ref)))
+(def %oset! (prim-ref (lit obj) (lit set!)))
+(def %str-byte-len (prim-ref (lit str) (lit byte-len)))
+
+; A buffer's slots: the region, its size, how much is written, its address.
+(def %buf-make
+  (fn (_)
+    (def v (Vector make 4 0))
+    (def r (%make-str 4096))
+    (%oset! v 1 r)
+    (%oset! v 2 4096)
+    (%oset! v 3 0)
+    (%oset! v 4 (%str->ptr r))
+    v))
+
+(def %buf-room!
+  (fn (_ b n)
+    (def need (%add (%oref b 3) n))
+    (if (> need (%oref b 2))
+      (do (def cap ((fn (grow c) (if (< c need) (grow (%mul c 2)) c)) (%mul (%oref b 2) 2)))
+          (def r (%make-str cap))
+          (%mem-copy (%str->ptr r) (%oref b 4) (%oref b 3))
+          (%oset! b 1 r)
+          (%oset! b 2 cap)
+          (%oset! b 4 (%str->ptr r)))
+      ())))
+
+(def %buf-put-bytes!
+  (fn (_ b p n)
+    (%buf-room! b n)
+    (%mem-copy (%at (%oref b 4) (%oref b 3)) p n)
+    (%oset! b 3 (%add (%oref b 3) n))))
+
+(def %buf-put-byte!
+  (fn (_ b c)
+    (%buf-room! b 1)
+    (%pset! (%oref b 4) (%oref b 3) c 1)
+    (%oset! b 3 (%add (%oref b 3) 1))))
+
+(def %buf-put-u32!
+  (fn (_ b v)
+    (%buf-put-byte! b (& (>> v 24) 255))
+    (%buf-put-byte! b (& (>> v 16) 255))
+    (%buf-put-byte! b (& (>> v 8) 255))
+    (%buf-put-byte! b (& v 255))))
+
+(def %buf-put-str! (fn (_ b s) (%buf-put-bytes! b (%str->ptr s) (%str-byte-len s))))
+
+; An entry's header: the type in bits 4-6 of the first byte with the
+; size's low four bits, then the rest of the size seven bits a byte, each
+; byte but the last with its high bit set.
+(def %put-entry-header!
+  (fn (_ b type size)
+    (def head (| (<< type 4) (& size 15)))
+    (def more (>> size 4))
+    (if (= more 0) (%buf-put-byte! b head)
+      (do (%buf-put-byte! b (| head 128))
+          ((fn (self v)
+             (if (< v 128) (%buf-put-byte! b v)
+               (do (%buf-put-byte! b (| (& v 127) 128)) (self (>> v 7)))))
+           more)))))
+
+(def %type-number
+  (fn (_ t)
+    (match ((str=? t "commit") 1) ((str=? t "tree") 2) ((str=? t "blob") 3) ((str=? t "tag") 4)
+           (#t (%fail (Str8 append "an object of type " t " cannot be packed"))))))
+
+; n bytes of region r written to path, created read-only as git creates
+; a pack.
+(def %write-region!
+  (fn (_ path r n)
+    (def fd (File open path (list (lit wronly) (lit creat) (lit trunc)) 292))
+    (when (< fd 0) (%fail (Str8 append "cannot write " path)))
+    (File write fd r n)
+    (File close fd)))
+
+; The objects -- (SHA TYPE SIZE REGION START) each, as git-object-read
+; answers them with their names -- written as a pack and its index under
+; gitdir's objects/pack; answers the pack's path.
+(def git-pack-write!
+  (fn (_ gitdir objects)
+    (def b (%buf-make))
+    (%buf-put-str! b "PACK")
+    (%buf-put-u32! b 2)
+    (%buf-put-u32! b (List length objects))
+    ; each object's row: its name, its offset, the CRC-32 of its entry
+    (def rows
+      (List map
+        (fn (_ o)
+          (def off (%oref b 3))
+          (def size (first (rest (rest o))))
+          (%put-entry-header! b (%type-number (first (rest o))) size)
+          (def z (Deflate zlib (first (rest (rest (rest o)))) (first (rest (rest (rest (rest o))))) size))
+          (%buf-put-bytes! b (%str->ptr (first z)) (first (rest z)))
+          (list (first o) off (Crc32 of (%oref b 1) off (%sub (%oref b 3) off))))
+        objects))
+    (def pack-sha (Sha1 hex-n (%oref b 1) (%oref b 3)))
+    (%buf-put-bytes! b (%str->ptr (%sha-raw pack-sha)) 20)
+    ; the index: names in order, with a count of those under each first byte
+    (def sorted (List sort (fn (_ x y) (Str8 <? (first x) (first y))) rows))
+    (def idx (%buf-make))
+    (%buf-put-byte! idx 255)
+    (%buf-put-str! idx "tOc")
+    (%buf-put-u32! idx 2)
+    (def counts (Vector make 256 0))
+    (List for-each
+      (fn (_ r)
+        (def k (%add (first (Hex decode-bytes (Str8 sub 0 2 (first r)))) 1))
+        (%oset! counts k (%add (%oref counts k) 1)))
+      sorted)
+    ((fn (self k acc)
+       (if (< k 256)
+         (do (def acc2 (%add acc (%oref counts (%add k 1))))
+             (%buf-put-u32! idx acc2)
+             (self (%add k 1) acc2))
+         ()))
+     0 0)
+    (List for-each (fn (_ r) (%buf-put-bytes! idx (%str->ptr (%sha-raw (first r))) 20)) sorted)
+    (List for-each (fn (_ r) (%buf-put-u32! idx (first (rest (rest r))))) sorted)
+    (List for-each (fn (_ r) (%buf-put-u32! idx (first (rest r)))) sorted)
+    (%buf-put-bytes! idx (%str->ptr (%sha-raw pack-sha)) 20)
+    (%buf-put-bytes! idx (%str->ptr (%sha-raw (Sha1 hex-n (%oref idx 1) (%oref idx 3)))) 20)
+    (def dir (Str8 append gitdir "/objects/pack"))
+    (unless (File exists? dir) (File mkdir dir))
+    (def stem (Str8 append dir "/pack-" pack-sha))
+    (%write-region! (Str8 append stem ".pack") (%oref b 1) (%oref b 3))
+    (%write-region! (Str8 append stem ".idx") (%oref idx 1) (%oref idx 3))
+    (Str8 append stem ".pack")))
+
+(provide git/packs git-packs git-pack-read git-pack-prefix git-pack-has? git-pack-write!)

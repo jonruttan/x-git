@@ -137,3 +137,50 @@ prints, built from the commits' names, and git reads what landed.
 ```
 ---
     (128 "fatal: The current branch topic has no upstream branch.")
+
+## the pack
+
+### what fetch brings is one pack, read by git and by x-git
+
+A fresh clone fetched from a source two commits ahead: the objects arrive
+as a pack git's own `verify-pack` reads back, nothing written loose, and the
+clone's history is the source's through either git.
+
+```git
+(def %rm-k (%rm-dir))
+(%rm-sh %rm-k (Str8 append "git init -q -b main src && cd src && printf 'one\\n' > f && git add f && " %rm-git " commit -qm one"
+  " && cd .. && git clone -q src w && cd src && printf 'two\\n' >> f && mkdir d && printf 'x' > d/g && git add . && " %rm-git " commit -qm two"
+  " && printf 'three\\n' >> f && " %rm-git " commit -qm three"))
+(def %rm-kw (Str8 append %rm-k "/w"))
+(def %rm-loose-count (fn (_) (List length (List filter (fn (_ d) (= (Str8 length d) 2)) (File list-dir (Str8 append %rm-kw "/.git/objects"))))))
+(def %rm-loose-before (%rm-loose-count))
+(def %rm-kr (git-text-in %rm-kw "fetch"))
+(def %rm-kp (List filter (fn (_ f) (Str8 ends? ".pack" f)) (File list-dir (Str8 append %rm-kw "/.git/objects/pack"))))
+(write (list (first %rm-kr) (List length %rm-kp)
+             (first (git-oracle-in %rm-kw "verify-pack" "-v" (Str8 append ".git/objects/pack/" (first %rm-kp))))
+             (first (git-oracle-in %rm-kw "fsck" "--strict"))
+             (equal? (git-oracle-in %rm-kw "log" "--oneline" "origin/main") (git-oracle-in (Str8 append %rm-k "/src") "log" "--oneline"))
+             (git-text-in %rm-kw "cat-file" "-p" "origin/main:d/g")
+             (= (%rm-loose-count) %rm-loose-before)))
+```
+---
+    (0 1 0 0 #t (0 . "x") #t)
+
+### what push sends is one pack git reads back
+
+```git
+(def %rm-q (%rm-dir))
+(%rm-sh %rm-q (Str8 append "git init -q -b main src && cd src && printf 'one\\n' > f && git add f && " %rm-git " commit -qm one"
+  " && cd .. && git clone -q --bare src bare.git && git clone -q bare.git w && cd w"
+  " && printf 'two\\n' >> f && " %rm-git " commit -qam two"))
+(def %rm-qw (Str8 append %rm-q "/w"))
+(def %rm-qb (Str8 append %rm-q "/bare.git"))
+(def %rm-qr (git-text-in %rm-qw "push"))
+(def %rm-qp (List filter (fn (_ f) (Str8 ends? ".pack" f)) (File list-dir (Str8 append %rm-qb "/objects/pack"))))
+(write (list (first %rm-qr) (List length %rm-qp)
+             (first (git-oracle-in %rm-qb "verify-pack" "-v" (Str8 append "objects/pack/" (first %rm-qp))))
+             (first (git-oracle-in %rm-qb "fsck" "--strict"))
+             (str=? (git-sha-in %rm-qb "main") (git-sha-in %rm-qw "HEAD"))))
+```
+---
+    (0 1 0 0 #t)
