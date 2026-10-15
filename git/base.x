@@ -16,7 +16,7 @@
   git-ref-read git-rev-parse git-cat-file git-hash-object git-rev-parse-command
   git-ls-tree git-log git-index-read git-status-lists git-status git-ls-files
   git-add git-commit git-diff git-edit-script git-hunks git-init git-branch git-tag
-  git-checkout git-switch git-restore git-clone git-fetch git-push git-rm git-mv)
+  git-checkout git-switch git-restore git-clone git-fetch git-push git-ls-remote git-rm git-mv)
 
 (def git-version "0.1.0")
 
@@ -30,6 +30,6 @@
 (import git/repo git-init git-branch git-tag)
 (import git/checkout git-checkout git-switch git-restore)
 (import git/clone git-clone)
-(import git/remote git-fetch git-push)
+(import git/remote git-fetch git-push git-ls-remote)
 (import git/paths git-rm git-mv)
 (import git/cli git-options git-plan git-run git-main)
