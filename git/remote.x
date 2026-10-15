@@ -7,12 +7,12 @@
 ; @license MIT No Attribution (MIT-0)
 ;
 ; fetch [<repository>] and push [<repository> [<branch>]] against a
-; repository named by a path, as git does over its local transport.  An
-; object moves by being read from one repository and written loose into
-; the other: a walk from each tip being sent, through commits' trees and
-; parents, trees' entries and tags' objects, that stops at an object the
-; receiving side already has.  Refs are then written as git writes them,
-; and the report is git's, word for word.
+; repository named by a path, as git does over its local transport.  The
+; objects move as one pack: a walk from each tip being sent, through
+; commits' trees and parents, trees' entries and tags' objects, that stops
+; at an object the receiving side already has, gathers what it lacks, and
+; git/packs writes them into its objects/pack.  Refs are then written as
+; git writes them, and the report is git's, word for word.
 ;
 ; fetch takes every branch of the remote to refs/remotes/<remote>/, the
 ; tags that point into what it now has, and FETCH_HEAD; push sends one
@@ -24,8 +24,8 @@
 
 (import x/sys/opts Opts)
 (import x/sys/file File)
-(import git/objects git-object-read git-object-write! git-object-text git-tree-entries)
-(import git/packs git-pack-has?)
+(import git/objects git-object-read git-object-text git-tree-entries)
+(import git/packs git-pack-has? git-pack-write!)
 (import git/refs git-ref-read)
 (import git/repo git-refs-under)
 (import git/stage git-config-get)
@@ -84,15 +84,26 @@
       (#t ()))))
 
 ; Every object reachable from the work list that `to` lacks, read from
-; `from` and written loose into `to`.  An object `to` has is taken to come
-; with everything it names, as it does in any repository git wrote.
-(def %copy-closure!
-  (fn (self from to work)
-    (if (null? work) ()
-      (if (%has? to (first work)) (self from to (rest work))
+; `from`: (SHA TYPE SIZE REGION START) each, each once.  An object `to`
+; has is taken to come with everything it names, as it does in any
+; repository git wrote.
+(def %closure
+  (fn (self from to work seen acc)
+    (match
+      ((null? work) (List reverse acc))
+      ((or (%has? to (first work)) (List any? (fn (_ s) (str=? s (first work))) seen))
+        (self from to (rest work) seen acc))
+      (#t
         (do (def o (git-object-read from (first work)))
-            (git-object-write! to (first o) (first (rest (rest o))) (first (rest (rest (rest o)))) (first (rest o)))
-            (self from to (List append (%children o) (rest work))))))))
+            (self from to (List append (%children o) (rest work)) (pair (first work) seen)
+                  (pair (pair (first work) o) acc)))))))
+
+; What `to` lacks of the objects behind the tips, sent as one pack; none
+; when it has them all.
+(def %send!
+  (fn (_ from to tips)
+    (def objects (%closure from to tips () ()))
+    (if (null? objects) () (git-pack-write! to objects))))
 
 ; Is commit a reachable from commit b, through b's parents?
 (def %ancestor?
@@ -176,7 +187,6 @@
     (def new (git-ref-read sgit (Str8 append "refs/heads/" b)))
     (def tracking (Str8 append "refs/remotes/" remote "/" b))
     (def old (git-ref-read gitdir tracking))
-    (%copy-closure! sgit gitdir (list new))
     (def line
       (match
         ((null? old) (list "*" "[new branch]" b (Str8 append remote "/" b) ()))
@@ -194,7 +204,7 @@
     (def name (Str8 append "refs/tags/" t))
     (def sha (git-ref-read sgit name))
     (if (and (null? (git-ref-read gitdir name)) (%has? gitdir (%peel sgit sha)))
-      (do (%copy-closure! sgit gitdir (list sha))
+      (do (%send! sgit gitdir (list sha))
           (%write-ref! gitdir name sha)
           (list (list "*" "[new tag]" t t ()) sha t))
       ())))
@@ -224,6 +234,8 @@
             (if (List any? (fn (_ b) (str=? b merge)) all)
               (pair merge (List filter (fn (_ b) (not (str=? b merge))) all))
               all))
+          ; every branch's objects in one pack, then the refs
+          (%send! sgit gitdir (List map (fn (_ b) (git-ref-read sgit (Str8 append "refs/heads/" b))) branches))
           (def fetched (List map (fn (_ b) (%fetch-branch! gitdir sgit remote b)) branches))
           (def tags
             (List filter (fn (_ l) (not (null? l)))
@@ -328,7 +340,7 @@
       ((and (not (null? old)) (not (%ancestor? gitdir old new)))
         (%rejected url src dst "non-fast-forward" (if current? %advice-pull-before-push %advice-checkout-pull-push)))
       ((and (not bare?) (str=? (or (%current-branch dgit) "") dst))
-        (do (%copy-closure! gitdir dgit (list new))
+        (do (%send! gitdir dgit (list new))
             (list (lit err)
               (Str8 append
                 "remote: error: refusing to update checked out branch: refs/heads/" dst "\n"
@@ -338,7 +350,7 @@
                 (%failed url))
               1)))
       (#t
-        (do (%copy-closure! gitdir dgit (list new))
+        (do (%send! gitdir dgit (list new))
             (%write-ref! dgit (Str8 append "refs/heads/" dst) new)
             (%write-ref! gitdir (Str8 append "refs/remotes/" remote "/" dst) new)
             (list (lit err)
