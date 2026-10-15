@@ -49,10 +49,11 @@ the kernel and x are installed (x-os).
   `refs/remotes/<remote>/*`, the tags that point into what it now has,
   `FETCH_HEAD`; by path, or by url over the pack protocol, negotiating
   what this repository has so only the rest is sent
-- `push [<repository> [<branch>]]` to a path: one branch, refused as git
-  refuses a push that is not a fast-forward, one whose remote has work
-  this repository has not seen, or one into a non-bare remote's checked-out
-  branch
+- `push [<repository> [<branch>]]`: one branch, by path or by url to
+  `git-receive-pack` with the pack of what the remote lacks and its
+  report read back; refused as git refuses a push that is not a
+  fast-forward, one whose remote has work this repository has not seen,
+  or one into a non-bare remote's checked-out branch
 - `ls-remote [<repository>]`: what the remote's service advertises
 - `rm [-r] [--cached] [-f] <pathspec>...`, `mv <source>... <destination>`;
   `.gitignore`, `.git/info/exclude` and `core.excludesFile` as
