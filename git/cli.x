@@ -29,7 +29,7 @@
 (import git/repo git-init git-branch git-tag)
 (import git/checkout git-checkout git-switch git-restore)
 (import git/clone git-clone)
-(import git/remote git-fetch git-push)
+(import git/remote git-fetch git-push git-ls-remote)
 (import git/paths git-rm git-mv)
 
 (def %byte-len (prim-ref (lit str) (lit byte-len)))
@@ -65,6 +65,7 @@
         (pair "clone" git-clone)
         (pair "fetch" git-fetch)
         (pair "push" git-push)
+        (pair "ls-remote" git-ls-remote)
         (pair "rm" git-rm)
         (pair "mv" git-mv)))
 

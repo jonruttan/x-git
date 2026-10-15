@@ -216,8 +216,9 @@
 ; the codec's own bar, on the compressed input, cannot foresee.
 (def %engine-worth 65536)
 
-; The entry at off, decoded: (TYPE-NUMBER BODY N BASE), BASE () for a whole
-; object, (ofs . OFFSET) or (ref . SHA) for a delta's base.
+; The entry at off, decoded: (TYPE-NUMBER BODY N BASE END), BASE () for a
+; whole object, (ofs . OFFSET) or (ref . SHA) for a delta's base, END the
+; offset after the entry's stream, where the next entry starts.
 (def %entry
   (fn (_ fd off size)
     ((fn (self span)
@@ -238,7 +239,8 @@
                  (if (eq? z (lit short))
                    (if (>= avail (%sub size off)) (%fail "a pack entry's stream runs past the pack")
                      (self (%entry-span fd off size (* avail 2))))
-                   (list type (first z) (first (rest z)) base))))))))
+                   (list type (first z) (first (rest z)) base
+                         (%add off (%add start (first (rest (rest z)))))))))))))
      (%entry-span fd off size 4096))))
 
 ; A delta applied to its base: the result region and its count.
@@ -423,6 +425,17 @@
         objects))
     (def pack-sha (Sha1 hex-n (%oref b 1) (%oref b 3)))
     (%buf-put-bytes! b (%str->ptr (%sha-raw pack-sha)) 20)
+    (def dir (Str8 append gitdir "/objects/pack"))
+    (unless (File exists? dir) (File mkdir dir))
+    (def stem (Str8 append dir "/pack-" pack-sha))
+    (%write-region! (Str8 append stem ".pack") (%oref b 1) (%oref b 3))
+    (%idx-write! stem pack-sha rows)
+    (Str8 append stem ".pack")))
+
+; The index of a pack named pack-sha, written beside it: rows are (SHA
+; OFFSET CRC) each.
+(def %idx-write!
+  (fn (_ stem pack-sha rows)
     ; the index: names in order, with a count of those under each first byte
     (def sorted (List sort (fn (_ x y) (Str8 <? (first x) (first y))) rows))
     (def idx (%buf-make))
@@ -447,11 +460,93 @@
     (List for-each (fn (_ r) (%buf-put-u32! idx (first (rest r)))) sorted)
     (%buf-put-bytes! idx (%str->ptr (%sha-raw pack-sha)) 20)
     (%buf-put-bytes! idx (%str->ptr (%sha-raw (Sha1 hex-n (%oref idx 1) (%oref idx 3)))) 20)
+    (%write-region! (Str8 append stem ".idx") (%oref idx 1) (%oref idx 3))))
+
+; --- indexing a pack that arrived ---
+;
+; A pack another repository sent holds deltas, and names nothing until it
+; has an index.  The bytes are checked against the SHA-1 that ends them,
+; which names the pack; then each entry is read in turn, its name the
+; SHA-1 of the object it decodes to, its base read back from the pack
+; when it is a delta, and the index is written beside the pack.
+
+; An object's name: the SHA-1 of its header and body.
+(def %object-sha
+  (fn (_ type body n)
+    (def hdr (Str8 append type " " (Str8 str n)))
+    (def hlen (%str-byte-len hdr))
+    (def total (%add (%add hlen 1) n))
+    (def r (%make-str total))
+    (def p (%str->ptr r))
+    (%mem-copy p (%str->ptr hdr) hlen)
+    (%pset! p hlen 0 1)
+    (when (> n 0) (%mem-copy (%at p (%add hlen 1)) (%str->ptr body) n))
+    (Sha1 hex-n r total)))
+
+; The first n bytes of region r, a pack as it came off the wire, written
+; under gitdir's objects/pack with its index; answers the pack's path.
+; read-base answers (TYPE SIZE REGION START) for an object this
+; repository already has, for a delta whose base is not in the pack.
+(def git-pack-index!
+  (fn (_ gitdir r n read-base)
+    (def p (%str->ptr r))
+    (when (< n 32) (%fail "a pack too short to be one"))
+    (unless (= (%mem-cmp p (%str->ptr "PACK") 4) 0) (%fail "a pack without its signature"))
+    (unless (= (%u32 p 4) 2) (%fail "a pack of a version other than 2"))
+    (def count (%u32 p 8))
+    (def pack-sha (Sha1 hex-n r (%sub n 20)))
+    (unless (str=? pack-sha (%sha-hex p (%sub n 20))) (%fail "a pack whose checksum disagrees"))
     (def dir (Str8 append gitdir "/objects/pack"))
     (unless (File exists? dir) (File mkdir dir))
     (def stem (Str8 append dir "/pack-" pack-sha))
-    (%write-region! (Str8 append stem ".pack") (%oref b 1) (%oref b 3))
-    (%write-region! (Str8 append stem ".idx") (%oref idx 1) (%oref idx 3))
-    (Str8 append stem ".pack")))
+    (def path (Str8 append stem ".pack"))
+    (if (File exists? (Str8 append stem ".idx")) path
+      (do
+        (unless (File exists? path) (%write-region! path r n))
+        (def fd (File open path (lit rdonly)))
+        (when (< fd 0) (%fail (Str8 append "cannot open " path)))
+        ; each entry's offset, its base and where it ends: a whole object is
+        ; named at once; a delta waits for every whole object's name, since
+        ; a REF_DELTA may name a base anywhere in the pack
+        (def entries
+          ((fn (self i off acc)
+             (if (>= i count) (List reverse acc)
+               (let ((e (%entry fd off n)))
+                 (let ((base (first (rest (rest (rest e))))) (end (first (rest (rest (rest (rest e)))))))
+                   (self (%add i 1) end
+                         (pair (list off end base
+                                     (if (null? base) (%object-sha (%type-name (first e)) (first (rest e)) (first (rest (rest e)))) ()))
+                               acc))))))
+           0 12 ()))
+        (def named (List filter (fn (_ e) (not (null? (first (rest (rest (rest e))))))) entries))
+        (def in-pack
+          (fn (self sha)
+            (def hit (List find (fn (_ e) (str=? (first (rest (rest (rest e)))) sha)) named))
+            (if (null? hit) (read-base sha)
+              (let ((o (%object-at fd n (first hit) self)))
+                (list (first o) (first (rest (rest o))) (first (rest o)) 0)))))
+        (def rows
+          (List map
+            (fn (_ e)
+              (def off (first e))
+              (def sha
+                (if (null? (first (rest (rest e)))) (first (rest (rest (rest e))))
+                  (let ((o (%object-at fd n off in-pack)))
+                    (%object-sha (first o) (first (rest o)) (first (rest (rest o)))))))
+              (list sha off (Crc32 of r off (%sub (first (rest e)) off))))
+            entries))
+        (File close fd)
+        (%idx-write! stem pack-sha rows)
+        path))))
 
-(provide git/packs git-packs git-pack-read git-pack-prefix git-pack-has? git-pack-write!)
+; --- bytes gathered for the wire ---
+
+; A growable byte buffer for callers that gather a pack as it arrives:
+; made empty; bytes put at its end; its region and count read back.
+(def git-bytes-make (fn (_) (%buf-make)))
+(def git-bytes-put! (fn (_ b p n) (%buf-put-bytes! b p n)))
+(def git-bytes-region (fn (_ b) (%oref b 1)))
+(def git-bytes-count (fn (_ b) (%oref b 3)))
+
+(provide git/packs git-packs git-pack-read git-pack-prefix git-pack-has? git-pack-write! git-pack-index!
+  git-bytes-make git-bytes-put! git-bytes-region git-bytes-count)

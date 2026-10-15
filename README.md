@@ -40,10 +40,23 @@ the kernel and x are installed (x-os).
   the working directory and index set to the tree, a path with changes of
   its own stopping the move in git's words; `checkout -- <path>...` and
   `restore <path>...` from the index
-- `clone <path> [<directory>]` from a local path: the objects copied, the
-  source's branches as `refs/remotes/origin/*`, its tags, one local branch
-  for its HEAD branch, the remote and branch config, the tree checked out
-  (nothing over a network yet)
+- `clone <repository> [<directory>]` from a local path or a `file://`
+  url: the objects copied, or brought as one pack over git's pack
+  protocol from `git-upload-pack`; the source's branches as
+  `refs/remotes/origin/*`, its tags, one local branch for its HEAD
+  branch, the remote and branch config, the tree checked out
+- `fetch [<repository>]`: every branch of the remote to
+  `refs/remotes/<remote>/*`, the tags that point into what it now has,
+  `FETCH_HEAD`; by path, or by url over the pack protocol, negotiating
+  what this repository has so only the rest is sent
+- `push [<repository> [<branch>]]` to a path: one branch, refused as git
+  refuses a push that is not a fast-forward, one whose remote has work
+  this repository has not seen, or one into a non-bare remote's checked-out
+  branch
+- `ls-remote [<repository>]`: what the remote's service advertises
+- `rm [-r] [--cached] [-f] <pathspec>...`, `mv <source>... <destination>`;
+  `.gitignore`, `.git/info/exclude` and `core.excludesFile` as
+  gitignore(5) reads them
 - an object named in full, by a unique hex prefix of four digits or more,
   or by a revision: `HEAD`, a branch or tag (loose or in `packed-refs`,
   looked up as gitrevisions(7) does), with `~N`, `^N`, `^{tree}`,
@@ -77,7 +90,12 @@ path for its fixture and as the reference.
     git/diff.x        lines compared: diff, and the summary commit prints
     git/repo.x        init, branch, tag
     git/checkout.x    the working directory set to a tree: checkout, switch, restore
-    git/clone.x       a repository copied from a path
+    git/clone.x       a repository copied from a path or fetched by url
+    git/remote.x      fetch, push and ls-remote, by path or by wire
+    git/protocol.x    the client side of git's pack protocol
+    git/wire.x        a git service on two pipes, spoken in pkt-lines
+    git/paths.x       rm, mv
+    git/ignore.x      gitignore(5)
     git/cli.x         the command line: git-options, git-plan, git-run, git-main
     tests/            the spec suite and its runner, gate and harness
 
