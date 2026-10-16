@@ -92,10 +92,14 @@ the `remote:` lines are left out of the comparison.
 
 ### an empty repository, and a path that is none, as git's upload-pack answers them
 
+Version 0 has no word for an unborn HEAD, which git's own upload-pack
+sends in version 2, so a client of x-git's names the branch itself; the
+default is set, so a git that would hint about choosing it says nothing.
+
 ```git
 (%sv-sh %sv-d "git init -q --bare empty.git")
-(def %sv-xe (git-oracle-in (Str8 append %sv-d "/x") "clone" %sv-up (%sv-url (Str8 append %sv-d "/empty.git")) "e"))
-(def %sv-ge (git-oracle-in (Str8 append %sv-d "/g") "clone" (%sv-url (Str8 append %sv-d "/empty.git")) "e"))
+(def %sv-xe (git-oracle-in (Str8 append %sv-d "/x") "-c" "init.defaultBranch=main" "clone" %sv-up (%sv-url (Str8 append %sv-d "/empty.git")) "e"))
+(def %sv-ge (git-oracle-in (Str8 append %sv-d "/g") "-c" "init.defaultBranch=main" "clone" (%sv-url (Str8 append %sv-d "/empty.git")) "e"))
 (def %sv-xn (git-oracle-in %sv-d "ls-remote" %sv-up (%sv-url (Str8 append %sv-d "/nowhere"))))
 (def %sv-gn (git-oracle-in %sv-d "ls-remote" (%sv-url (Str8 append %sv-d "/nowhere"))))
 (write (list (equal? %sv-xe %sv-ge) (first %sv-xe)
