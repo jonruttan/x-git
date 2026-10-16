@@ -349,6 +349,22 @@
       (Str8 join "" (List map (fn (_ c) (Str8 append " delete mode 100644 " (first c) "\n"))
                       (List filter (fn (_ c) (null? (first (rest (rest c))))) changes))))))
 
+; What merge prints after "Fast-forward": the --stat of one tree against
+; another, then a line a file created or deleted, in path order.
+(def git-tree-diffstat
+  (fn (_ gitdir old-tree new-tree)
+    (def changes (%changed "" gitdir (%tree-side gitdir old-tree) (%tree-side gitdir new-tree) #f))
+    (if (null? changes) ""
+      (Str8 append (%stat-text changes)
+        (Str8 join ""
+          (List flat-map
+            (fn (_ c)
+              (match
+                ((null? (first (rest c))) (list (Str8 append " create mode " (first (rest (first (rest (rest c))))) " " (first c) "\n")))
+                ((null? (first (rest (rest c)))) (list (Str8 append " delete mode " (first (rest (first (rest c)))) " " (first c) "\n")))
+                (#t ())))
+            changes))))))
+
 ; --- diff ---
 
 (def git-diff-options
@@ -394,4 +410,4 @@
                         (Str8 join "" (List map (fn (_ c) (%file-diff (first c) (first (rest c)) (first (rest (rest c))))) changes))))
                     0))))))))))
 
-(provide git/diff git-diff git-diff-options git-edit-script git-hunks git-commit-summary)
+(provide git/diff git-diff git-diff-options git-edit-script git-hunks git-commit-summary git-tree-diffstat)

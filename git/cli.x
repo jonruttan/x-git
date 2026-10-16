@@ -31,6 +31,7 @@
 (import git/clone git-clone)
 (import git/remote git-fetch git-push git-ls-remote)
 (import git/serve git-upload-pack git-receive-pack)
+(import git/merge git-merge git-pull)
 (import git/paths git-rm git-mv)
 
 (def %byte-len (prim-ref (lit str) (lit byte-len)))
@@ -67,6 +68,8 @@
         (pair "fetch" git-fetch)
         (pair "push" git-push)
         (pair "ls-remote" git-ls-remote)
+        (pair "merge" git-merge)
+        (pair "pull" git-pull)
         (pair "upload-pack" git-upload-pack)
         (pair "receive-pack" git-receive-pack)
         (pair "rm" git-rm)

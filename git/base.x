@@ -17,7 +17,7 @@
   git-ls-tree git-log git-index-read git-status-lists git-status git-ls-files
   git-add git-commit git-diff git-edit-script git-hunks git-init git-branch git-tag
   git-checkout git-switch git-restore git-clone git-fetch git-push git-ls-remote git-rm git-mv
-  git-upload-pack git-receive-pack)
+  git-upload-pack git-receive-pack git-merge git-pull)
 
 (def git-version "0.1.0")
 
@@ -33,5 +33,6 @@
 (import git/clone git-clone)
 (import git/remote git-fetch git-push git-ls-remote)
 (import git/serve git-upload-pack git-receive-pack)
+(import git/merge git-merge git-pull)
 (import git/paths git-rm git-mv)
 (import git/cli git-options git-plan git-run git-main)

@@ -676,6 +676,8 @@
 (def git-write-ref! (fn (_ gitdir name sha) (%write-ref! gitdir name sha)))
 (def git-current-branch (fn (_ gitdir) (%current-branch gitdir)))
 (def git-deny-current (fn (_ dst) (%deny-current dst)))
+(def git-ancestor? (fn (_ gitdir a b) (%ancestor? gitdir a b)))
 
 (provide git/remote git-fetch git-fetch-options git-push git-push-options git-ls-remote git-ls-remote-options
-  git-advertised git-objects-to-send git-has-object? git-peel git-write-ref! git-current-branch git-deny-current)
+  git-advertised git-objects-to-send git-has-object? git-peel git-write-ref! git-current-branch git-deny-current
+  git-ancestor?)
