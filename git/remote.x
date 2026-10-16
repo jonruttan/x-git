@@ -653,4 +653,20 @@
       ((null? operands) (push! current (%strip-heads upstream) #t))
       (#t (push! current current #t)))))
 
-(provide git/remote git-fetch git-fetch-options git-push git-push-options git-ls-remote git-ls-remote-options)
+; --- for the services ---
+
+; What git-upload-pack advertises for a repository: HEAD, then its refs
+; in name order, an annotated tag followed by what it names.
+(def git-advertised (fn (_ gitdir) (%advertised gitdir)))
+
+; The objects behind tips a remote holding stops lacks, (SHA . OBJ) each.
+(def git-objects-to-send (fn (_ gitdir tips stops) (%objects-to-send gitdir tips stops)))
+
+(def git-has-object? (fn (_ gitdir sha) (%has? gitdir sha)))
+(def git-peel (fn (_ gitdir sha) (%peel gitdir sha)))
+(def git-write-ref! (fn (_ gitdir name sha) (%write-ref! gitdir name sha)))
+(def git-current-branch (fn (_ gitdir) (%current-branch gitdir)))
+(def git-deny-current (fn (_ dst) (%deny-current dst)))
+
+(provide git/remote git-fetch git-fetch-options git-push git-push-options git-ls-remote git-ls-remote-options
+  git-advertised git-objects-to-send git-has-object? git-peel git-write-ref! git-current-branch git-deny-current)

@@ -30,6 +30,7 @@
 (import git/checkout git-checkout git-switch git-restore)
 (import git/clone git-clone)
 (import git/remote git-fetch git-push git-ls-remote)
+(import git/serve git-upload-pack git-receive-pack)
 (import git/paths git-rm git-mv)
 
 (def %byte-len (prim-ref (lit str) (lit byte-len)))
@@ -66,6 +67,8 @@
         (pair "fetch" git-fetch)
         (pair "push" git-push)
         (pair "ls-remote" git-ls-remote)
+        (pair "upload-pack" git-upload-pack)
+        (pair "receive-pack" git-receive-pack)
         (pair "rm" git-rm)
         (pair "mv" git-mv)))
 
@@ -123,8 +126,11 @@
   (fn (_ ops)
     (def r (git-run (git-plan ops)))
     (def text (first (rest r)))
-    (File write (if (eq? (first r) (lit out)) 1 2)
-      (if (pair? text) (first text) text) (%text-count text))
+    ; nothing written when there is nothing to write: a service's client
+    ; has closed the pipe by now, and an empty write to it is SIGPIPE
+    (unless (= (%text-count text) 0)
+      (File write (if (eq? (first r) (lit out)) 1 2)
+        (if (pair? text) (first text) text) (%text-count text)))
     (let ((more (rest (rest (rest r)))))
       (unless (null? more) (File write 1 (first more) (%byte-len (first more)))))
     (Sys exit (first (rest (rest r))))))

@@ -55,6 +55,12 @@ the kernel and x are installed (x-os).
   fast-forward, one whose remote has work this repository has not seen,
   or one into a non-bare remote's checked-out branch
 - `ls-remote [<repository>]`: what the remote's service advertises
+- `upload-pack <directory>` and `receive-pack <directory>`: the services
+  git runs on the far end of a fetch or a push, on standard input and
+  output -- `git clone --upload-pack='x -l git -- upload-pack' file://...`
+  and `git push --receive-pack='x -l git -- receive-pack' ...` take them
+  as they take git's own; refusals (HEAD's branch deleted, a non-bare
+  repository's checked-out branch updated) in receive-pack's words
 - `rm [-r] [--cached] [-f] <pathspec>...`, `mv <source>... <destination>`;
   `.gitignore`, `.git/info/exclude` and `core.excludesFile` as
   gitignore(5) reads them
@@ -95,6 +101,7 @@ path for its fixture and as the reference.
     git/remote.x      fetch, push and ls-remote, by path or by wire
     git/protocol.x    the client side of git's pack protocol
     git/wire.x        a git service on two pipes, spoken in pkt-lines
+    git/serve.x       upload-pack and receive-pack, the services
     git/paths.x       rm, mv
     git/ignore.x      gitignore(5)
     git/cli.x         the command line: git-options, git-plan, git-run, git-main

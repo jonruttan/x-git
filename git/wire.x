@@ -75,6 +75,21 @@
     (%oset! w 8 (%make-str %CHUNK))
     w))
 
+; A wire on descriptors this process already has: a service's own
+; standard input and output, with no child behind them.
+(def wire-of-fds
+  (fn (_ in out)
+    (def w (Vector make 8 0))
+    (%oset! w 1 -1)
+    (%oset! w 2 out)
+    (%oset! w 3 in)
+    (%oset! w 4 (%make-str %CHUNK))
+    (%oset! w 5 %CHUNK)
+    (%oset! w 6 0)
+    (%oset! w 7 0)
+    (%oset! w 8 (%make-str %CHUNK))
+    w))
+
 ; Our end of the child's input closed: it reads EOF.
 (def wire-close-in!
   (fn (_ w)
@@ -86,6 +101,17 @@
     (wire-close-in! w)
     (Sys close (%oref w 3))
     (Sys wait (%oref w 1))))
+
+; The bytes that come next, outside any packet: what the buffer holds
+; unread, or one read's worth when it holds none.  (REGION . N), or ()
+; at the end of the input.
+(def wire-raw
+  (fn (_ w)
+    (def n (%sub (%oref w 7) (%oref w 6)))
+    (if (if (> n 0) #t (%fill! w 1))
+      (let ((k (%sub (%oref w 7) (%oref w 6))))
+        (pair (%take! w k) k))
+      ())))
 
 ; --- reading ---
 
@@ -214,5 +240,5 @@
 (def wire-send-raw!
   (fn (_ w r n) (%write-all! (%oref w 2) r 0 n)))
 
-(provide git/wire wire-open wire-close! wire-close-in! wire-pkt wire-line wire-split
+(provide git/wire wire-open wire-of-fds wire-close! wire-close-in! wire-pkt wire-line wire-split wire-raw
   wire-send! wire-send-bytes! wire-flush! wire-send-raw!)
