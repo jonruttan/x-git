@@ -214,5 +214,8 @@
 (def git-refs-under
   (fn (_ gitdir prefix) (%refs-under gitdir prefix)))
 
-(provide git/repo git-init git-init-options git-init-layout! git-refs-under
+; A ref's line, and its peeled line, taken out of packed-refs.
+(def git-unpack-ref! (fn (_ gitdir full) (%unpack-ref! gitdir full)))
+
+(provide git/repo git-init git-init-options git-init-layout! git-refs-under git-unpack-ref!
   git-branch git-branch-options git-tag git-tag-options)

@@ -556,6 +556,53 @@
         (%idx-write! stem pack-sha rows)
         path))))
 
+; --- a pack arriving on a stream ---
+;
+; A pack says how many entries it holds, not how long it is: its end is
+; found by reading each entry in turn, the header's varint, a delta's
+; base, then the zlib stream, whose own end the inflater finds.  The
+; first n bytes of r are what has arrived so far; a scan goes as far as
+; they allow and says where it stopped, so the next one can go on from
+; there when more come.
+
+; i at most n, the offset after a varint whose bytes start at i, or ()
+; when the bytes run out first.
+(def %varint-end
+  (fn (self p i n)
+    (match ((>= i n) ()) ((= (& (%byte p i) 128) 0) (%add i 1)) (#t (self p (%add i 1) n)))))
+
+; Where the entry at off ends, or () when its bytes have not all come.
+(def %entry-end
+  (fn (_ r off n)
+    (def p (%str->ptr r))
+    (def after-header (%varint-end p off n))
+    (if (null? after-header) ()
+      (let ((type (& (>> (%byte p off) 4) 7)))
+        (let ((start (match
+                       ((= type 6) (%varint-end p after-header n))
+                       ((= type 7) (if (<= (%add after-header 20) n) (%add after-header 20) ()))
+                       (#t after-header))))
+          (if (null? start) ()
+            (let ((z (guard (e (if (Str8 includes? "ends inside" (e msg)) () (Err raise (Err label e) (e msg) ())))
+                       (Inflate zlib r start (%sub n start)))))
+              (if (null? z) () (%add start (first (rest (rest z))))))))))))
+
+; The scan of a pack's first n bytes in r from entry i at offset off:
+; (I . OFF), the entries read whole and where the next starts.  The pack
+; is whole when I is its count and twenty bytes of checksum follow OFF.
+(def git-pack-scan
+  (fn (self r n count i off)
+    (if (>= i count) (pair i off)
+      (let ((end (%entry-end r off n)))
+        (if (null? end) (pair i off) (self r n count (%add i 1) end))))))
+
+; The count a pack's header gives, from its first twelve bytes.
+(def git-pack-count
+  (fn (_ r)
+    (def p (%str->ptr r))
+    (unless (= (%mem-cmp p (%str->ptr "PACK") 4) 0) (%fail "a pack without its signature"))
+    (%u32 p 8)))
+
 ; --- bytes gathered for the wire ---
 
 ; A growable byte buffer for callers that gather a pack as it arrives:
@@ -566,4 +613,4 @@
 (def git-bytes-count (fn (_ b) (%oref b 3)))
 
 (provide git/packs git-packs git-pack-read git-pack-prefix git-pack-has? git-pack-write! git-pack-bytes git-pack-index!
-  git-bytes-make git-bytes-put! git-bytes-region git-bytes-count)
+  git-pack-scan git-pack-count git-bytes-make git-bytes-put! git-bytes-region git-bytes-count)

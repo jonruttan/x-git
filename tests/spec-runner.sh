@@ -40,6 +40,11 @@ LANG_LIB="$BUNDLE/tests/lib/harness.gen.x"
 # SPEC_PATH is env-overridable so a single spec file can be run in isolation.
 SPEC_PATH="${SPEC_PATH:-$BUNDLE/tests/specs}"
 
+# The specs that make git a client of x-git's services start x-git as a
+# process of its own, through this x and from this tree.
+X_GIT_BUNDLE="$BUNDLE"
+export X X_GIT_BUNDLE
+
 # The suite boots from a state image of the harness when the platform can write
 # one. tools/dev/image-build.sh images a child that loaded the harness, keyed on
 # what it depends on (the harness, the platform's lib/, its engine, and git/), so
