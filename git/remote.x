@@ -245,7 +245,7 @@
 ; first time and on a fresh one after.  () when the service said nothing.
 (def %wire-source
   (fn (_ gitdir url)
-    (def w (proto-connect url "upload-pack"))
+    (def w (proto-connect url "upload-pack" gitdir))
     (def adv (proto-advertise w))
     (if (null? adv) (do (wire-close! w) ())
       (let ((open (Vector make 1 w))
@@ -254,7 +254,7 @@
                       (List filter (fn (_ e) (Str8 ends? "^{}" (first e))) (first adv)))))
         (list refs peeled
               (fn (_ shas)
-                (def w2 (if (null? (%oref open 1)) (proto-connect url "upload-pack") (%oref open 1)))
+                (def w2 (if (null? (%oref open 1)) (proto-connect url "upload-pack" gitdir) (%oref open 1)))
                 (when (null? (%oref open 1))
                   (when (null? (proto-advertise w2)) (do (wire-close! w2) (%fail "the remote went away"))))
                 (%oset! open 1 ())
@@ -311,6 +311,15 @@
           (list (list "*" "[new tag]" t t ()) sha t))
       ())))
 
+; A url as fetch shows it, in its report and in FETCH_HEAD: trailing
+; slashes dropped, then a trailing .git.
+(def %shown-url
+  (fn (_ url)
+    (def n ((fn (self k) (if (and (> k 0) (str=? (Str8 sub (%sub k 1) 1 url) "/")) (self (%sub k 1)) k)) (Str8 length url)))
+    (if (and (> n 4) (str=? (Str8 sub (%sub n 4) 4 url) ".git"))
+      (Str8 sub 0 (%sub n 4) url)
+      (Str8 sub 0 n url))))
+
 (def git-fetch
   (fn (_ wd gitdir ops)
     (def o (Opts parse git-fetch-options ops))
@@ -363,15 +372,15 @@
                 (List map
                   (fn (_ f)
                     (Str8 append (first (rest f)) "\t" (if (str=? (first (rest (rest f))) merge) "" "not-for-merge") "\t"
-                      "branch '" (first (rest (rest f))) "' of " url "\n"))
+                      "branch '" (first (rest (rest f))) "' of " (%shown-url url) "\n"))
                   fetched)
                 (List map
-                  (fn (_ t) (Str8 append (first (rest t)) "\tnot-for-merge\ttag '" (first (rest (rest t))) "' of " url "\n"))
+                  (fn (_ t) (Str8 append (first (rest t)) "\tnot-for-merge\ttag '" (first (rest (rest t))) "' of " (%shown-url url) "\n"))
                   tags))))
           ((first (rest (rest (rest src)))))
           (list (lit err)
             (if (null? lines) ""
-              (Str8 append "From " url "\n"
+              (Str8 append "From " (%shown-url url) "\n"
                 (Str8 join ""
                   (List map (fn (_ l) (%report-line (first l) (first (rest l)) (first (rest (rest l))) width
                                         (first (rest (rest (rest l)))) (first (rest (rest (rest (rest l)))))))
@@ -411,7 +420,7 @@
     (match
       ((Opts help? git-ls-remote-options ops) (list (lit out) (Opts usage git-ls-remote-options) 0))
       ((proto-url? url)
-        (let ((w (proto-connect url "upload-pack")))
+        (let ((w (proto-connect url "upload-pack" gitdir)))
           (let ((adv (proto-advertise w)))
             (do (unless (null? adv) (wire-flush! w))
                 (wire-close! w)
@@ -555,7 +564,7 @@
 ; its report on the same connection.
 (def %wire-destination
   (fn (_ gitdir url)
-    (def w (proto-connect url "receive-pack"))
+    (def w (proto-connect url "receive-pack" gitdir))
     (def adv (proto-advertise w))
     (if (null? adv) (do (wire-close! w) ())
       (let ((refs (List filter (fn (_ e) (not (Str8 ends? "^{}" (first e)))) (first adv))))
