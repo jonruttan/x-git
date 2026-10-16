@@ -183,10 +183,41 @@
 
 ; The three lists status prints: staged ((CODE . PATH) ...) against HEAD,
 ; unstaged against the working directory, and the untracked paths.
+; The paths a merge left in conflict, as (CODE . PATH), CODE the two
+; letters status gives them from the stages there: 1 the base, 2 ours, 3
+; theirs.
+(def %unmerged
+  (fn (_ all)
+    (def paths
+      ((fn (self es acc)
+         (if (null? es) (List reverse acc)
+           (self (rest es)
+             (if (and (> (first (rest (rest (rest (first es))))) 0)
+                      (not (List any? (fn (_ p) (str=? p (first (first es)))) acc)))
+               (pair (first (first es)) acc) acc))))
+       all ()))
+    (List map
+      (fn (_ p)
+        (def stages (List map (fn (_ e) (first (rest (rest (rest e))))) (List filter (fn (_ e) (str=? (first e) p)) all)))
+        (def has (fn (_ n) (List any? (fn (_ s) (= s n)) stages)))
+        (pair
+          (match
+            ((and (has 2) (has 3)) (if (has 1) "UU" "AA"))
+            ((and (has 1) (has 2)) "UD")
+            ((and (has 1) (has 3)) "DU")
+            ((has 2) "AU")
+            ((has 3) "UA")
+            (#t "DD"))
+          p))
+      paths)))
+
 (def git-status-lists
   (fn (_ wd gitdir)
-    (def index (git-index-read gitdir))
-    (def head (%head-files gitdir))
+    (def all (git-index-read gitdir))
+    (def unmerged (%unmerged all))
+    ; a path in conflict is shown as unmerged and nowhere else
+    (def index (List filter (fn (_ e) (not (List any? (fn (_ u) (str=? (rest u) (first e))) unmerged))) all))
+    (def head (List filter (fn (_ h) (not (List any? (fn (_ u) (str=? (rest u) (first h))) unmerged))) (%head-files gitdir)))
     (def in-index (fn (_ path) (List find (fn (_ e) (str=? (first e) path)) index)))
     (def in-head (fn (_ path) (List find (fn (_ h) (str=? (first h) path)) head)))
     (def staged
@@ -211,7 +242,8 @@
         index))
     (list (List sort (fn (_ a b) (Str8 <? (rest a) (rest b))) staged)
           (List sort (fn (_ a b) (Str8 <? (rest a) (rest b))) unstaged)
-          (%untracked wd (List map (fn (_ e) (first e)) index) (git-ignorer wd gitdir)))))
+          (%untracked wd (List map (fn (_ e) (first e)) all) (git-ignorer wd gitdir))
+          unmerged)))
 
 (def %branch-line
   (fn (_ gitdir)
@@ -230,16 +262,22 @@
   (fn (_ lists)
     (def staged (first lists))
     (def unstaged (first (rest lists)))
+    (def unmerged (first (rest (rest (rest lists)))))
     (def code-of (fn (_ l path) (let ((e (List find (fn (_ c) (str=? (rest c) path)) l))) (if (null? e) " " (first e)))))
     (def paths
       (List sort (fn (_ a b) (Str8 <? a b))
         ((fn (self ps acc)
            (if (null? ps) acc
              (self (rest ps) (if (List any? (fn (_ a) (str=? a (first ps))) acc) acc (pair (first ps) acc)))))
-         (List map (fn (_ c) (rest c)) (List append staged unstaged)) ())))
+         (List map (fn (_ c) (rest c)) (List append staged (List append unstaged unmerged))) ())))
     (Str8 join ""
       (List append
-        (List map (fn (_ p) (Str8 append (code-of staged p) (code-of unstaged p) " " p "\n")) paths)
+        (List map
+          (fn (_ p)
+            (let ((u (List find (fn (_ c) (str=? (rest c) p)) unmerged)))
+              (if (null? u) (Str8 append (code-of staged p) (code-of unstaged p) " " p "\n")
+                (Str8 append (first u) " " p "\n"))))
+          paths)
         (List map (fn (_ p) (Str8 append "?? " p "\n")) (first (rest (rest lists))))))))
 
 ; status as git lays it out, hints and all -- also what commit prints when
@@ -247,11 +285,21 @@
 (def git-long-status
   (fn (_ gitdir lists) (%long-status gitdir lists)))
 
+(def %unmerged-word
+  (fn (_ code)
+    (match
+      ((str=? code "UU") "both modified:   ") ((str=? code "AA") "both added:      ")
+      ((str=? code "UD") "deleted by them: ") ((str=? code "DU") "deleted by us:   ")
+      ((str=? code "AU") "added by us:     ") ((str=? code "UA") "added by them:   ")
+      (#t "both deleted:    "))))
+
 (def %long-status
   (fn (_ gitdir lists)
     (def staged (first lists))
     (def unstaged (first (rest lists)))
     (def untracked (first (rest (rest lists))))
+    (def unmerged (first (rest (rest (rest lists)))))
+    (def merging? (File exists? (Str8 append gitdir "/MERGE_HEAD")))
     (def section
       (fn (_ title hints items)
         (if (null? items) ""
@@ -261,7 +309,20 @@
             "\n"))))
     (Str8 append
       (%branch-line gitdir)
-      (section "Changes to be committed:" (list "git restore --staged <file>... to unstage") staged)
+      (match
+        ((not merging?) "")
+        ((not (null? unmerged))
+          "You have unmerged paths.\n  (fix conflicts and run \"git commit\")\n  (use \"git merge --abort\" to abort the merge)\n\n")
+        (#t "All conflicts fixed but you are still merging.\n  (use \"git commit\" to conclude merge)\n\n"))
+      ; during a merge, what is staged carries no hint to unstage it
+      (section "Changes to be committed:" (if merging? () (list "git restore --staged <file>... to unstage")) staged)
+      (if (null? unmerged) ""
+        (Str8 append "Unmerged paths:\n"
+          (if (List all? (fn (_ u) (or (str=? (first u) "UU") (str=? (first u) "AA"))) unmerged)
+            "  (use \"git add <file>...\" to mark resolution)\n"
+            "  (use \"git add/rm <file>...\" as appropriate to mark resolution)\n")
+          (Str8 join "" (List map (fn (_ u) (Str8 append "\t" (%unmerged-word (first u)) (rest u) "\n")) unmerged))
+          "\n"))
       (section "Changes not staged for commit:"
         (list "git add <file>... to update what will be committed"
               "git restore <file>... to discard changes in working directory")
@@ -272,7 +333,7 @@
           "\n"))
       (match
         ((not (null? staged)) "")
-        ((not (null? unstaged)) "no changes added to commit (use \"git add\" and/or \"git commit -a\")\n")
+        ((or (not (null? unstaged)) (not (null? unmerged))) "no changes added to commit (use \"git add\" and/or \"git commit -a\")\n")
         ((not (null? untracked)) "nothing added to commit but untracked files present (use \"git add\" to track)\n")
         (#t "nothing to commit, working tree clean\n")))))
 
