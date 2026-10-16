@@ -6,7 +6,9 @@ into x/w and g/w; x-git acts in the first and git in the second, and what
 each prints -- standard output and standard error apart -- and leaves --
 the refs, ORIG_HEAD, the index, the files -- is compared.  Commits carry
 a fixed date, so the twins name the same objects.  git's `hint:` lines
-come and go with its advice settings, so they are left out.
+and its "Please commit your changes" line come and go with its advice
+settings (advice.commitBeforeMerge is off on the macOS runners), so they
+are left out.
 
 ## merge
 
@@ -16,7 +18,7 @@ come and go with its advice settings, so they are left out.
 (def %mp-dir (fn (_) (def t (File temp "/tmp/x-git-mp-")) (File close (first t)) (File unlink (rest t)) (File mkdir (rest t)) (rest t)))
 (def %mp-env "export GIT_AUTHOR_DATE='2026-01-01T00:00:00Z' GIT_COMMITTER_DATE='2026-01-01T00:00:00Z' GIT_AUTHOR_NAME=A GIT_AUTHOR_EMAIL=a@b.c GIT_COMMITTER_NAME=A GIT_COMMITTER_EMAIL=a@b.c; ")
 (def %mp-sh (fn (_ dir script) (Proc run! (list "/bin/sh" "-c" (Str8 append %mp-env "cd \"$0\" && " script) dir))))
-(def %mp-plain (fn (_ s) (Str8 join "\n" (List filter (fn (_ l) (not (Str8 starts? "hint:" l))) (Str8 split "\n" s)))))
+(def %mp-plain (fn (_ s) (Str8 join "\n" (List filter (fn (_ l) (not (or (Str8 starts? "hint:" l) (Str8 starts? "Please commit your changes" l)))) (Str8 split "\n" s)))))
 ; x-git's answer as (STATUS OUT ERR)
 (def %mp-x
   (fn (_ dir . ops)
