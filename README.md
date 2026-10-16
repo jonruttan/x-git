@@ -54,6 +54,12 @@ the kernel and x are installed (x-os).
   `refs/remotes/<remote>/*`, the tags that point into what it now has,
   `FETCH_HEAD`; by path, or by url over the pack protocol, negotiating
   what this repository has so only the rest is sent
+- `merge [--ff-only] [<commit>]` and `pull [--ff-only] [<repository>
+  [<branch>]]` by fast-forward: the working directory, the index and the
+  branch moved to the commit -- the upstream when none is named, what the
+  fetch marks for merging for pull -- with git's report and diffstat; a
+  change of the working directory's own in the way, and histories that
+  have diverged, refused in git's words (no merge commits yet)
 - `push [<repository> [<branch>]]`: one branch, by path or by url to
   `git-receive-pack` with the pack of what the remote lacks and its
   report read back; refused as git refuses a push that is not a
@@ -115,6 +121,7 @@ DIR holds this tree as `git` and x-ssh as `ssh`.
     git/protocol.x    the client side of git's pack protocol
     git/wire.x        a git service on two pipes, spoken in pkt-lines
     git/serve.x       upload-pack and receive-pack, the services
+    git/merge.x       merge and pull, by fast-forward
     git/paths.x       rm, mv
     git/ignore.x      gitignore(5)
     git/cli.x         the command line: git-options, git-plan, git-run, git-main
