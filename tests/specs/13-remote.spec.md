@@ -126,7 +126,7 @@ prints, built from the commits' names, and git reads what landed.
              (str=? (git-sha-in (Str8 append %rm-c "/src") "main") %rm-src-before)))
 ```
 ---
-    (1 "remote: error: refusing to update checked out branch: refs/heads/main" " ! [remote rejected] main -> main (branch is currently checked out)" "error: failed to push some refs to '<url>'" #t)
+    (1 "remote: error: refusing to update checked out branch: refs/heads/main        " " ! [remote rejected] main -> main (branch is currently checked out)" "error: failed to push some refs to '<url>'" #t)
 
 ### a branch with no upstream is refused in git's words
 

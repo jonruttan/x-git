@@ -404,10 +404,11 @@
     (File close fd)))
 
 ; The objects -- (SHA TYPE SIZE REGION START) each, as git-object-read
-; answers them with their names -- written as a pack and its index under
-; gitdir's objects/pack; answers the pack's path.
-(def git-pack-write!
-  (fn (_ gitdir objects)
+; answers them with their names -- as a pack: (BUFFER ROWS SHA), the
+; buffer holding the bytes, the rows (SHA OFFSET CRC) for an index, the
+; pack's name.
+(def %pack-build
+  (fn (_ objects)
     (def b (%buf-make))
     (%buf-put-str! b "PACK")
     (%buf-put-u32! b 2)
@@ -425,12 +426,28 @@
         objects))
     (def pack-sha (Sha1 hex-n (%oref b 1) (%oref b 3)))
     (%buf-put-bytes! b (%str->ptr (%sha-raw pack-sha)) 20)
+    (list b rows pack-sha)))
+
+; The objects written as a pack and its index under gitdir's
+; objects/pack; answers the pack's path.
+(def git-pack-write!
+  (fn (_ gitdir objects)
+    (def p (%pack-build objects))
+    (def b (first p))
     (def dir (Str8 append gitdir "/objects/pack"))
     (unless (File exists? dir) (File mkdir dir))
-    (def stem (Str8 append dir "/pack-" pack-sha))
+    (def stem (Str8 append dir "/pack-" (first (rest (rest p)))))
     (%write-region! (Str8 append stem ".pack") (%oref b 1) (%oref b 3))
-    (%idx-write! stem pack-sha rows)
+    (%idx-write! stem (first (rest (rest p))) (first (rest p)))
     (Str8 append stem ".pack")))
+
+; The objects as the bytes of a pack, for the wire: (REGION . N).  No
+; objects make the empty pack git asks for when a ref is created on
+; what it already has.
+(def git-pack-bytes
+  (fn (_ objects)
+    (def b (first (%pack-build objects)))
+    (pair (%oref b 1) (%oref b 3))))
 
 ; The index of a pack named pack-sha, written beside it: rows are (SHA
 ; OFFSET CRC) each.
@@ -548,5 +565,5 @@
 (def git-bytes-region (fn (_ b) (%oref b 1)))
 (def git-bytes-count (fn (_ b) (%oref b 3)))
 
-(provide git/packs git-packs git-pack-read git-pack-prefix git-pack-has? git-pack-write! git-pack-index!
+(provide git/packs git-packs git-pack-read git-pack-prefix git-pack-has? git-pack-write! git-pack-bytes git-pack-index!
   git-bytes-make git-bytes-put! git-bytes-region git-bytes-count)

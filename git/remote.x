@@ -21,19 +21,20 @@
 ; tags that point into what it now has, and FETCH_HEAD; push sends one
 ; branch, refusing as git does a push that is not a fast-forward, one whose
 ; remote holds work this repository has not seen, and one into the branch
-; a non-bare remote has checked out.  push goes by path only, so far.
+; a non-bare remote has checked out -- by path, or by url to receive-pack,
+; which takes the pack of what it lacks and reports what it did.
 
 (module git/remote)
 
 (import x/sys/opts Opts)
 (import x/sys/file File)
 (import git/objects git-object-read git-object-text git-tree-entries)
-(import git/packs git-pack-has? git-pack-write! git-pack-index!)
+(import git/packs git-pack-has? git-pack-write! git-pack-bytes git-pack-index!)
 (import git/refs git-ref-read)
 (import git/repo git-refs-under)
 (import git/stage git-config-get)
 (import git/clone git-source-gitdir)
-(import git/protocol proto-url? proto-connect proto-advertise proto-fetch! proto-cannot-read)
+(import git/protocol proto-url? proto-connect proto-advertise proto-fetch! proto-push! proto-remote-lines proto-cannot-read)
 (import git/wire wire-close! wire-flush!)
 (import x/type/vector Vector)
 
@@ -445,20 +446,25 @@
         "before pushing again."
         "See the 'Note about fast-forwards' in 'git push --help' for details."))
 
+; What receive-pack says, on band 2, when a non-bare remote's checked-out
+; branch is pushed to.
 (def %deny-current
-  (list "By default, updating the current branch in a non-bare repository"
-        "is denied, because it will make the index and work tree inconsistent"
-        "with what you pushed, and will require 'git reset --hard' to match"
-        "the work tree to HEAD."
-        ""
-        "You can set the 'receive.denyCurrentBranch' configuration variable"
-        "to 'ignore' or 'warn' in the remote repository to allow pushing into"
-        "its current branch; however, this is not recommended unless you"
-        "arranged to update its work tree to match what you pushed in some"
-        "other way."
-        ""
-        "To squelch this message and still keep the default behaviour, set"
-        "'receive.denyCurrentBranch' configuration variable to 'refuse'."))
+  (fn (_ dst)
+    (Str8 append
+      "error: refusing to update checked out branch: refs/heads/" dst "\n"
+      "error: By default, updating the current branch in a non-bare repository\n"
+      "is denied, because it will make the index and work tree inconsistent\n"
+      "with what you pushed, and will require 'git reset --hard' to match\n"
+      "the work tree to HEAD.\n"
+      "\n"
+      "You can set the 'receive.denyCurrentBranch' configuration variable\n"
+      "to 'ignore' or 'warn' in the remote repository to allow pushing into\n"
+      "its current branch; however, this is not recommended unless you\n"
+      "arranged to update its work tree to match what you pushed in some\n"
+      "other way.\n"
+      "\n"
+      "To squelch this message and still keep the default behaviour, set\n"
+      "'receive.denyCurrentBranch' configuration variable to 'refuse'.\n")))
 
 (def %failed (fn (_ url) (Str8 append "error: failed to push some refs to '" url "'\n")))
 
@@ -477,40 +483,140 @@
         "To have this happen automatically for branches without a tracking\n"
         "upstream, see 'push.autoSetupRemote' in 'git help config'.\n"))))
 
-; One branch sent: src here to dst there.
-(def %push-branch!
-  (fn (_ gitdir dgit url remote src dst current?)
-    (def new (git-ref-read gitdir (Str8 append "refs/heads/" src)))
-    (def old (git-ref-read dgit (Str8 append "refs/heads/" dst)))
+; --- the remote pushed to, by path or by wire ---
+;
+; A destination is what push needs of a remote, however it is reached:
+; (REFS DELIVER! DONE!) -- REFS its refs as (NAME . SHA), DELIVER! a
+; function of (OLD NEW NAME) that sends the objects behind NEW and asks
+; for the ref to move, answering (REMOTE . REASON): the remote's words as
+; git prints them, and () when the ref moved or why it did not; DONE!
+; what to call when push sends nothing after all.
+
+(def %ZERO "0000000000000000000000000000000000000000")
+
+; A repository on a path: its refs read from its files, the objects it
+; lacks written as a pack, the ref written -- unless it is the branch a
+; non-bare repository has checked out, refused as receive-pack refuses
+; it, after the objects landed.
+(def %path-destination
+  (fn (_ gitdir dgit)
     (def bare? (not (Str8 ends? "/.git" dgit)))
+    (list (List map (fn (_ n) (pair n (git-ref-read dgit n))) (%ref-names dgit "refs/"))
+          (fn (_ old new name)
+            (def dst (%strip-heads name))
+            (%send! gitdir dgit (list new))
+            (if (and (not bare?) (str=? (or (%current-branch dgit) "") dst))
+              (pair (proto-remote-lines (%deny-current dst)) "branch is currently checked out")
+              (do (%write-ref! dgit name new) (pair "" ()))))
+          (fn (_) ()))))
+
+(def %member? (fn (_ s l) (List any? (fn (_ x) (str=? x s)) l)))
+
+; Every object behind the tips that a remote holding the stop commits
+; lacks, as (SHA . OBJ) each: the commits behind a stop are the remote's,
+; and so is the snapshot of each commit the walk stops at -- its tree and
+; everything under it.  What an older snapshot shares with a newer one
+; and nothing else may travel again; the remote keeps one copy.
+(def %objects-to-send
+  (fn (_ gitdir tips stops)
+    (def parents (%parents-of gitdir))
+    (def known
+      ((fn (self work seen)
+         (match
+           ((null? work) seen)
+           ((%member? (first work) seen) (self (rest work) seen))
+           (#t (self (List append (rest work) (parents (first work))) (pair (first work) seen)))))
+       stops ()))
+    (def snapshot
+      (fn (_ sha acc)
+        (def o (git-object-read gitdir sha))
+        ((fn (self work acc)
+           (match
+             ((null? work) acc)
+             ((%member? (first work) acc) (self (rest work) acc))
+             (#t (let ((t (git-object-read gitdir (first work))))
+                   (self (List append (if (and (not (null? t)) (str=? (first t) "tree")) (%children t) ()) (rest work))
+                         (pair (first work) acc))))))
+         (if (and (not (null? o)) (str=? (first o) "commit")) (%header-values o "tree") ()) acc)))
+    ((fn (self work seen excluded acc)
+       (match
+         ((null? work) (List reverse acc))
+         ((or (%member? (first work) seen) (%member? (first work) excluded)) (self (rest work) seen excluded acc))
+         ((%member? (first work) known)
+           (self (rest work) (pair (first work) seen) (snapshot (first work) excluded) acc))
+         (#t (let ((o (git-object-read gitdir (first work))))
+               (do (when (null? o) (%fail (Str8 append "an object behind what is pushed is missing: " (first work))))
+                   (self (List append (%children o) (rest work)) (pair (first work) seen) excluded
+                         (pair (pair (first work) o) acc)))))))
+     tips () () ())))
+
+; A repository a url names, its receive-pack spoken to on a wire: the
+; advertisement read now; the command, the pack of what it lacks and
+; its report on the same connection.
+(def %wire-destination
+  (fn (_ gitdir url)
+    (def w (proto-connect url "receive-pack"))
+    (def adv (proto-advertise w))
+    (if (null? adv) (do (wire-close! w) ())
+      (let ((refs (List filter (fn (_ e) (not (Str8 ends? "^{}" (first e)))) (first adv))))
+        (list refs
+              (fn (_ old new name)
+                (def stops
+                  (List map (fn (_ sha) (%peel gitdir sha))
+                    (List filter (fn (_ sha) (%has? gitdir sha)) (List map rest refs))))
+                (def r (proto-push! w (list (list (if (null? old) %ZERO old) new name))
+                         (git-pack-bytes (%objects-to-send gitdir (list new) stops))))
+                (wire-close! w)
+                (def unpack (first (rest r)))
+                (def hit (List find (fn (_ e) (str=? (first e) name)) (first (rest (rest r)))))
+                (pair (first r)
+                      (match
+                        ((not (str=? unpack "ok")) (Str8 append "unpacker error: " unpack))
+                        ((null? hit) "no report")
+                        (#t (rest hit)))))
+              (fn (_) (do (wire-flush! w) (wire-close! w))))))))
+
+; The destination a remote's url names: by wire for a url, by path for
+; a path; () when there is no repository there.
+(def %destination
+  (fn (_ wd gitdir url)
+    (match
+      ((null? url) ())
+      ((proto-url? url) (%wire-destination gitdir url))
+      (#t (let ((dgit (%remote-gitdir wd url))) (if (null? dgit) () (%path-destination gitdir dgit)))))))
+
+; One branch sent: src here to dst there; remote the name whose
+; tracking ref follows, or () for a url or path named outright.
+(def %push-branch!
+  (fn (_ gitdir dest url remote src dst current?)
+    (def new (git-ref-read gitdir (Str8 append "refs/heads/" src)))
+    (def name (Str8 append "refs/heads/" dst))
+    (def old (%lookup name (first dest)))
+    (def deliver! (first (rest dest)))
+    (def done! (first (rest (rest dest))))
     (match
       ((null? new)
-        (list (lit err) (Str8 append "error: src refspec " src " does not match any\n" (%failed url)) 1))
-      ((and (not (null? old)) (str=? old new)) (list (lit err) "Everything up-to-date\n" 0))
+        (do (done!) (list (lit err) (Str8 append "error: src refspec " src " does not match any\n" (%failed url)) 1)))
+      ((and (not (null? old)) (str=? old new)) (do (done!) (list (lit err) "Everything up-to-date\n" 0)))
       ((and (not (null? old)) (not (%has? gitdir old)))
-        (%rejected url src dst "fetch first" %advice-fetch-first))
+        (do (done!) (%rejected url src dst "fetch first" %advice-fetch-first)))
       ((and (not (null? old)) (not (%ancestor? gitdir old new)))
-        (%rejected url src dst "non-fast-forward" (if current? %advice-pull-before-push %advice-checkout-pull-push)))
-      ((and (not bare?) (str=? (or (%current-branch dgit) "") dst))
-        (do (%send! gitdir dgit (list new))
-            (list (lit err)
-              (Str8 append
-                "remote: error: refusing to update checked out branch: refs/heads/" dst "\n"
-                (Str8 join "" (List map (fn (_ l) (Str8 append "remote: error: " l "\n")) %deny-current))
-                "To " url "\n"
-                (%report-line "!" "[remote rejected]" src 0 dst "branch is currently checked out")
-                (%failed url))
-              1)))
+        (do (done!) (%rejected url src dst "non-fast-forward" (if current? %advice-pull-before-push %advice-checkout-pull-push))))
       (#t
-        (do (%send! gitdir dgit (list new))
-            (%write-ref! dgit (Str8 append "refs/heads/" dst) new)
-            (%write-ref! gitdir (Str8 append "refs/remotes/" remote "/" dst) new)
+        (let ((r (deliver! old new name)))
+          (if (null? (rest r))
+            (do (unless (null? remote) (%write-ref! gitdir (Str8 append "refs/remotes/" remote "/" dst) new))
+                (list (lit err)
+                  (Str8 append (first r) "To " url "\n"
+                    (if (null? old)
+                      (%report-line "*" "[new branch]" src 0 dst ())
+                      (%report-line " " (Str8 append (%abbrev old) ".." (%abbrev new)) src 0 dst ())))
+                  0))
             (list (lit err)
-              (Str8 append "To " url "\n"
-                (if (null? old)
-                  (%report-line "*" "[new branch]" src 0 dst ())
-                  (%report-line " " (Str8 append (%abbrev old) ".." (%abbrev new)) src 0 dst ())))
-              0))))))
+              (Str8 append (first r) "To " url "\n"
+                (%report-line "!" "[remote rejected]" src 0 dst (rest r))
+                (%failed url))
+              1)))))))
 
 (def git-push
   (fn (_ wd gitdir ops)
@@ -524,20 +630,27 @@
         ((null? gitdir) "origin")
         (#t (or (git-config-get gitdir section "remote") "origin"))))
     (def upstream (if (null? gitdir) () (git-config-get gitdir section "merge")))
-    (def url (if (null? gitdir) () (git-config-get gitdir (Str8 append "remote \"" remote "\"") "url")))
-    (def dgit (%remote-gitdir wd url))
+    ; A remote's configured url, or the url or path named outright, which
+    ; has no tracking ref to move.
+    (def configured (if (null? gitdir) () (git-config-get gitdir (Str8 append "remote \"" remote "\"") "url")))
+    (def url (if (null? configured) (if (null? operands) () remote) configured))
     ; The branch named after the repository, or ().
     (def branch (if (or (null? operands) (null? (rest operands))) () (first (rest operands))))
+    ; The remote reached only once push has something to say to it.
+    (def push!
+      (fn (_ src dst current?)
+        (def dest (%destination wd gitdir url))
+        (match
+          ((and (null? dest) (proto-url? url)) (%not-read))
+          ((null? dest) (%no-remote remote))
+          (#t (%push-branch! gitdir dest url (if (null? configured) () remote) src dst current?)))))
     (match
       ((Opts help? git-push-options ops) (list (lit out) (Opts usage git-push-options) 0))
       ((null? gitdir) (%not-a-repo))
       ((and (null? current) (null? branch)) (%fatal "You are not currently on a branch."))
       ((and (null? operands) (null? upstream)) (%no-upstream current remote))
-      ((null? dgit) (%no-remote remote))
-      ((not (null? branch))
-        (%push-branch! gitdir dgit url remote branch branch
-          (str=? branch (or current ""))))
-      ((null? operands) (%push-branch! gitdir dgit url remote current (%strip-heads upstream) #t))
-      (#t (%push-branch! gitdir dgit url remote current current #t)))))
+      ((not (null? branch)) (push! branch branch (str=? branch (or current ""))))
+      ((null? operands) (push! current (%strip-heads upstream) #t))
+      (#t (push! current current #t)))))
 
 (provide git/remote git-fetch git-fetch-options git-push git-push-options git-ls-remote git-ls-remote-options)
