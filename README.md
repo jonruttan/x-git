@@ -25,10 +25,13 @@ the kernel and x are installed (x-os).
 - `ls-files [--stage]` and `status [-s | --porcelain]` from the index
   (.gitignore is not read)
 - `add [-A] <pathspec>...`: the blobs written, the index written (version 2)
-- `commit -m <message> [-q]`: the trees from the index, the commit with the
-  identity `.git/config` holds (the global config is not read) and the
-  clock's time in the local offset, the branch moved; the summary as git
-  prints it, its line counts from a line diff
+- `commit -m <message> [-q] [--no-edit]`: the trees from the index, the
+  commit with the identity and time git takes -- `GIT_AUTHOR_*` and
+  `GIT_COMMITTER_*`, then `.git/config` (the global config is not read)
+  and the clock -- the branch moved; the summary as git prints it, its
+  line counts from a line diff.  A merge in progress is concluded: its
+  second parent from `MERGE_HEAD`, its message from `MERGE_MSG` when no
+  `-m` is given; a path still in conflict refuses it
 - `diff [--cached] [--stat] [<revision> [<revision>]] [--] [<path>...]`:
   git's unified form, hunks with three lines of context; the edit script
   is by longest common subsequence, so where several are shortest the
@@ -54,12 +57,16 @@ the kernel and x are installed (x-os).
   `refs/remotes/<remote>/*`, the tags that point into what it now has,
   `FETCH_HEAD`; by path, or by url over the pack protocol, negotiating
   what this repository has so only the rest is sent
-- `merge [--ff-only] [<commit>]` and `pull [--ff-only] [<repository>
-  [<branch>]]` by fast-forward: the working directory, the index and the
-  branch moved to the commit -- the upstream when none is named, what the
-  fetch marks for merging for pull -- with git's report and diffstat; a
-  change of the working directory's own in the way, and histories that
-  have diverged, refused in git's words (no merge commits yet)
+- `merge [--ff-only] [<commit>] | --abort` and `pull [--ff-only |
+  --no-rebase] [<repository> [<branch>]]`: a fast-forward when the commit
+  -- the upstream when none is named, what the fetch marks for merging for
+  pull -- has the branch in its history; otherwise a three-way merge from
+  the merge base, into a merge commit, or with the conflicts marked in the
+  files, staged 1, 2 and 3 in the index and `MERGE_HEAD` left for `commit`
+  (content, add/add and modify/delete conflicts; renames are not looked
+  for).  git's report, diffstat and messages; a change of the working
+  directory's own in the way refused in git's words; pull merges diverged
+  histories when `--no-rebase` or `pull.rebase=false` says to
 - `push [<repository> [<branch>]]`: one branch, by path or by url to
   `git-receive-pack` with the pack of what the remote lacks and its
   report read back; refused as git refuses a push that is not a
@@ -121,7 +128,8 @@ DIR holds this tree as `git` and x-ssh as `ssh`.
     git/protocol.x    the client side of git's pack protocol
     git/wire.x        a git service on two pipes, spoken in pkt-lines
     git/serve.x       upload-pack and receive-pack, the services
-    git/merge.x       merge and pull, by fast-forward
+    git/merge.x       merge and pull
+    git/threeway.x    the merge base, files and trees merged three ways
     git/paths.x       rm, mv
     git/ignore.x      gitignore(5)
     git/cli.x         the command line: git-options, git-plan, git-run, git-main

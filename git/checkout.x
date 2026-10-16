@@ -279,5 +279,13 @@
 (def git-checkout-tree!
   (fn (_ wd gitdir commit) (%move-to! wd gitdir commit)))
 
+; A blob written to a path of the working directory, its mode set; a
+; path's file removed with the directories it leaves empty; an index
+; entry for a path just written.  For merge, which writes paths one by
+; one.
+(def git-write-blob! (fn (_ wd gitdir path sha mode) (%write-blob! wd gitdir path sha mode)))
+(def git-remove-file! (fn (_ wd path) (%remove! wd path)))
+(def git-entry-of (fn (_ wd path sha mode) (%entry-of wd path sha mode)))
+
 (provide git/checkout git-checkout git-checkout-options git-switch git-switch-options
-  git-restore git-restore-options git-checkout-tree!)
+  git-restore git-restore-options git-checkout-tree! git-write-blob! git-remove-file! git-entry-of)

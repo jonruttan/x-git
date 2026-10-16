@@ -86,8 +86,13 @@
   (fn (_ stat)
     (if (= (& (Assoc get (lit mode) stat) 73) 0) 33188 33261)))
 
-; Entries (PATH MODE-NUMBER SHA SIZE MTIME) to the index file's bytes:
-; (REGION . N).
+; An entry's stage: 0, or the 1, 2 or 3 of a path a merge left in
+; conflict (the base, ours, theirs), carried as the sixth item.
+(def %entry-stage
+  (fn (_ e) (if (null? (rest (rest (rest (rest (rest e)))))) 0 (first (rest (rest (rest (rest (rest e)))))))))
+
+; Entries (PATH MODE-NUMBER SHA SIZE MTIME [STAGE]) to the index file's
+; bytes: (REGION . N).
 (def %index-bytes
   (fn (_ entries)
     (def sizes (List map (fn (_ e) (& (%add (%add 62 (%str-byte-len (first e))) 8) (~ 7))) entries))
@@ -111,7 +116,8 @@
                (%put-u32! p (%add i 32) 0)                                    ; gid
                (%put-u32! p (%add i 36) (first (rest (rest (rest e)))))        ; size
                (%put-sha! p (%add i 40) (first (rest (rest e))))
-               (%pset! p (%add i 60) (>> (%str-byte-len (first e)) 8) 1)
+               ; the flags: the stage in bits 12-13, the name's length below
+               (%pset! p (%add i 60) (| (<< (%entry-stage e) 4) (>> (%str-byte-len (first e)) 8)) 1)
                (%pset! p (%add i 61) (& (%str-byte-len (first e)) 255) 1)
                (%put-str! p (%add i 62) (first e))
                ; the name's NUL and the padding to eight: a fresh region is
@@ -127,7 +133,9 @@
 ; The index written from entries, replacing what is there.
 (def %index-write!
   (fn (_ gitdir entries)
-    (def b (%index-bytes (List sort (fn (_ a b) (Str8 <? (first a) (first b))) entries)))
+    (def b (%index-bytes
+             (List sort (fn (_ a b) (if (str=? (first a) (first b)) (< (%entry-stage a) (%entry-stage b)) (Str8 <? (first a) (first b))))
+               entries)))
     (git-write-file! (Str8 append gitdir "/index") (first b) (rest b))
     (File chmod (Str8 append gitdir "/index") 420)
     ()))
@@ -142,12 +150,13 @@
           (rest f) (Assoc get (lit mtime) st))))
 
 ; The read index's entries in the written shape: the mode text back to a
-; number.
+; number, the stage last.
 (def %read-entries
   (fn (_ gitdir)
     (List map
       (fn (_ e) (list (first e) (%str->number (first (rest e)) 8) (first (rest (rest e)))
-                      (first (rest (rest (rest (rest e))))) (first (rest (rest (rest (rest (rest e))))))))
+                      (first (rest (rest (rest (rest e))))) (first (rest (rest (rest (rest (rest e))))))
+                      (first (rest (rest (rest e))))))
       (git-index-read gitdir))))
 
 ; Every file under a directory, by path from prefix; .git skipped, and
@@ -338,11 +347,107 @@
 (def %int-div (prim-ref (lit int) (lit /)))
 (def %int-mod (prim-ref (lit int) (lit %)))
 
+; --- who and when ---
+
+; Days since 1970-01-01 of a civil date (Howard Hinnant's days_from_civil).
+(def %floor-div (fn (_ a b) (if (>= a 0) (%int-div a b) (%sub 0 (%int-div (%sub (%sub b 1) a) b)))))
+(def %days-from-civil
+  (fn (_ y m d)
+    (def y2 (if (<= m 2) (%sub y 1) y))
+    (def era (%floor-div y2 400))
+    (def yoe (%sub y2 (%mul era 400)))
+    (def doy (%add (%int-div (%add (%mul 153 (if (> m 2) (%sub m 3) (%add m 9))) 2) 5) (%sub d 1)))
+    (def doe (%add (%sub (%add (%mul yoe 365) (%int-div yoe 4)) (%int-div yoe 100)) doy))
+    (%sub (%add (%mul era 146097) doe) 719468)))
+
+(def %digits (fn (_ s start n) (%str->number (Str8 sub start n s) 10)))
+
+; A date as git takes one from GIT_AUTHOR_DATE or GIT_COMMITTER_DATE, as
+; a commit records it, `EPOCH +HHMM`: the raw form `EPOCH +HHMM` (or
+; `@EPOCH`), or ISO 8601, `YYYY-MM-DDTHH:MM:SS` then Z, +HH:MM or +HHMM.
+; () for a form not read here.
+(def %parse-date
+  (fn (_ s)
+    (def t (Str8 trim s))
+    (def raw (if (Str8 starts? "@" t) (Str8 sub 1 (%sub (Str8 length t) 1) t) t))
+    (def parts (Str8 split " " raw))
+    (match
+      ((and (>= (Str8 length t) 19) (str=? (Str8 sub 4 1 t) "-") (str=? (Str8 sub 10 1 t) "T"))
+        (let ((zone (Str8 sub 19 (%sub (Str8 length t) 19) t)))
+          (let ((sign (if (Str8 starts? "-" zone) -1 1))
+                (zdigits (Str8 join "" (Str8 split ":" (if (or (= (Str8 length zone) 0) (str=? zone "Z")) "+0000" zone)))))
+            (let ((zh (%digits zdigits 1 2)) (zm (%digits zdigits 3 2)))
+              (let ((offset (%mul sign (%add (%mul zh 3600) (%mul zm 60))))
+                    (local (%add (%mul (%days-from-civil (%digits t 0 4) (%digits t 5 2) (%digits t 8 2)) 86400)
+                                 (%add (%mul (%digits t 11 2) 3600) (%add (%mul (%digits t 14 2) 60) (%digits t 17 2))))))
+                (Str8 append (Str8 str (%sub local offset)) " " (if (< sign 0) "-" "+")
+                  (Str8 pad-left 2 #\0 (Str8 str zh)) (Str8 pad-left 2 #\0 (Str8 str zm))))))))
+      ((and (not (null? parts)) (> (Str8 length (first parts)) 0)
+            (List all? (fn (_ i) (let ((c (Str8 sub i 1 (first parts)))) (and (Str8 >=? c "0") (Str8 <=? c "9"))))
+              (List range 0 (Str8 length (first parts)))))
+        (Str8 append (first parts) " " (if (null? (rest parts)) "+0000" (first (rest parts)))))
+      (#t ()))))
+
+(def %env (fn (_ name) (let ((v (Sys getenv name))) (if (or (null? v) (= (Str8 length v) 0)) () v))))
+
+; A role's `NAME <EMAIL> WHEN`, role AUTHOR or COMMITTER: the name and the
+; email from GIT_<ROLE>_NAME and _EMAIL, else user.name and user.email;
+; the time from GIT_<ROLE>_DATE, else the clock.  () when there is no
+; name or no email.
+(def %signature
+  (fn (_ gitdir role)
+    (def name (or (%env (Str8 append "GIT_" role "_NAME")) (%config-get gitdir "user" "name")))
+    (def email (or (%env (Str8 append "GIT_" role "_EMAIL")) (%config-get gitdir "user" "email")))
+    (def date (let ((d (%env (Str8 append "GIT_" role "_DATE")))) (if (null? d) () (%parse-date d))))
+    (if (or (null? name) (null? email)) ()
+      (Str8 append name " <" email "> " (if (null? date) (%timestamp) date)))))
+
+; A commit object written: its tree, its parents, its message, the author
+; and committer as git finds them.  Answers its name, or () when the
+; identity is unknown.
+(def git-commit-write!
+  (fn (_ gitdir tree parents message)
+    (def author (%signature gitdir "AUTHOR"))
+    (def committer (%signature gitdir "COMMITTER"))
+    (if (or (null? author) (null? committer)) ()
+      (let ((body (Str8 append "tree " tree "\n"
+                    (Str8 join "" (List map (fn (_ p) (Str8 append "parent " p "\n")) parents))
+                    "author " author "\n"
+                    "committer " committer "\n"
+                    "\n" message (if (Str8 ends? "\n" message) "" "\n"))))
+        (git-object-write! gitdir "commit" body 0 (%str-byte-len body))))))
+
+; The merge in progress: the commits MERGE_HEAD names, or () when none.
+(def %merge-heads
+  (fn (_ gitdir)
+    (def path (Str8 append gitdir "/MERGE_HEAD"))
+    (if (not (File exists? path)) ()
+      (List filter (fn (_ l) (= (Str8 length l) 40)) (Str8 split "\n" (File read-all path))))))
+
+; The files a merge in progress leaves, removed once it is concluded or
+; abandoned.
+(def git-merge-state-clear!
+  (fn (_ gitdir)
+    (List for-each
+      (fn (_ f) (let ((p (Str8 append gitdir "/" f))) (when (File exists? p) (File unlink p))))
+      (list "MERGE_HEAD" "MERGE_MSG" "MERGE_MODE" "AUTO_MERGE"))))
+
 (def git-commit-options
-  (Opts declare "git commit" "-m <message> [-q]" ()
+  (Opts declare "git commit" "-m <message> [-q] [--no-edit]" ()
     (list
       (Opts arg "-m" "--message" "<message>" "The commit message")
-      (Opts flag "-q" "--quiet" "Print nothing on success"))))
+      (Opts flag "-q" "--quiet" "Print nothing on success")
+      (Opts flag "--no-edit" "Take the message a merge in progress left, unedited"))))
+
+(def %unmerged-refusal
+  (fn (_ paths)
+    (list (lit err)
+      (Str8 append "error: Committing is not possible because you have unmerged files.\n"
+        "hint: Fix them up in the work tree, and then use 'git add/rm <file>'\n"
+        "hint: as appropriate to mark resolution and make a commit.\n"
+        "fatal: Exiting because of an unresolved conflict.\n")
+      128
+      (Str8 join "" (List map (fn (_ p) (Str8 append "U\t" p "\n")) paths)))))
 
 (def %identity-unknown
   (list (lit err)
@@ -358,40 +463,47 @@
 (def git-commit
   (fn (_ wd gitdir ops)
     (def o (Opts parse git-commit-options ops))
-    (def msg (Opts value o "-m" ()))
+    (def merging (if (null? gitdir) () (%merge-heads gitdir)))
+    (def merge-msg-path (if (null? gitdir) () (Str8 append gitdir "/MERGE_MSG")))
+    ; a merge in progress concludes with the message it left, as --no-edit takes it
+    (def msg (or (Opts value o "-m" ())
+                 (if (and (not (null? merging)) (File exists? merge-msg-path)) (File read-all merge-msg-path) ())))
+    (def entries (if (null? gitdir) () (%read-entries gitdir)))
+    (def unmerged
+      ((fn (self es acc)
+         (if (null? es) (List reverse acc)
+           (self (rest es)
+             (if (and (> (%entry-stage (first es)) 0) (not (List any? (fn (_ p) (str=? p (first (first es)))) acc)))
+               (pair (first (first es)) acc) acc))))
+       entries ()))
     (match
       ((Opts help? git-commit-options ops) (list (lit out) (Opts usage git-commit-options) 0))
       ((not (null? (Opts unknown o))) (%unknown-option (Opts unknown o) (Opts usage git-commit-options)))
       ((null? gitdir) (%no-repo))
+      ((not (null? unmerged)) (%unmerged-refusal unmerged))
       ((null? msg) (%fatal "no message given: this git takes -m <message>"))
+      ((null? (%signature gitdir "COMMITTER")) %identity-unknown)
       (#t
-        (let ((name (%config-get gitdir "user" "name")) (email (%config-get gitdir "user" "email")))
-          (if (or (null? name) (null? email)) %identity-unknown
-            (let ((entries (%read-entries gitdir))
-                  (parent (git-commit-of gitdir "HEAD"))
-                  (head (Str8 trim (File read-all (Str8 append gitdir "/HEAD")))))
-              (let ((tree (%write-tree! gitdir entries ""))
-                    (parent-tree (if (null? parent) () (git-tree-of gitdir parent))))
-                (if (and (not (null? parent-tree)) (str=? tree parent-tree))
-                  (list (lit out) (git-long-status gitdir (git-status-lists wd gitdir)) 1)
-                  (let ((when (%timestamp))
-                        (text (Str8 append msg (if (Str8 ends? "\n" msg) "" "\n"))))
-                    (let ((body (Str8 append "tree " tree "\n"
-                                  (if (null? parent) "" (Str8 append "parent " parent "\n"))
-                                  "author " name " <" email "> " when "\n"
-                                  "committer " name " <" email "> " when "\n"
-                                  "\n" text)))
-                      (let ((sha (git-object-write! gitdir "commit" body 0 (%str-byte-len body)))
-                            (branch (if (Str8 starts? "ref: refs/heads/" head) (Str8 sub 16 (%sub (Str8 length head) 16) head) ())))
-                        (do (git-write-file! (if (null? branch) (Str8 append gitdir "/HEAD") (Str8 append gitdir "/" (Str8 sub 5 (%sub (Str8 length head) 5) head)))
-                              (Str8 append sha "\n") 41)
-                            (if (Opts on? o "-q") (list (lit out) "" 0)
-                              (list (lit out)
-                                (Str8 append
-                                  "[" (if (null? branch) "detached HEAD" branch) (if (null? parent) " (root-commit) " " ") (Str8 sub 0 7 sha) "] "
-                                  (first (Str8 split "\n" text)) "\n"
-                                  (git-commit-summary gitdir (git-tree-files gitdir parent-tree) (git-tree-files gitdir tree)))
-                                0)))))))))))))))
+        (let ((parent (git-commit-of gitdir "HEAD"))
+              (head (Str8 trim (File read-all (Str8 append gitdir "/HEAD")))))
+          (let ((tree (%write-tree! gitdir entries ""))
+                (parent-tree (if (null? parent) () (git-tree-of gitdir parent))))
+            ; a merge commit may record the tree it had; any other must change it
+            (if (and (null? merging) (not (null? parent-tree)) (str=? tree parent-tree))
+              (list (lit out) (git-long-status gitdir (git-status-lists wd gitdir)) 1)
+              (let ((sha (git-commit-write! gitdir tree (List append (if (null? parent) () (list parent)) merging) msg))
+                    (branch (if (Str8 starts? "ref: refs/heads/" head) (Str8 sub 16 (%sub (Str8 length head) 16) head) ())))
+                (do (git-write-file! (if (null? branch) (Str8 append gitdir "/HEAD") (Str8 append gitdir "/" (Str8 sub 5 (%sub (Str8 length head) 5) head)))
+                      (Str8 append sha "\n") 41)
+                    (git-merge-state-clear! gitdir)
+                    (if (Opts on? o "-q") (list (lit out) "" 0)
+                      (list (lit out)
+                        (Str8 append
+                          "[" (if (null? branch) "detached HEAD" branch) (if (null? parent) " (root-commit) " " ") (Str8 sub 0 7 sha) "] "
+                          (first (Str8 split "\n" msg)) "\n"
+                          ; a merge commit's line says what it is and nothing more
+                          (if (null? merging) (git-commit-summary gitdir (git-tree-files gitdir parent-tree) (git-tree-files gitdir tree)) ""))
+                        0)))))))))))
 
 ; The index written from entries (PATH MODE-NUMBER SHA SIZE MTIME), for
 ; checkout, which sets it to a tree.
@@ -408,5 +520,8 @@
 (def git-read-entries
   (fn (_ gitdir) (%read-entries gitdir)))
 
+; A tree written from index entries (PATH MODE-NUMBER SHA ...); its name.
+(def git-write-tree! (fn (_ gitdir entries) (%write-tree! gitdir entries "")))
+
 (provide git/stage git-add git-add-options git-commit git-commit-options git-index-write!
-  git-config-get git-read-entries)
+  git-config-get git-read-entries git-commit-write! git-write-tree! git-merge-state-clear!)
