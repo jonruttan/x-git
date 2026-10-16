@@ -24,7 +24,7 @@
 (import git/repo git-init-layout! git-refs-under)
 (import git/checkout git-checkout-tree!)
 (import git/packs git-pack-index!)
-(import git/protocol proto-url? proto-connect proto-advertise proto-cap proto-fetch! proto-cannot-read)
+(import git/protocol proto-url? proto-url-path proto-connect proto-advertise proto-cap proto-fetch! proto-cannot-read)
 (import git/wire wire-close!)
 
 (def %add (prim-ref 'int '+))
@@ -147,7 +147,10 @@
       (#t
         (let ((src-arg (first operands)))
           (let ((src (if (Str8 starts? "/" src-arg) src-arg (Str8 append wd "/" src-arg)))
-                (name (if (null? (rest operands)) (%default-name src-arg) (first (rest operands)))))
+                ; a url's directory is named from its path, its host left out
+                (name (if (null? (rest operands))
+                        (%default-name (if (proto-url? src-arg) (proto-url-path src-arg) src-arg))
+                        (first (rest operands)))))
             (let ((sgit (%source-gitdir src))
                   (dest (if (Str8 starts? "/" name) name (Str8 append wd "/" name))))
               (match

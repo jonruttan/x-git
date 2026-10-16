@@ -17,6 +17,8 @@
 
 (import git/wire wire-open wire-close! wire-pkt wire-line wire-split wire-send! wire-send-bytes! wire-flush! wire-send-raw!)
 (import git/packs git-bytes-make git-bytes-put! git-bytes-region git-bytes-count)
+(import git/stage git-config-get)
+(import x/sys/posix Sys)
 
 (def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
@@ -37,18 +39,96 @@
 
 ; --- the url ---
 
-; A url this module serves: file:// for now.
-(def proto-url?
-  (fn (_ url) (if (null? url) #f (Str8 starts? "file://" url))))
+; A url names a repository one of three ways, as git reads them:
+;   file:///path                      the service run here
+;   ssh://[user@]host[:port]/path     the service run there, through ssh;
+;                                     git+ssh:// and ssh+git:// the same
+;   [user@]host:path                  ssh, scp's form: a colon before any
+;                                     slash
+; A url is taken apart as (SCHEME HOST PORT PATH): file with host () or
+; ssh, the port () when none is named.  () for a path, which is no url.
 
-(def %url-path
-  (fn (_ url) (Str8 sub 7 (%sub (Str8 length url) 7) url)))
+(def %tail (fn (_ s n) (Str8 sub n (%sub (Str8 length s) n) s)))
+
+(def %after-scheme
+  (fn (_ url)
+    (match
+      ((Str8 starts? "ssh://" url) (%tail url 6))
+      ((Str8 starts? "git+ssh://" url) (%tail url 10))
+      ((Str8 starts? "ssh+git://" url) (%tail url 10))
+      (#t ()))))
+
+(def proto-url-parts
+  (fn (_ url)
+    (def rest-ssh (if (null? url) () (%after-scheme url)))
+    (match
+      ((null? url) ())
+      ((Str8 starts? "file://" url) (list (lit file) () () (%tail url 7)))
+      ((not (null? rest-ssh))
+        (let ((slash (Str8 index-of "/" rest-ssh)))
+          (let ((authority (if (null? slash) rest-ssh (Str8 sub 0 slash rest-ssh)))
+                (path (if (null? slash) "/" (%tail rest-ssh slash))))
+            (let ((colon (Str8 last-index-of ":" authority)))
+              (list (lit ssh)
+                    (if (null? colon) authority (Str8 sub 0 colon authority))
+                    (if (null? colon) () (%tail authority (%add colon 1)))
+                    ; ssh://host/~user/path names a home directory
+                    (if (Str8 starts? "/~" path) (%tail path 1) path))))))
+      (#t
+        (let ((colon (Str8 index-of ":" url)) (slash (Str8 index-of "/" url)))
+          (if (and (not (null? colon)) (> colon 0) (or (null? slash) (< colon slash)))
+            (list (lit ssh) (Str8 sub 0 colon url) () (%tail url (%add colon 1)))
+            ()))))))
+
+; Does the url name a repository reached through a service?
+(def proto-url? (fn (_ url) (not (null? (proto-url-parts url)))))
+
+; The path part of a url, the repository's name on its host.
+(def proto-url-path (fn (_ url) (first (rest (rest (rest (proto-url-parts url)))))))
+
+; A word quoted for a shell as git quotes one: in single quotes, a quote
+; or a ! inside closed, escaped and opened again.
+(def proto-sq-quote
+  (fn (_ s)
+    (Str8 append "'"
+      (Str8 join "" (List map (fn (_ c) (match ((str=? c "'") "'\\''") ((str=? c "!") "'\\!'") (#t c)))
+                      (List map (fn (_ i) (Str8 sub i 1 s)) (List range 0 (Str8 length s)))))
+      "'")))
+
+; The ssh to run, as git finds it: GIT_SSH_COMMAND, then core.sshCommand,
+; each a shell command line; then GIT_SSH, a program; then ssh.  Answers
+; (SHELL? . TEXT).
+(def %ssh-command
+  (fn (_ gitdir)
+    (def env (Sys getenv "GIT_SSH_COMMAND"))
+    (def conf (if (null? gitdir) () (git-config-get gitdir "core" "sshCommand")))
+    (def prog (Sys getenv "GIT_SSH"))
+    (match
+      ((and (not (null? env)) (> (Str8 length env) 0)) (pair #t env))
+      ((not (null? conf)) (pair #t conf))
+      ((and (not (null? prog)) (> (Str8 length prog) 0)) (pair #f prog))
+      (#t (pair #f "ssh")))))
 
 ; The service opened for a url: a wire to git-upload-pack or
-; git-receive-pack on the repository the url names.
+; git-receive-pack on the repository the url names -- run here for a
+; file:// url, through ssh on the host for the others, given its port
+; with -p and the service's command line as one word, the path quoted,
+; as git gives them.  gitdir, when there is one, is read for
+; core.sshCommand.
 (def proto-connect
-  (fn (_ url service)
-    (wire-open (list "git" service (%url-path url)))))
+  (fn (_ url service . gitdir)
+    (def parts (proto-url-parts url))
+    (if (eq? (first parts) (lit file))
+      (wire-open (list "git" service (proto-url-path url)))
+      (let ((ssh (%ssh-command (if (null? gitdir) () (first gitdir))))
+            (args (List append
+                    (if (null? (first (rest (rest parts)))) () (list "-p" (first (rest (rest parts)))))
+                    (list (first (rest parts))
+                          (Str8 append "git-" service " " (proto-sq-quote (proto-url-path url)))))))
+        (wire-open
+          (if (first ssh)
+            (List append (list "/bin/sh" "-c" (Str8 append (rest ssh) " \"$@\"") (rest ssh)) args)
+            (pair (rest ssh) args)))))))
 
 ; --- the advertisement ---
 
@@ -303,5 +383,5 @@
     "Please make sure you have the correct access rights\n"
     "and the repository exists.\n"))
 
-(provide git/protocol proto-url? proto-connect proto-advertise proto-cap proto-fetch! proto-push!
-  proto-remote-lines proto-cannot-read)
+(provide git/protocol proto-url? proto-url-parts proto-url-path proto-sq-quote proto-connect
+  proto-advertise proto-cap proto-fetch! proto-push! proto-remote-lines proto-cannot-read)

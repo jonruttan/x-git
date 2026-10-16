@@ -267,7 +267,8 @@
                ((Str8 starts? "[" l) (self (rest lines) (str=? l (Str8 append "[" section "]"))))
                ((and in? (not (null? (Str8 index-of "=" l))))
                  (let ((i (Str8 index-of "=" l)))
-                   (if (str=? (Str8 trim (Str8 sub 0 i l)) key)
+                   ; a variable's name is matched ignoring case, as git does
+                   (if (Str8 ci=? (Str8 trim (Str8 sub 0 i l)) key)
                      (Str8 trim (Str8 sub (%add i 1) (%sub (Str8 length l) (%add i 1)) l))
                      (self (rest lines) in?))))
                (#t (self (rest lines) in?))))))

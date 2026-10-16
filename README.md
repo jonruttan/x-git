@@ -40,9 +40,14 @@ the kernel and x are installed (x-os).
   the working directory and index set to the tree, a path with changes of
   its own stopping the move in git's words; `checkout -- <path>...` and
   `restore <path>...` from the index
-- `clone <repository> [<directory>]` from a local path or a `file://`
-  url: the objects copied, or brought as one pack over git's pack
-  protocol from `git-upload-pack`; the source's branches as
+- a remote by path, or by url: `file:///path`, `ssh://[user@]host[:port]/path`
+  or scp's `[user@]host:path`.  Over ssh the service is run on the host
+  as git runs it, `ssh [-p port] host "git-upload-pack '/path'"`, the
+  ssh chosen as git chooses one: `GIT_SSH_COMMAND`, `core.sshCommand`,
+  `GIT_SSH`, then `ssh` -- on x-os, x-ssh's client
+- `clone <repository> [<directory>]` from a local path or a url: the
+  objects copied, or brought as one pack over git's pack protocol from
+  `git-upload-pack`; the source's branches as
   `refs/remotes/origin/*`, its tags, one local branch for its HEAD
   branch, the remote and branch config, the tree checked out
 - `fetch [<repository>]`: every branch of the remote to
@@ -81,6 +86,14 @@ Not served yet: reflogs (`@{N}`), `:/text`, and every other command.
 
 Set `X=/path/to/x` to use a particular x.  The suite needs `git` on the
 path for its fixture and as the reference.
+
+`tests/oracle/ssh.sh` is the live test over ssh, x at every hop: x-git
+clones, fetches and pushes through x-ssh's client and server, with
+x-git's own services on the far side, and git checks what lands.
+
+    X=/path/to/x X_LANG_DIR=DIR/ sh tests/oracle/ssh.sh [PORT]
+
+DIR holds this tree as `git` and x-ssh as `ssh`.
 
 ## Layout
 
