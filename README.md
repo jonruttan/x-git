@@ -63,8 +63,11 @@ the kernel and x are installed (x-os).
   pull -- has the branch in its history; otherwise a three-way merge from
   the merge base, into a merge commit, or with the conflicts marked in the
   files, staged 1, 2 and 3 in the index and `MERGE_HEAD` left for `commit`
-  (content, add/add and modify/delete conflicts; renames are not looked
-  for).  git's report, diffstat and messages; a change of the working
+  (content, add/add, modify/delete, rename/delete and rename/rename
+  conflicts).  A file renamed on one side is merged under its new name,
+  renames found as git finds them (the same blob, else half or more alike
+  by git's measure); directory renames are not followed.  git's report,
+  diffstat (renames as `OLD => NEW`) and messages; a change of the working
   directory's own in the way refused in git's words; pull merges diverged
   histories when `--no-rebase` or `pull.rebase=false` says to
 - `push [<repository> [<branch>]]`: one branch, by path or by url to
@@ -130,6 +133,7 @@ DIR holds this tree as `git` and x-ssh as `ssh`.
     git/serve.x       upload-pack and receive-pack, the services
     git/merge.x       merge and pull
     git/threeway.x    the merge base, files and trees merged three ways
+    git/renames.x     renames, as git finds them
     git/paths.x       rm, mv
     git/ignore.x      gitignore(5)
     git/cli.x         the command line: git-options, git-plan, git-run, git-main

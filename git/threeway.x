@@ -24,14 +24,17 @@
 ; differences come from x-git's own differ, not xdiff's, so where a change
 ; can be read more than one way the two may draw it differently.
 ;
-; Renames are not looked for: a file moved on one side and changed on
-; the other merges as a deletion and an addition.
+; Renames are found as git finds them (git/renames), each side against
+; the base, and a renamed file merged under its new name.  Directory
+; renames -- a file added on one side to a directory the other renamed --
+; are not followed.
 
 (module git/threeway)
 
 (import x/type/vector Vector)
 (import git/objects git-object-read git-object-text git-tree-entries git-read-file)
 (import git/diff git-edit-script)
+(import git/renames git-find-renames)
 
 (def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
@@ -310,47 +313,126 @@
 ;                                  leave ours as it is
 ; and MESSAGES the lines merge prints, in path order.  write-blob answers
 ; a merged text's blob name.  name1 and name2 name the sides.
+;
+; A file one side renamed (git/renames, against the base) is merged under
+; its new name: its base, the other side's file at the old name, and the
+; renamed one -- the conflict markers naming each side NAME:PATH when the
+; paths differ, as git's do.  Renamed by both sides, to the same name, it
+; is merged there; to different names, it is a rename/rename conflict.
+; Renamed by one side and deleted by the other, a rename/delete conflict.
 (def git-merge-trees
   (fn (_ base ours theirs name1 name2 gitdir write-blob)
-    (def paths
-      (List sort (fn (_ a b) (Str8 <? a b))
-        ((fn (self ps acc) (if (null? ps) acc (self (rest ps) (if (%member? (first ps) acc) acc (pair (first ps) acc)))))
-         (List map first (List append base (List append ours theirs))) ())))
+    (def paths-of (fn (_ files) (List map first files)))
+    (def renames-in
+      (fn (_ side)
+        (git-find-renames gitdir
+          (List filter (fn (_ b) (null? (%find (first b) side))) base)
+          (List filter (fn (_ f) (null? (%find (first f) base))) side))))
+    ; a rename is taken only when the other side has nothing at its new
+    ; name, or has it by making the same rename
+    (def raw-o (renames-in ours))
+    (def raw-t (renames-in theirs))
+    (def same-rename?
+      (fn (_ r others)
+        (List any? (fn (_ x) (and (str=? (first (first x)) (first (first r))) (str=? (first (first (rest x))) (first (first (rest r)))))) others)))
+    (def ro (List filter (fn (_ r) (or (null? (%find (first (first (rest r))) theirs)) (same-rename? r raw-t))) raw-o))
+    (def rt (List filter (fn (_ r) (or (null? (%find (first (first (rest r))) ours)) (same-rename? r raw-o))) raw-t))
+    (def renamed-by (fn (_ rs path) (List find (fn (_ r) (str=? (first (first r)) path)) rs)))
     (def stages
       (fn (_ b o t)
         (List append (if (null? b) () (list (list 1 (first (rest b)) (first (rest (rest b))))))
           (List append (if (null? o) () (list (list 2 (first (rest o)) (first (rest (rest o))))))
             (if (null? t) () (list (list 3 (first (rest t)) (first (rest (rest t))))))))))
-    (def merged
-      (List map
-        (fn (_ path)
-          (let ((b (%find path base)) (o (%find path ours)) (t (%find path theirs)))
+    ; one path's entries merged: (RECORDS . MESSAGES).  label1 and label2
+    ; are what the markers call the sides.
+    (def merge-entries
+      (fn (_ path b o t label1 label2)
+        (match
+          ((%same? o t) (if (null? o) (pair (list (list path (lit gone))) ()) (pair (list (list path (lit clean) (first (rest o)) (first (rest (rest o))))) ())))
+          ((%same? b o) (if (null? t) (pair (list (list path (lit gone))) ()) (pair (list (list path (lit clean) (first (rest t)) (first (rest (rest t))))) ())))
+          ((%same? b t) (if (null? o) (pair (list (list path (lit gone))) ()) (pair (list (list path (lit clean) (first (rest o)) (first (rest (rest o))))) ())))
+          ; one side deleted what the other changed
+          ((or (null? o) (null? t))
+            (pair (list (list path (lit conflict) (stages b o t) (if (null? o) (%blob-text gitdir t) ())))
+                  (list (Str8 append "CONFLICT (modify/delete): " path " deleted in " (if (null? o) name1 name2)
+                          " and modified in " (if (null? o) name2 name1) ".  Version " (if (null? o) name2 name1)
+                          " of " path " left in tree.\n"))))
+          ; both changed it, or both added it: the texts merged
+          (#t
+            (let ((tb (%blob-text gitdir b)) (to (%blob-text gitdir o)) (tt (%blob-text gitdir t))
+                  (kind (if (null? b) "add/add" "content")))
+              (if (or (%binary? gitdir b) (%binary? gitdir o) (%binary? gitdir t))
+                (pair (list (list path (lit conflict) (stages b o t) ()))
+                      (list (Str8 append "warning: Cannot merge binary files: " path " (" label1 " vs. " label2 ")\n")
+                            (Str8 append "Auto-merging " path "\n")
+                            (Str8 append "CONFLICT (" kind "): Merge conflict in " path "\n")))
+                (let ((r (git-merge-text tb to tt label1 label2)))
+                  (if (= (rest r) 0)
+                    (pair (list (list path (lit clean) (first (rest o)) (write-blob (first r)))) (list (Str8 append "Auto-merging " path "\n")))
+                    (pair (list (list path (lit conflict) (stages b o t) (first r)))
+                          (list (Str8 append "Auto-merging " path "\n")
+                                (Str8 append "CONFLICT (" kind "): Merge conflict in " path "\n")))))))))))
+    ; the markers' names for a renamed file: NAME:PATH when the paths differ
+    (def labels
+      (fn (_ b o t)
+        (if (and (str=? (first b) (first o)) (str=? (first o) (first t))) (pair name1 name2)
+          (pair (Str8 append name1 ":" (first o)) (Str8 append name2 ":" (first t))))))
+    ; each renamed file's units, keyed by the path they sort under:
+    ; ((KEY RECORDS . MESSAGES) ...), and the paths they account for
+    (def rename-units
+      (List flat-map
+        (fn (_ b)
+          (let ((o-r (renamed-by ro (first b))) (t-r (renamed-by rt (first b))))
             (match
-              ((%same? o t) (if (null? o) (pair (list path (lit gone)) ()) (pair (list path (lit clean) (first (rest o)) (first (rest (rest o)))) ())))
-              ((%same? b o) (if (null? t) (pair (list path (lit gone)) ()) (pair (list path (lit clean) (first (rest t)) (first (rest (rest t)))) ())))
-              ((%same? b t) (if (null? o) (pair (list path (lit gone)) ()) (pair (list path (lit clean) (first (rest o)) (first (rest (rest o)))) ())))
-              ; one side deleted what the other changed
-              ((or (null? o) (null? t))
-                (pair (list path (lit conflict) (stages b o t) (if (null? o) (%blob-text gitdir t) ()))
-                      (list (Str8 append "CONFLICT (modify/delete): " path " deleted in " (if (null? o) name1 name2)
-                              " and modified in " (if (null? o) name2 name1) ".  Version " (if (null? o) name2 name1)
-                              " of " path " left in tree.\n"))))
-              ; both changed it, or both added it: the texts merged
+              ((and (null? o-r) (null? t-r)) ())
+              ; both renamed it
+              ((and (not (null? o-r)) (not (null? t-r)))
+                (let ((od (first (rest o-r))) (td (first (rest t-r))))
+                  (if (str=? (first od) (first td))
+                    (let ((lb (labels b od td)))
+                      (list (pair (first od) (merge-entries (first od) b od td (first lb) (rest lb)))))
+                    (list (pair (first b)
+                            (pair (list (list (first b) (lit conflict) (list (list 1 (first (rest b)) (first (rest (rest b))))) ())
+                                        (list (first od) (lit conflict) (list (list 2 (first (rest od)) (first (rest (rest od))))) ())
+                                        (list (first td) (lit conflict) (list (list 3 (first (rest td)) (first (rest (rest td)))))
+                                              (%blob-text gitdir td)))
+                                  (list (Str8 append "CONFLICT (rename/rename): " (first b) " renamed to " (first od) " in " name1
+                                          " and to " (first td) " in " name2 ".\n"))))))))
+              ; ours renamed it
+              ((not (null? o-r))
+                (let ((od (first (rest o-r))) (t (%find (first b) theirs)))
+                  (if (null? t)
+                    (list (pair (first od)
+                            (pair (list (list (first od) (lit conflict) (stages b od ()) ()))
+                                  (list (Str8 append "CONFLICT (rename/delete): " (first b) " renamed to " (first od) " in " name1
+                                          ", but deleted in " name2 ".\n")))))
+                    (let ((lb (labels b od t)))
+                      (list (pair (first od) (merge-entries (first od) b od t (first lb) (rest lb))))))))
+              ; theirs renamed it
               (#t
-                (let ((tb (%blob-text gitdir b)) (to (%blob-text gitdir o)) (tt (%blob-text gitdir t))
-                      (kind (if (null? b) "add/add" "content")))
-                  (if (or (%binary? gitdir b) (%binary? gitdir o) (%binary? gitdir t))
-                    (pair (list path (lit conflict) (stages b o t) ())
-                          (list (Str8 append "warning: Cannot merge binary files: " path " (" name1 " vs. " name2 ")\n")
-                                (Str8 append "Auto-merging " path "\n")
-                                (Str8 append "CONFLICT (" kind "): Merge conflict in " path "\n")))
-                    (let ((r (git-merge-text tb to tt name1 name2)))
-                      (if (= (rest r) 0)
-                        (pair (list path (lit clean) (first (rest o)) (write-blob (first r))) (list (Str8 append "Auto-merging " path "\n")))
-                        (pair (list path (lit conflict) (stages b o t) (first r))
-                              (list (Str8 append "Auto-merging " path "\n")
-                                    (Str8 append "CONFLICT (" kind "): Merge conflict in " path "\n")))))))))))
-        paths))
-    (list (List map first merged) (List flat-map rest merged))))
+                (let ((td (first (rest t-r))) (o (%find (first b) ours)))
+                  (if (null? o)
+                    (list (pair (first td)
+                            (pair (list (list (first td) (lit conflict) (stages b () td) (%blob-text gitdir td)))
+                                  (list (Str8 append "CONFLICT (rename/delete): " (first b) " renamed to " (first td) " in " name2
+                                          ", but deleted in " name1 ".\n")))))
+                    (let ((lb (labels b o td)))
+                      ; the old name goes with it
+                      (list (pair (first td)
+                              (let ((m (merge-entries (first td) b o td (first lb) (rest lb))))
+                                (pair (pair (list (first b) (lit gone)) (first m)) (rest m))))))))))))
+        base))
+    ; what the renames account for: each source, and each new name in the
+    ; side that made it
+    (def accounted
+      (List append (List map (fn (_ r) (first (first r))) (List append ro rt))
+        (List append (List map (fn (_ r) (first (first (rest r)))) ro) (List map (fn (_ r) (first (first (rest r)))) rt))))
+    (def paths
+      ((fn (self ps acc) (if (null? ps) acc (self (rest ps) (if (or (%member? (first ps) acc) (%member? (first ps) accounted)) acc (pair (first ps) acc)))))
+       (List append (paths-of base) (List append (paths-of ours) (paths-of theirs))) ()))
+    (def plain-units
+      (List map (fn (_ path) (pair path (merge-entries path (%find path base) (%find path ours) (%find path theirs) name1 name2))) paths))
+    (def units (List sort (fn (_ a b) (Str8 <? (first a) (first b))) (List append plain-units rename-units)))
+    (list (List flat-map (fn (_ u) (first (rest u))) units) (List flat-map (fn (_ u) (rest (rest u))) units))))
 
 (provide git/threeway git-merge-base git-merge-text git-merge-trees git-tree-flat)
