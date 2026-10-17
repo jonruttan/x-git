@@ -11,8 +11,8 @@
 ; them.
 ;
 ; The base is the common ancestor no other common ancestor descends
-; from; where there are several, the one committed last is taken, where
-; git would merge them into one first.
+; from; where there are several, they are merged into one first, as git
+; merges them.
 ;
 ; A file both sides changed is merged as git's xdiff merges at level
 ; ZEALOUS: the changes each side made against the base, in order; a
@@ -67,18 +67,62 @@
          (#t (self (List append (rest work) (first (%commit-info gitdir (first work)))) (pair (first work) seen)))))
      (list sha) ())))
 
-; The merge base of two commits, or () when they share no history.
-(def git-merge-base
-  (fn (_ gitdir a b)
-    (def from-a (%ancestors gitdir a))
+; The merge bases of the commits as and commit b: the common ancestors no
+; other common ancestor reaches, oldest first, as git's ort takes them.
+(def %merge-bases
+  (fn (_ gitdir as b)
+    (def from-a (List flat-map (fn (_ a) (%ancestors gitdir a)) as))
     (def common (List filter (fn (_ c) (%member? c from-a)) (%ancestors gitdir b)))
-    ; the common ancestors no other common ancestor reaches
     (def best
       (List filter
         (fn (_ c) (not (List any? (fn (_ d) (and (not (str=? d c)) (%member? c (%ancestors gitdir d)))) common)))
         common))
-    (if (null? best) ()
-      (first (List sort (fn (_ x y) (> (rest (%commit-info gitdir x)) (rest (%commit-info gitdir y)))) best)))))
+    (List sort (fn (_ x y) (< (rest (%commit-info gitdir x)) (rest (%commit-info gitdir y)))) best)))
+
+; A commit's files, as git-tree-flat lists them.
+(def %commit-files
+  (fn (_ gitdir sha)
+    (def o (git-object-read gitdir sha))
+    (def tree (List find (fn (_ l) (Str8 starts? "tree " l)) (Str8 split "\n" (git-object-text o))))
+    (git-tree-flat gitdir (Str8 sub 5 40 tree) "")))
+
+; The files a merge of commits a and b starts from, or #f when they share
+; no history: their merge base's, or, when they have more than one, the
+; bases merged into one, oldest first, as git's ort makes its virtual
+; base -- each merge from the bases those two have, made the same way;
+; the sides called "Temporary merge branch 1" and "2", a conflict's text
+; left marked with markers two longer a level down, a file the merge
+; could not write (binary, deleted on a side) the base's.
+(def git-merge-base-files
+  (fn (_ gitdir a b write-blob) (%base-files gitdir (list a) b 1 write-blob)))
+
+(def %base-files
+  (fn (self gitdir as b depth write-blob)
+    (def bases (%merge-bases gitdir as b))
+    (if (null? bases) #f
+      ((fn (fold merged seen more)
+         (if (null? more) merged
+           (let ((inner (self gitdir seen (first more) (%add depth 1) write-blob)))
+             (fold (%virtual-merge (if (eq? inner #f) () inner) merged (%commit-files gitdir (first more)) depth gitdir write-blob)
+                   (pair (first more) seen) (rest more)))))
+       (%commit-files gitdir (first bases)) (list (first bases)) (rest bases)))))
+
+(def %virtual-merge
+  (fn (_ base ours theirs depth gitdir write-blob)
+    (def r (git-merge-trees base ours theirs "Temporary merge branch 1" "Temporary merge branch 2" "true"
+             (%add 7 (* 2 depth)) gitdir write-blob))
+    (List flat-map
+      (fn (_ x)
+        (match
+          ((eq? (first (rest x)) (lit gone)) ())
+          ((eq? (first (rest x)) (lit clean)) (list (list (first x) (first (rest (rest x))) (first (rest (rest (rest x)))))))
+          (#t
+            (let ((stages (first (rest (rest x)))) (work (first (rest (rest (rest x))))))
+              (let ((at (fn (_ k) (List find (fn (_ s) (= (first s) k)) stages))))
+                (if (not (null? work))
+                  (list (list (first x) (first (rest (or (at 2) (at 3)))) (write-blob work)))
+                  (let ((s (or (at 1) (at 2) (at 3)))) (list (list (first x) (first (rest s)) (first (rest (rest s))))))))))))
+      (first r))))
 
 ; --- lines ---
 
@@ -234,9 +278,13 @@
     (if (and closed? (> (Str8 length text) 0) (not (Str8 ends? "\n" text))) (Str8 append text "\n") text)))
 
 ; Three texts merged: (TEXT . CONFLICTS), the conflicts marked between
-; `<<<<<<< name1` and `>>>>>>> name2`.
+; `<<<<<<< name1` and `>>>>>>> name2`, markers of size characters: seven,
+; and two more a level down when merge bases are merged for a merge.
 (def git-merge-text
-  (fn (_ base ours theirs name1 name2)
+  (fn (_ base ours theirs name1 name2 size)
+    (def open (Str8 append (Str8 repeat size "<") " "))
+    (def mid (Str8 append (Str8 repeat size "=") "\n"))
+    (def close (Str8 append (Str8 repeat size ">") " "))
     (def lb (%lines base)) (def lo (%lines ours)) (def lt (%lines theirs))
     (def vo (Vector from-list lo)) (def vt (Vector from-list lt))
     (def records
@@ -253,9 +301,9 @@
              ((= (%m m 0) 0)
                (self (rest ms) (%add (%m m 3) (%m m 4))
                  (pair (Str8 append (%copy vo i (%sub (%m m 3) i) #f)
-                         "<<<<<<< " name1 "\n" (%copy vo (%m m 3) (%m m 4) #t)
-                         "=======\n" (%copy vt (%m m 5) (%m m 6) #t)
-                         ">>>>>>> " name2 "\n")
+                         open name1 "\n" (%copy vo (%m m 3) (%m m 4) #t)
+                         mid (%copy vt (%m m 5) (%m m 6) #t)
+                         close name2 "\n")
                        acc)
                  (%add conflicts 1)))
              ((= (%m m 0) 4) (self (rest ms) i acc conflicts))
@@ -402,7 +450,7 @@
 ; MESSAGES the lines merge prints, in path order, and STOPPED? whether the
 ; merge stops though no path is in conflict.  write-blob answers a merged
 ; text's blob name.  name1 and name2 name the sides; dir-renames is
-; merge.directoryRenames.
+; merge.directoryRenames; size is the conflict markers' size.
 ;
 ; A file one side renamed (git/renames, against the base) is merged under
 ; its new name: its base, the other side's file at the old name, and the
@@ -417,7 +465,7 @@
 ; on its side alone, when dir-renames is "conflict".  A directory that
 ; was split stops the merge, with nothing left in conflict.
 (def git-merge-trees
-  (fn (_ base ours theirs name1 name2 dir-renames gitdir write-blob)
+  (fn (_ base ours theirs name1 name2 dir-renames size gitdir write-blob)
     (def renames-in
       (fn (_ side)
         (git-find-renames gitdir
@@ -432,7 +480,7 @@
       (fn (_ rs moves) (List map (fn (_ r) (pair (first r) (pair (%moved (first (rest r)) moves) (rest (rest r))))) rs)))
     (def units
       (%merge-files base (List map (fn (_ f) (%moved f moves-o)) ours) (List map (fn (_ f) (%moved f moves-t)) theirs)
-        (move-renames raw-o moves-o) (move-renames raw-t moves-t) name1 name2 gitdir write-blob))
+        (move-renames raw-o moves-o) (move-renames raw-t moves-t) name1 name2 size gitdir write-blob))
     ; a moved file's unit: in conflict at its new path, on its own side,
     ; and git's word for the move
     (def placed
@@ -480,7 +528,7 @@
 ; The files merged once any moves are made, renames known: the units,
 ; (KEY RECORDS . MESSAGES) each, in path order.
 (def %merge-files
-  (fn (_ base ours theirs raw-o raw-t name1 name2 gitdir write-blob)
+  (fn (_ base ours theirs raw-o raw-t name1 name2 size gitdir write-blob)
     (def paths-of (fn (_ files) (List map first files)))
     ; a rename is taken only when the other side has nothing at its new
     ; name, or has it by making the same rename
@@ -518,7 +566,7 @@
                       (list (Str8 append "warning: Cannot merge binary files: " path " (" label1 " vs. " label2 ")\n")
                             (Str8 append "Auto-merging " path "\n")
                             (Str8 append "CONFLICT (" kind "): Merge conflict in " path "\n")))
-                (let ((r (git-merge-text tb to tt label1 label2)))
+                (let ((r (git-merge-text tb to tt label1 label2 size)))
                   (if (= (rest r) 0)
                     (pair (list (list path (lit clean) (first (rest o)) (write-blob (first r)))) (list (Str8 append "Auto-merging " path "\n")))
                     (pair (list (list path (lit conflict) (stages b o t) (first r)))
@@ -586,4 +634,4 @@
       (List map (fn (_ path) (pair path (merge-entries path (%find path base) (%find path ours) (%find path theirs) name1 name2))) paths))
     (List append plain-units rename-units)))
 
-(provide git/threeway git-merge-base git-merge-text git-merge-trees git-tree-flat)
+(provide git/threeway git-merge-base-files git-merge-text git-merge-trees git-tree-flat)
