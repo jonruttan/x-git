@@ -23,6 +23,7 @@
 (import git/objects git-object-read git-object-text git-read-file git-hash)
 (import git/refs git-tree-of git-rev-parse)
 (import git/index git-index-read git-tree-files)
+(import git/renames git-find-renames git-rename-name git-max-score)
 
 (def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
@@ -294,11 +295,14 @@
   (fn (_ n one many) (Str8 append (Str8 str n) " " (if (= n 1) one many))))
 
 ; ` N file(s) changed, X insertion(s)(+), Y deletion(s)(-)`
+; with neither, both are given as none
 (def %summary-line
   (fn (_ nfiles ins del)
     (Str8 append " " (%plural nfiles "file changed" "files changed")
-      (if (> ins 0) (Str8 append ", " (%plural ins "insertion(+)" "insertions(+)")) "")
-      (if (> del 0) (Str8 append ", " (%plural del "deletion(-)" "deletions(-)")) "")
+      (if (and (= ins 0) (= del 0)) ", 0 insertions(+), 0 deletions(-)"
+        (Str8 append
+          (if (> ins 0) (Str8 append ", " (%plural ins "insertion(+)" "insertions(+)")) "")
+          (if (> del 0) (Str8 append ", " (%plural del "deletion(-)" "deletions(-)")) "")))
       "\n")))
 
 ; Each change's counts: ((PATH INS DEL) ...).
@@ -328,7 +332,10 @@
           (fn (_ c)
             (Str8 append " " (Str8 pad-right width #\space (first c)) " | "
               (Str8 pad-left total-width #\space (Str8 str (%add (first (rest c)) (first (rest (rest c))))))
-              " " (Str8 repeat (first (rest c)) "+") (Str8 repeat (first (rest (rest c))) "-") "\n"))
+              ; a row with no lines changed has no bar
+              (if (= (%add (first (rest c)) (first (rest (rest c)))) 0) ""
+                (Str8 append " " (Str8 repeat (first (rest c)) "+") (Str8 repeat (first (rest (rest c))) "-")))
+              "\n"))
           counts))
       (%summary-line (List length counts) ins del))))
 
@@ -349,21 +356,50 @@
       (Str8 join "" (List map (fn (_ c) (Str8 append " delete mode 100644 " (first c) "\n"))
                       (List filter (fn (_ c) (null? (first (rest (rest c))))) changes))))))
 
-; What merge prints after "Fast-forward": the --stat of one tree against
-; another, then a line a file created or deleted, in path order.
+; What merge prints after "Fast-forward" or a merge commit: the --stat of
+; one tree against another, renames found as git finds them -- a file
+; deleted and one added that is the same or alike, one row `OLD => NEW` --
+; then a line a file created, deleted or renamed, in path order.
 (def git-tree-diffstat
   (fn (_ gitdir old-tree new-tree)
-    (def changes (%changed "" gitdir (%tree-side gitdir old-tree) (%tree-side gitdir new-tree) #f))
-    (if (null? changes) ""
-      (Str8 append (%stat-text changes)
-        (Str8 join ""
-          (List flat-map
+    (def old-side (%tree-side gitdir old-tree))
+    (def new-side (%tree-side gitdir new-tree))
+    (def plain (%changed "" gitdir old-side new-side #f))
+    (def as-entry (fn (_ e) (list (first e) (first (rest (rest e))) (first (rest e)))))
+    (def renames
+      (git-find-renames gitdir
+        (List map (fn (_ c) (as-entry (List find (fn (_ e) (str=? (first e) (first c))) old-side)))
+          (List filter (fn (_ c) (null? (first (rest (rest c))))) plain))
+        (List map (fn (_ c) (as-entry (List find (fn (_ e) (str=? (first e) (first c))) new-side)))
+          (List filter (fn (_ c) (null? (first (rest c)))) plain))))
+    (def renamed-path?
+      (fn (_ p) (List any? (fn (_ r) (or (str=? (first (first r)) p) (str=? (first (first (rest r))) p))) renames)))
+    ; each row: (KEY CHANGE SUMMARY), CHANGE as %stat-text takes it
+    (def rows
+      (List sort (fn (_ a b) (Str8 <? (first a) (first b)))
+        (List append
+          (List map
             (fn (_ c)
-              (match
-                ((null? (first (rest c))) (list (Str8 append " create mode " (first (rest (first (rest (rest c))))) " " (first c) "\n")))
-                ((null? (first (rest (rest c)))) (list (Str8 append " delete mode " (first (rest (first (rest c)))) " " (first c) "\n")))
-                (#t ())))
-            changes))))))
+              (list (first c) c
+                (match
+                  ((null? (first (rest c))) (Str8 append " create mode " (first (rest (first (rest (rest c))))) " " (first c) "\n"))
+                  ((null? (first (rest (rest c)))) (Str8 append " delete mode " (first (rest (first (rest c)))) " " (first c) "\n"))
+                  (#t ""))))
+            (List filter (fn (_ c) (not (renamed-path? (first c)))) plain))
+          (List flat-map
+            (fn (_ r)
+              (let ((src (first (first r))) (dst (first (first (rest r)))) (score (first (rest (rest r)))))
+                (let ((name (git-rename-name src dst))
+                      (old (%with-text "" gitdir old-side src #f))
+                      (new (%with-text "" gitdir new-side dst #f)))
+                  (list (list dst (list name old new)
+                          (Str8 append " rename " name " (" (Str8 str (%int-div (%mul score 100) git-max-score)) "%)\n"))))))
+            renames))))
+    (if (null? rows) ""
+      (Str8 append (%stat-text (List map (fn (_ r) (first (rest r))) rows))
+        (Str8 join "" (List map (fn (_ r) (first (rest (rest r)))) rows))))))
+
+(def %int-div (prim-ref (lit int) (lit /)))
 
 ; --- diff ---
 
