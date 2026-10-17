@@ -66,7 +66,10 @@ the kernel and x are installed (x-os).
   (content, add/add, modify/delete, rename/delete and rename/rename
   conflicts).  A file renamed on one side is merged under its new name,
   renames found as git finds them (the same blob, else half or more alike
-  by git's measure); directory renames are not followed.  git's report,
+  by git's measure).  A file added to a directory the other side renamed
+  follows it as `merge.directoryRenames` says -- in conflict at its new
+  path by default, moved with `true`, left with `false` -- and a
+  directory split between new homes stops the merge.  git's report,
   diffstat (renames as `OLD => NEW`) and messages; a change of the working
   directory's own in the way refused in git's words; pull merges diverged
   histories when `--no-rebase` or `pull.rebase=false` says to

@@ -25,9 +25,10 @@
 ; can be read more than one way the two may draw it differently.
 ;
 ; Renames are found as git finds them (git/renames), each side against
-; the base, and a renamed file merged under its new name.  Directory
-; renames -- a file added on one side to a directory the other renamed --
-; are not followed.
+; the base, and a renamed file merged under its new name.  A directory
+; one side renamed takes with it what the other side added to it, as
+; merge.directoryRenames says: moved and left in conflict ("conflict",
+; git's default), moved ("true"), or left where it is ("false").
 
 (module git/threeway)
 
@@ -304,15 +305,104 @@
             (n (if (> (first (rest o)) 8000) 8000 (first (rest o)))))
         ((fn (self i) (if (>= i n) #f (if (= (& (%pref p i 1) 255) 0) #t (self (%add i 1))))) 0)))))
 
-; Three trees' files merged.  Answers (RESULTS MESSAGES): RESULTS a
+; --- directory renames ---
+;
+; A side renamed a directory when the directory is gone from it and its
+; files' renames say where they went, as git's ort counts them: a file
+; renamed from old/x/f to new/x/f says old/x went to new/x, and old to
+; new, up to the first parent whose last part differs.  The destination
+; most of a directory's files took is its new name; when no destination
+; has more than every other, the directory was split, and nothing added
+; to it can follow it.
+
+(def %dir-of
+  (fn (_ p) (let ((i (Str8 last-index-of "/" p))) (if (null? i) "" (Str8 sub 0 i p)))))
+
+(def %last-of
+  (fn (_ p) (let ((i (Str8 last-index-of "/" p))) (if (null? i) p (Str8 sub (%add i 1) (%sub (Str8 length p) (%add i 1)) p)))))
+
+; Every directory files are under, each once.
+(def %dirs
+  (fn (_ files)
+    ((fn (self ps acc)
+       (if (null? ps) acc
+         (self (rest ps)
+               ((fn (up d acc) (if (or (str=? d "") (%member? d acc)) acc (up (%dir-of d) (pair d acc))))
+                (%dir-of (first (first ps))) acc))))
+     files ())))
+
+; The (OLD-DIR . NEW-DIR) pairs a file renamed from old to new votes for.
+(def %rename-dirs
+  (fn (self old new first? acc)
+    (if (and (not first?) (not (str=? (%last-of old) (%last-of new)))) acc
+      (let ((od (%dir-of old)) (nd (%dir-of new)))
+        (if (str=? od nd) acc
+          (if (or (str=? od "") (str=? nd "")) (pair (pair od nd) acc)
+            (self od nd #f (pair (pair od nd) acc))))))))
+
+; What a side's renames did to the directories gone from it:
+; ((DIR . NEW-DIR) ...), NEW-DIR () when the directory was split.
+(def %dir-renames
+  (fn (_ base side renames)
+    (def gone (List filter (fn (_ d) (not (%member? d (%dirs side)))) (%dirs base)))
+    (def votes
+      (List filter (fn (_ v) (%member? (first v) gone))
+        (List flat-map (fn (_ r) (%rename-dirs (first (first r)) (first (first (rest r))) #t ())) renames)))
+    (List map
+      (fn (_ d)
+        (def tally
+          ((fn (self vs acc)
+             (if (null? vs) acc
+               (let ((hit (List find (fn (_ t) (str=? (first t) (first vs))) acc)))
+                 (self (rest vs)
+                       (if (null? hit) (pair (pair (first vs) 1) acc)
+                         (List map (fn (_ t) (if (str=? (first t) (first vs)) (pair (first t) (%add (rest t) 1)) t)) acc))))))
+           (List map rest (List filter (fn (_ v) (str=? (first v) d)) votes)) ()))
+        (def most (List fold (fn (_ m t) (if (> (rest t) m) (rest t) m)) 0 tally))
+        (def top (List filter (fn (_ t) (= (rest t) most)) tally))
+        (pair d (if (= (List length top) 1) (first (first top)) ())))
+      ((fn (self vs acc) (if (null? vs) acc (self (rest vs) (if (%member? (first (first vs)) acc) acc (pair (first (first vs)) acc)))))
+       votes ()))))
+
+; Where the other side's renamed directories take each file a side added
+; (or renamed to a new name): ((PATH NEW-PATH DIR) ...), NEW-PATH () when
+; DIR, the deepest renamed directory the path is under, was split.  A
+; file whose new path is taken already stays where it is.
+(def %dir-moves
+  (fn (_ base side other dir-renames)
+    (List flat-map
+      (fn (_ f)
+        (def path (first f))
+        (def hit
+          (List fold (fn (_ best d) (if (and (Str8 starts? (Str8 append (first d) "/") path)
+                                              (or (null? best) (> (Str8 length (first d)) (Str8 length (first best)))))
+                                       d best))
+            () dir-renames))
+        (if (or (null? hit) (not (null? (%find path base)))) ()
+          (if (null? (rest hit)) (list (list path () (first hit)))
+            (let ((tail (Str8 sub (%add (Str8 length (first hit)) 1) (%sub (Str8 length path) (%add (Str8 length (first hit)) 1)) path)))
+              (let ((to (if (str=? (rest hit) "") tail (Str8 append (rest hit) "/" tail))))
+                (if (or (not (null? (%find to side))) (not (null? (%find to other)))) ()
+                  (list (list path to (first hit)))))))))
+      side)))
+
+; A file row, or a rename's, at its path after the moves.
+(def %moved
+  (fn (_ f moves)
+    (def m (List find (fn (_ x) (and (str=? (first x) (first f)) (not (null? (first (rest x)))))) moves))
+    (if (null? m) f (pair (first (rest m)) (rest f)))))
+
+; Three trees' files merged.  Answers (RESULTS MESSAGES STOPPED?): RESULTS a
 ; (PATH ...) each --
 ;   (PATH clean MODE SHA)          the path's file, merged
 ;   (PATH gone)                    the path's file deleted
 ;   (PATH conflict STAGES WORK)    in conflict: STAGES ((STAGE MODE SHA) ...),
 ;                                  WORK the working file's text, or () to
 ;                                  leave ours as it is
-; and MESSAGES the lines merge prints, in path order.  write-blob answers
-; a merged text's blob name.  name1 and name2 name the sides.
+; MESSAGES the lines merge prints, in path order, and STOPPED? whether the
+; merge stops though no path is in conflict.  write-blob answers a merged
+; text's blob name.  name1 and name2 name the sides; dir-renames is
+; merge.directoryRenames.
 ;
 ; A file one side renamed (git/renames, against the base) is merged under
 ; its new name: its base, the other side's file at the old name, and the
@@ -320,18 +410,80 @@
 ; paths differ, as git's do.  Renamed by both sides, to the same name, it
 ; is merged there; to different names, it is a rename/rename conflict.
 ; Renamed by one side and deleted by the other, a rename/delete conflict.
+;
+; Before the files are merged, what a side added under a directory the
+; other renamed is moved with it -- unless dir-renames is "false" -- and
+; once they are, a moved file is left in conflict at its new path, staged
+; on its side alone, when dir-renames is "conflict".  A directory that
+; was split stops the merge, with nothing left in conflict.
 (def git-merge-trees
-  (fn (_ base ours theirs name1 name2 gitdir write-blob)
-    (def paths-of (fn (_ files) (List map first files)))
+  (fn (_ base ours theirs name1 name2 dir-renames gitdir write-blob)
     (def renames-in
       (fn (_ side)
         (git-find-renames gitdir
           (List filter (fn (_ b) (null? (%find (first b) side))) base)
           (List filter (fn (_ f) (null? (%find (first f) base))) side))))
-    ; a rename is taken only when the other side has nothing at its new
-    ; name, or has it by making the same rename
     (def raw-o (renames-in ours))
     (def raw-t (renames-in theirs))
+    (def follow? (not (str=? dir-renames "false")))
+    (def moves-o (if follow? (%dir-moves base ours theirs (%dir-renames base theirs raw-t)) ()))
+    (def moves-t (if follow? (%dir-moves base theirs ours (%dir-renames base ours raw-o)) ()))
+    (def move-renames
+      (fn (_ rs moves) (List map (fn (_ r) (pair (first r) (pair (%moved (first (rest r)) moves) (rest (rest r))))) rs)))
+    (def units
+      (%merge-files base (List map (fn (_ f) (%moved f moves-o)) ours) (List map (fn (_ f) (%moved f moves-t)) theirs)
+        (move-renames raw-o moves-o) (move-renames raw-t moves-t) name1 name2 gitdir write-blob))
+    ; a moved file's unit: in conflict at its new path, on its own side,
+    ; and git's word for the move
+    (def placed
+      (fn (_ unit moves stage added-in renamed-in)
+        (def m (List find (fn (_ x) (and (not (null? (first (rest x)))) (str=? (first (rest x)) (first unit)))) moves))
+        (if (null? m) unit
+          (let ((from (first m)) (to (first (rest m))))
+            (pair to
+                  (pair (List map
+                          (fn (_ r)
+                            (if (and (str=? dir-renames "conflict") (str=? (first r) to) (eq? (first (rest r)) (lit clean)))
+                              (let ((f (list to (first (rest (rest r))) (first (rest (rest (rest r)))))))
+                                (list to (lit conflict) (list (list stage (first (rest f)) (first (rest (rest f))))) (%blob-text gitdir f)))
+                              r))
+                          (first (rest unit)))
+                        (List append (rest (rest unit))
+                          (list (if (str=? dir-renames "conflict")
+                                  (Str8 append "CONFLICT (file location): " from " added in " added-in
+                                    " inside a directory that was renamed in " renamed-in
+                                    ", suggesting it should perhaps be moved to " to ".\n")
+                                  (Str8 append "Path updated: " from " added in " added-in
+                                    " inside a directory that was renamed in " renamed-in "; moving it to " to ".\n"))))))))))
+    ; what ours added goes from where HEAD has it
+    (def left
+      (List map (fn (_ m) (pair (first m) (pair (list (list (first m) (lit gone))) ())))
+        (List filter (fn (_ m) (not (null? (first (rest m))))) moves-o)))
+    ; a split directory, said once
+    (def split-dirs
+      ((fn (self ms acc)
+         (if (null? ms) (List reverse acc)
+           (self (rest ms)
+                 (if (or (not (null? (first (rest (first ms))))) (List any? (fn (_ s) (str=? (first (rest s)) (first (rest (rest (first ms)))))) acc)) acc
+                   (pair (pair (first (first ms)) (first (rest (rest (first ms))))) acc)))))
+       (List append moves-o moves-t) ()))
+    (def splits
+      (List map (fn (_ s) (pair (first s) (pair () (list (Str8 append "CONFLICT (directory rename split): Unclear where to rename " (rest s)
+                                                            " to; it was renamed to multiple other directories, with no destination getting a majority of the files.\n")))))
+        split-dirs))
+    (def all
+      (List sort (fn (_ a b) (Str8 <? (first a) (first b)))
+        (List append (List map (fn (_ u) (placed (placed u moves-o 2 name1 name2) moves-t 3 name2 name1)) units)
+          (List append left splits))))
+    (list (List flat-map (fn (_ u) (first (rest u))) all) (List flat-map (fn (_ u) (rest (rest u))) all) (not (null? splits)))))
+
+; The files merged once any moves are made, renames known: the units,
+; (KEY RECORDS . MESSAGES) each, in path order.
+(def %merge-files
+  (fn (_ base ours theirs raw-o raw-t name1 name2 gitdir write-blob)
+    (def paths-of (fn (_ files) (List map first files)))
+    ; a rename is taken only when the other side has nothing at its new
+    ; name, or has it by making the same rename
     (def same-rename?
       (fn (_ r others)
         (List any? (fn (_ x) (and (str=? (first (first x)) (first (first r))) (str=? (first (first (rest x))) (first (first (rest r)))))) others)))
@@ -432,7 +584,6 @@
        (List append (paths-of base) (List append (paths-of ours) (paths-of theirs))) ()))
     (def plain-units
       (List map (fn (_ path) (pair path (merge-entries path (%find path base) (%find path ours) (%find path theirs) name1 name2))) paths))
-    (def units (List sort (fn (_ a b) (Str8 <? (first a) (first b))) (List append plain-units rename-units)))
-    (list (List flat-map (fn (_ u) (first (rest u))) units) (List flat-map (fn (_ u) (rest (rest u))) units))))
+    (List append plain-units rename-units)))
 
 (provide git/threeway git-merge-base git-merge-text git-merge-trees git-tree-flat)
