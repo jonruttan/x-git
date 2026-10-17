@@ -82,6 +82,10 @@ the kernel and x are installed (x-os).
   and `git push --receive-pack='x -l git -- receive-pack' ...` take them
   as they take git's own; refusals (HEAD's branch deleted, a non-bare
   repository's checked-out branch updated) in receive-pack's words
+- packs written with deltas, bases chosen as git's pack-objects chooses
+  them; thin packs both ways: a push or a served fetch builds on what
+  the far end has, and a thin pack that arrives is completed with its
+  bases from this repository, as `index-pack --fix-thin` completes one
 - `rm [-r] [--cached] [-f] <pathspec>...`, `mv <source>... <destination>`;
   `.gitignore`, `.git/info/exclude` and `core.excludesFile` as
   gitignore(5) reads them
@@ -118,6 +122,7 @@ DIR holds this tree as `git` and x-ssh as `ssh`.
     git/base.x        the parts, assembled
     git/objects.x     the object store: loose objects read and written, names, trees
     git/packs.x       packed objects: the index, entries, deltas
+    git/delta.x       deltas made, as git's diff-delta makes them
     git/refs.x        refs, loose and packed; revision names to objects
     git/commands.x    cat-file, hash-object, rev-parse
     git/history.x     ls-tree, log

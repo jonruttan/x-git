@@ -81,38 +81,46 @@
     (List map (fn (_ l) (Str8 sub (Str8 length prefix) (%sub (Str8 length l) (Str8 length prefix)) l))
       (List filter (fn (_ l) (Str8 starts? prefix l)) (%header-lines o)))))
 
-; The objects an object names: a commit's tree and parents, a tree's
-; entries but its submodules, a tag's object.
-(def %children
-  (fn (_ o)
+; The objects an object names, with the path each is at, (SHA . PATH):
+; a commit's tree and parents, a tree's entries but its submodules, a
+; tag's object.  A tree's entries are under name, its own path; what a
+; commit or a tag names is at none.
+(def %named-children
+  (fn (_ o name)
+    (def at (fn (_ sha) (pair sha "")))
     (match
-      ((str=? (first o) "commit") (List append (%header-values o "tree") (%header-values o "parent")))
+      ((str=? (first o) "commit") (List map at (List append (%header-values o "tree") (%header-values o "parent"))))
       ((str=? (first o) "tree")
-        (List map (fn (_ e) (first (rest (rest e))))
+        (List map (fn (_ e) (pair (first (rest (rest e)))
+                                  (if (str=? name "") (first (rest e)) (Str8 append name "/" (first (rest e))))))
           (List filter (fn (_ e) (not (str=? (first e) "160000"))) (git-tree-entries o))))
-      ((str=? (first o) "tag") (%header-values o "object"))
+      ((str=? (first o) "tag") (List map at (%header-values o "object")))
       (#t ()))))
 
+; An object row with the path it was found at.
+(def %row (fn (_ sha o name) (pair sha (List append o (list name)))))
+
 ; Every object reachable from the work list that `to` lacks, read from
-; `from`: (SHA TYPE SIZE REGION START) each, each once.  An object `to`
-; has is taken to come with everything it names, as it does in any
-; repository git wrote.
+; `from`: (SHA TYPE SIZE REGION START PATH) each, each once.  An object
+; `to` has is taken to come with everything it names, as it does in any
+; repository git wrote.  The work list is (SHA . PATH) each.
 (def %closure
   (fn (self from to work seen acc)
     (match
       ((null? work) (List reverse acc))
-      ((or (%has? to (first work)) (List any? (fn (_ s) (str=? s (first work))) seen))
+      ((or (%has? to (first (first work))) (List any? (fn (_ s) (str=? s (first (first work)))) seen))
         (self from to (rest work) seen acc))
       (#t
-        (do (def o (git-object-read from (first work)))
-            (self from to (List append (%children o) (rest work)) (pair (first work) seen)
-                  (pair (pair (first work) o) acc)))))))
+        (do (def sha (first (first work)))
+            (def o (git-object-read from sha))
+            (self from to (List append (%named-children o (rest (first work))) (rest work)) (pair sha seen)
+                  (pair (%row sha o (rest (first work))) acc)))))))
 
 ; What `to` lacks of the objects behind the tips, sent as one pack; none
 ; when it has them all.
 (def %send!
   (fn (_ from to tips)
-    (def objects (%closure from to tips () ()))
+    (def objects (%closure from to (List map (fn (_ t) (pair t "")) tips) () ()))
     (if (null? objects) () (git-pack-write! to objects))))
 
 ; Is commit a reachable from commit b, through b's parents?
@@ -522,10 +530,14 @@
 (def %member? (fn (_ s l) (List any? (fn (_ x) (str=? x s)) l)))
 
 ; Every object behind the tips that a remote holding the stop commits
-; lacks, as (SHA . OBJ) each: the commits behind a stop are the remote's,
-; and so is the snapshot of each commit the walk stops at -- its tree and
-; everything under it.  What an older snapshot shares with a newer one
-; and nothing else may travel again; the remote keeps one copy.
+; lacks, and the objects it has that a thin pack may build on: (SEND .
+; BASES), object rows (SHA TYPE SIZE REGION START PATH) each.  The
+; commits behind a stop are the remote's, and so is the snapshot of each
+; commit the walk stops at -- its tree and everything under it.  What an
+; older snapshot shares with a newer one and nothing else may travel
+; again; the remote keeps one copy.  The bases are the trees and blobs
+; of those snapshots at the paths of trees and blobs sent, as git's
+; preferred bases are.
 (def %objects-to-send
   (fn (_ gitdir tips stops)
     (def parents (%parents-of gitdir))
@@ -536,28 +548,39 @@
            ((%member? (first work) seen) (self (rest work) seen))
            (#t (self (List append (rest work) (parents (first work))) (pair (first work) seen)))))
        stops ()))
+    ; the snapshot's trees and blobs, (SHA . PATH) each, on acc
     (def snapshot
       (fn (_ sha acc)
         (def o (git-object-read gitdir sha))
         ((fn (self work acc)
            (match
              ((null? work) acc)
-             ((%member? (first work) acc) (self (rest work) acc))
-             (#t (let ((t (git-object-read gitdir (first work))))
-                   (self (List append (if (and (not (null? t)) (str=? (first t) "tree")) (%children t) ()) (rest work))
+             ((List any? (fn (_ e) (str=? (first e) (first (first work)))) acc) (self (rest work) acc))
+             (#t (let ((t (git-object-read gitdir (first (first work)))))
+                   (self (List append (if (and (not (null? t)) (str=? (first t) "tree")) (%named-children t (rest (first work))) ())
+                                      (rest work))
                          (pair (first work) acc))))))
-         (if (and (not (null? o)) (str=? (first o) "commit")) (%header-values o "tree") ()) acc)))
-    ((fn (self work seen excluded acc)
-       (match
-         ((null? work) (List reverse acc))
-         ((or (%member? (first work) seen) (%member? (first work) excluded)) (self (rest work) seen excluded acc))
-         ((%member? (first work) known)
-           (self (rest work) (pair (first work) seen) (snapshot (first work) excluded) acc))
-         (#t (let ((o (git-object-read gitdir (first work))))
-               (do (when (null? o) (%fail (Str8 append "an object behind what is pushed is missing: " (first work))))
-                   (self (List append (%children o) (rest work)) (pair (first work) seen) excluded
-                         (pair (pair (first work) o) acc)))))))
-     tips () () ())))
+         (if (and (not (null? o)) (str=? (first o) "commit")) (List map (fn (_ t) (pair t "")) (%header-values o "tree")) ())
+         acc)))
+    (def found
+      ((fn (self work seen excluded acc)
+         (match
+           ((null? work) (pair (List reverse acc) excluded))
+           ((or (%member? (first (first work)) seen) (List any? (fn (_ e) (str=? (first e) (first (first work)))) excluded))
+             (self (rest work) seen excluded acc))
+           ((%member? (first (first work)) known)
+             (self (rest work) (pair (first (first work)) seen) (snapshot (first (first work)) excluded) acc))
+           (#t (let ((sha (first (first work))) (o (git-object-read gitdir (first (first work)))))
+                 (do (when (null? o) (%fail (Str8 append "an object behind what is pushed is missing: " sha)))
+                     (self (List append (%named-children o (rest (first work))) (rest work)) (pair sha seen) excluded
+                           (pair (%row sha o (rest (first work))) acc)))))))
+       (List map (fn (_ t) (pair t "")) tips) () () ()))
+    (def paths
+      (List map (fn (_ r) (List last r))
+        (List filter (fn (_ r) (or (str=? (first (rest r)) "tree") (str=? (first (rest r)) "blob"))) (first found))))
+    (pair (first found)
+          (List map (fn (_ e) (%row (first e) (git-object-read gitdir (first e)) (rest e)))
+            (List filter (fn (_ e) (%member? (rest e) paths)) (rest found))))))
 
 ; A repository a url names, its receive-pack spoken to on a wire: the
 ; advertisement read now; the command, the pack of what it lacks and
@@ -573,8 +596,11 @@
                 (def stops
                   (List map (fn (_ sha) (%peel gitdir sha))
                     (List filter (fn (_ sha) (%has? gitdir sha)) (List map rest refs))))
+                ; thin, as git push sends: receive-pack completes it
+                (def objs (%objects-to-send gitdir (list new) stops))
                 (def r (proto-push! w (list (list (if (null? old) %ZERO old) new name))
-                         (git-pack-bytes (%objects-to-send gitdir (list new) stops))))
+                         (git-pack-bytes (first objs) (rest objs)
+                           (List any? (fn (_ c) (str=? c "ofs-delta")) (first (rest adv))))))
                 (wire-close! w)
                 (def unpack (first (rest r)))
                 (def hit (List find (fn (_ e) (str=? (first e) name)) (first (rest (rest r)))))
@@ -668,7 +694,8 @@
 ; in name order, an annotated tag followed by what it names.
 (def git-advertised (fn (_ gitdir) (%advertised gitdir)))
 
-; The objects behind tips a remote holding stops lacks, (SHA . OBJ) each.
+; The objects behind tips a remote holding stops lacks, and the bases a
+; thin pack may name: (SEND . BASES), object rows each.
 (def git-objects-to-send (fn (_ gitdir tips stops) (%objects-to-send gitdir tips stops)))
 
 (def git-has-object? (fn (_ gitdir sha) (%has? gitdir sha)))
