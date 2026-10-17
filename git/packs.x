@@ -21,11 +21,13 @@
 
 (import x/sys/file File)
 (import x/type/vector Vector)
+(import x/sys/gc Heap)
 (import x/codec/inflate Inflate)
 (import x/codec/deflate Deflate)
 (import x/codec/sha1 Sha1)
 (import x/codec/crc32 Crc32)
 (import x/codec/hex Hex)
+(import git/delta delta-index delta-make)
 
 (def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
@@ -320,12 +322,22 @@
 
 ; --- writing a pack ---
 ;
-; A pack of whole objects, no deltas, as git accepts one from any
-; transport: the header, then each object's type and size in a varint and
-; its zlib stream, then the SHA-1 of all that, which names the pack.  Its
-; .idx (version 2) beside it: the fanout, the names sorted, each entry's
-; CRC-32 and offset, the pack's checksum, the index's own.  The bytes are
-; gathered in a buffer that doubles, then written once.
+; A pack as git writes one: the header, then each object's type and size
+; in a varint and its zlib stream -- of its bytes, or of a delta against
+; another object, a base -- then the SHA-1 of all that, which names the
+; pack.  Its .idx (version 2) beside it: the fanout, the names sorted,
+; each entry's CRC-32 and offset, the pack's checksum, the index's own.
+; The bytes are gathered in a buffer that doubles, then written once.
+;
+; Bases are chosen as git's pack-objects chooses them: the objects
+; sorted by type, by the hash of the path they were found at, by size
+; from the largest, and each tried against the ten before it of its
+; type.  A delta is kept when it is under half its object's size, less
+; as the base's chain is deeper, chains at most fifty deep.  A base is
+; written before the deltas on it, named by how far back it starts
+; (OFS_DELTA) when the reader takes that, else by its name (REF_DELTA).
+; A thin pack's bases may also be objects the reader already has, at the
+; paths of the objects sent: those are named, and never written.
 
 (def %oref (prim-ref (lit obj) (lit ref)))
 (def %oset! (prim-ref (lit obj) (lit set!)))
@@ -403,27 +415,191 @@
     (File write fd r n)
     (File close fd)))
 
-; The objects -- (SHA TYPE SIZE REGION START) each, as git-object-read
-; answers them with their names -- as a pack: (BUFFER ROWS SHA), the
-; buffer holding the bytes, the rows (SHA OFFSET CRC) for an index, the
-; pack's name.
+; An object to pack: its slots.  BASE? marks one the reader has, a base
+; only; DELTA is (REGION . N) against FROM, another object's slots; AT
+; is where the object was written, () until it is.
+(def %O-SHA 1)
+(def %O-TYPE 2)
+(def %O-SIZE 3)
+(def %O-REGION 4)
+(def %O-START 5)
+(def %O-HASH 6)
+(def %O-BASE? 7)
+(def %O-FROM 8)
+(def %O-DELTA 9)
+(def %O-DEPTH 10)
+(def %O-INDEX 11)
+(def %O-AT 12)
+(def %O-ORDER 13)
+
+(def %idiv (prim-ref (lit int) (lit /)))
+
+; git's hash of a path: each byte but a space shifted in from the top,
+; so the last bytes count most and files of one name sort together.
+(def %name-hash
+  (fn (_ name)
+    (def p (%str->ptr name))
+    (def n (%str-byte-len name))
+    ((fn (self i h)
+       (if (>= i n) h
+         (let ((c (%byte p i)))
+           (self (%add i 1)
+                 (if (or (= c 32) (and (>= c 9) (<= c 13))) h
+                   (& (%add (>> h 2) (<< c 24)) 4294967295))))))
+     0 0)))
+
+; An object row -- (SHA TYPE SIZE REGION START NAME), NAME the path it
+; was found at, which may be left off -- as its slots.
+(def %slots
+  (fn (_ o order base?)
+    (def v (Vector make 13 ()))
+    (%oset! v %O-SHA (first o))
+    (%oset! v %O-TYPE (%type-number (first (rest o))))
+    (%oset! v %O-SIZE (first (rest (rest o))))
+    (%oset! v %O-REGION (first (rest (rest (rest o)))))
+    (%oset! v %O-START (first (rest (rest (rest (rest o))))))
+    (def more (rest (rest (rest (rest (rest o))))))
+    (%oset! v %O-HASH (if (null? more) 0 (%name-hash (first more))))
+    (%oset! v %O-BASE? base?)
+    (%oset! v %O-DEPTH 0)
+    (%oset! v %O-ORDER order)
+    v))
+
+(def %depth-most 50)
+(def %window 10)
+(def %too-small 50)
+
+; Before: of a greater type, a greater hash, a base the reader has, a
+; greater size, earlier.
+(def %sorts-before?
+  (fn (_ a b)
+    (match
+      ((not (= (%oref a %O-TYPE) (%oref b %O-TYPE))) (> (%oref a %O-TYPE) (%oref b %O-TYPE)))
+      ((not (= (%oref a %O-HASH) (%oref b %O-HASH))) (> (%oref a %O-HASH) (%oref b %O-HASH)))
+      ((not (eq? (%oref a %O-BASE?) (%oref b %O-BASE?))) (%oref a %O-BASE?))
+      ((not (= (%oref a %O-SIZE) (%oref b %O-SIZE))) (> (%oref a %O-SIZE) (%oref b %O-SIZE)))
+      (#t (< (%oref a %O-ORDER) (%oref b %O-ORDER))))))
+
+(def %index-of
+  (fn (_ s)
+    (when (null? (%oref s %O-INDEX))
+      (%oset! s %O-INDEX (delta-index (%at (%str->ptr (%oref s %O-REGION)) (%oref s %O-START)) (%oref s %O-SIZE))))
+    (%oref s %O-INDEX)))
+
+; x collects only when asked.  Deflating a byte leaves some 280 objects
+; behind, indexing and walking one for a delta some 170, so the build
+; collects after each 16K bytes it has put through either -- about 150
+; MB between collects, x/codec/sha256's bound.
+(def %churn 0)
+(def %churned!
+  (fn (_ n)
+    (set! %churn (%add %churn n))
+    (when (>= %churn 16384) (do (Heap collect) (set! %churn 0)))))
+
+; t tried against s as its base, as git's try_delta: the most a delta
+; may be is half t, less its base's name, or the delta t has; scaled
+; down as s's chain is deeper.
+(def %try-delta!
+  (fn (_ t s)
+    (def has (%oref t %O-DELTA))
+    (def most0 (if (null? has) (%sub (%idiv (%oref t %O-SIZE) 2) 20) (rest has)))
+    (def ref-depth (if (null? has) 1 (%oref t %O-DEPTH)))
+    (def most (%idiv (%mul most0 (%sub %depth-most (%oref s %O-DEPTH))) (%add (%sub %depth-most ref-depth) 1)))
+    (def tn (%oref t %O-SIZE))
+    (def sn (%oref s %O-SIZE))
+    (unless (or (>= (%oref s %O-DEPTH) %depth-most) (<= most 0)
+                (>= (if (< sn tn) (%sub tn sn) 0) most) (< tn (%idiv sn 32)))
+      (let ((d (delta-make (%index-of s) (%at (%str->ptr (%oref t %O-REGION)) (%oref t %O-START)) tn most)))
+        (%churned! (%add sn tn))
+        (unless (or (null? d)
+                    (and (not (null? has)) (= (rest d) (rest has)) (>= (%add (%oref s %O-DEPTH) 1) (%oref t %O-DEPTH))))
+          (do (%oset! t %O-FROM s)
+              (%oset! t %O-DELTA d)
+              (%oset! t %O-DEPTH (%add (%oref s %O-DEPTH) 1))))))))
+
+; Each object in the sorted order tried against the window before it,
+; nearest first, until one of another type; then it joins the window,
+; and the one it pushes out lets its index go.
+(def %find-deltas!
+  (fn (self sorted window)
+    (unless (null? sorted)
+      (let ((t (first sorted)))
+        (do (unless (%oref t %O-BASE?)
+              ((fn (try ws)
+                 (unless (or (null? ws) (not (= (%oref (first ws) %O-TYPE) (%oref t %O-TYPE))))
+                   (do (%try-delta! t (first ws)) (try (rest ws)))))
+               window))
+            (def kept (if (< (List length window) %window) window
+                        (do (%oset! (List last window) %O-INDEX ())
+                            (List reverse (rest (List reverse window))))))
+            (self (rest sorted) (pair t kept)))))))
+
+; An OFS_DELTA's distance back, most significant byte first: each byte
+; but the last says more follows, and each step down takes one off what
+; is left, as git writes it.
+(def %put-distance!
+  (fn (_ b d)
+    (List for-each (fn (_ c) (%buf-put-byte! b c))
+      ((fn (self v acc)
+         (if (= v 0) acc
+           (let ((v1 (%sub v 1))) (self (>> v1 7) (pair (| 128 (& v1 127)) acc)))))
+       (>> d 7) (list (& d 127))))))
+
+; A whole object's entry: the size bytes of region from start.
+(def %put-whole!
+  (fn (_ b type size region start)
+    (%put-entry-header! b type size)
+    (def z (Deflate zlib region start size))
+    (%buf-put-bytes! b (%str->ptr (first z)) (first (rest z)))
+    (%churned! size)))
+
+; o written at the buffer's end, its base first when that is in the
+; pack and not yet written: answers the rows (SHA OFFSET CRC) written,
+; latest first, on acc.
+(def %write-object!
+  (fn (self b o ofs? acc)
+    (if (not (null? (%oref o %O-AT))) acc
+      (let ((from (%oref o %O-FROM)))
+        (let ((acc2 (if (or (null? from) (%oref from %O-BASE?)) acc (self b from ofs? acc))))
+          (do (def off (%oref b 3))
+              (%oset! o %O-AT off)
+              (def d (%oref o %O-DELTA))
+              (if (null? d)
+                (%put-whole! b (%oref o %O-TYPE) (%oref o %O-SIZE) (%oref o %O-REGION) (%oref o %O-START))
+                (do (if (and ofs? (not (%oref from %O-BASE?)))
+                      (do (%put-entry-header! b 6 (rest d))
+                          (%put-distance! b (%sub off (%oref from %O-AT))))
+                      (do (%put-entry-header! b 7 (rest d))
+                          (%buf-put-bytes! b (%str->ptr (%sha-raw (%oref from %O-SHA))) 20)))
+                    (def z (Deflate zlib (first d) 0 (rest d)))
+                    (%buf-put-bytes! b (%str->ptr (first z)) (first (rest z)))))
+              (pair (list (%oref o %O-SHA) off (Crc32 of (%oref b 1) off (%sub (%oref b 3) off))) acc2)))))))
+
+; The objects -- (SHA TYPE SIZE REGION START NAME) each, as
+; git-object-read answers them with their names and the paths they were
+; found at -- as a pack: (BUFFER ROWS SHA), the buffer holding the
+; bytes, the rows (SHA OFFSET CRC) for an index, the pack's name.  bases
+; are objects the reader has, for a thin pack; ofs? says it takes
+; OFS_DELTA.
 (def %pack-build
-  (fn (_ objects)
+  (fn (_ objects bases ofs?)
+    (def slots
+      ((fn (self l k base? acc)
+         (if (null? l) (List reverse acc) (self (rest l) (%add k 1) base? (pair (%slots (first l) k base?) acc))))
+       objects 0 #f ()))
+    (def base-slots
+      ((fn (self l k acc)
+         (if (null? l) acc (self (rest l) (%add k 1) (pair (%slots (first l) k #t) acc))))
+       bases (List length objects) ()))
+    (%find-deltas!
+      (List sort %sorts-before?
+        (List filter (fn (_ s) (>= (%oref s %O-SIZE) %too-small)) (List append slots base-slots)))
+      ())
     (def b (%buf-make))
     (%buf-put-str! b "PACK")
     (%buf-put-u32! b 2)
     (%buf-put-u32! b (List length objects))
-    ; each object's row: its name, its offset, the CRC-32 of its entry
-    (def rows
-      (List map
-        (fn (_ o)
-          (def off (%oref b 3))
-          (def size (first (rest (rest o))))
-          (%put-entry-header! b (%type-number (first (rest o))) size)
-          (def z (Deflate zlib (first (rest (rest (rest o)))) (first (rest (rest (rest (rest o))))) size))
-          (%buf-put-bytes! b (%str->ptr (first z)) (first (rest z)))
-          (list (first o) off (Crc32 of (%oref b 1) off (%sub (%oref b 3) off))))
-        objects))
+    (def rows ((fn (self l acc) (if (null? l) acc (self (rest l) (%write-object! b (first l) ofs? acc)))) slots ()))
     (def pack-sha (Sha1 hex-n (%oref b 1) (%oref b 3)))
     (%buf-put-bytes! b (%str->ptr (%sha-raw pack-sha)) 20)
     (list b rows pack-sha)))
@@ -432,7 +608,7 @@
 ; objects/pack; answers the pack's path.
 (def git-pack-write!
   (fn (_ gitdir objects)
-    (def p (%pack-build objects))
+    (def p (%pack-build objects () #t))
     (def b (first p))
     (def dir (Str8 append gitdir "/objects/pack"))
     (unless (File exists? dir) (File mkdir dir))
@@ -443,10 +619,10 @@
 
 ; The objects as the bytes of a pack, for the wire: (REGION . N).  No
 ; objects make the empty pack git asks for when a ref is created on
-; what it already has.
+; what it already has.  bases and ofs? as %pack-build takes them.
 (def git-pack-bytes
-  (fn (_ objects)
-    (def b (first (%pack-build objects)))
+  (fn (_ objects bases ofs?)
+    (def b (first (%pack-build objects bases ofs?)))
     (pair (%oref b 1) (%oref b 3))))
 
 ; The index of a pack named pack-sha, written beside it: rows are (SHA
@@ -485,7 +661,9 @@
 ; has an index.  The bytes are checked against the SHA-1 that ends them,
 ; which names the pack; then each entry is read in turn, its name the
 ; SHA-1 of the object it decodes to, its base read back from the pack
-; when it is a delta, and the index is written beside the pack.
+; when it is a delta, and the index is written beside the pack.  A thin
+; pack's deltas may name bases this repository has outside it: those
+; are appended to the pack whole, so it stands alone.
 
 ; An object's name: the SHA-1 of its header and body.
 (def %object-sha
@@ -536,10 +714,17 @@
                                acc))))))
            0 12 ()))
         (def named (List filter (fn (_ e) (not (null? (first (rest (rest (rest e))))))) entries))
+        ; the bases from outside the pack a thin pack's deltas named,
+        ; (SHA TYPE SIZE REGION START) each
+        (def outside ())
         (def in-pack
           (fn (self sha)
             (def hit (List find (fn (_ e) (str=? (first (rest (rest (rest e)))) sha)) named))
-            (if (null? hit) (read-base sha)
+            (if (null? hit)
+              (let ((o (read-base sha)))
+                (do (unless (or (null? o) (List any? (fn (_ x) (str=? (first x) sha)) outside))
+                      (set! outside (pair (pair sha o) outside)))
+                    o))
               (let ((o (%object-at fd n (first hit) self)))
                 (list (first o) (first (rest (rest o))) (first (rest o)) 0)))))
         (def rows
@@ -553,8 +738,38 @@
               (list sha off (Crc32 of r off (%sub (first (rest e)) off))))
             entries))
         (File close fd)
-        (%idx-write! stem pack-sha rows)
-        path))))
+        (if (null? outside)
+          (do (%idx-write! stem pack-sha rows) path)
+          (let ((fixed (%fix-thin r n count (List reverse outside))))
+            (do (File unlink path)
+                (def stem2 (Str8 append dir "/pack-" (first (rest (rest fixed)))))
+                (def b (first fixed))
+                (%write-region! (Str8 append stem2 ".pack") (%oref b 1) (%oref b 3))
+                (%idx-write! stem2 (first (rest (rest fixed))) (List append rows (first (rest fixed))))
+                (Str8 append stem2 ".pack"))))))))
+
+; A thin pack made whole, as index-pack --fix-thin makes it: the first n
+; bytes of r, a pack of count entries, with the bases from outside it
+; appended whole -- (SHA TYPE SIZE REGION START) each -- the count
+; raised and the checksum written again.  Answers (BUFFER ROWS SHA), the
+; rows those of the bases appended.
+(def %fix-thin
+  (fn (_ r n count bases)
+    (def b (%buf-make))
+    (%buf-put-bytes! b (%str->ptr r) (%sub n 20))
+    (def total (%add count (List length bases)))
+    (List for-each (fn (_ k) (%pset! (%oref b 4) (%add 8 k) (& (>> total (%mul (%sub 3 k) 8)) 255) 1)) (list 0 1 2 3))
+    (def rows
+      (List map
+        (fn (_ o)
+          (def off (%oref b 3))
+          (%put-whole! b (%type-number (first (rest o))) (first (rest (rest o))) (first (rest (rest (rest o))))
+            (first (rest (rest (rest (rest o))))))
+          (list (first o) off (Crc32 of (%oref b 1) off (%sub (%oref b 3) off))))
+        bases))
+    (def pack-sha (Sha1 hex-n (%oref b 1) (%oref b 3)))
+    (%buf-put-bytes! b (%str->ptr (%sha-raw pack-sha)) 20)
+    (list b rows pack-sha)))
 
 ; --- a pack arriving on a stream ---
 ;

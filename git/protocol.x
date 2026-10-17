@@ -33,9 +33,9 @@
 (def %fail (fn (_ what) (Err raise (lit value) (Str8 append "git: " what) ())))
 
 ; What this client asks of upload-pack: detailed acks, the pack on side
-; band 1 in 64K packets, deltas by offset, no progress on band 2, and
-; the annotated tags of what is sent.
-(def %fetch-caps "multi_ack_detailed side-band-64k ofs-delta no-progress include-tag agent=x-git")
+; band 1 in 64K packets, a thin pack, deltas by offset, no progress on
+; band 2, and the annotated tags of what is sent.
+(def %fetch-caps "multi_ack_detailed side-band-64k thin-pack ofs-delta no-progress include-tag agent=x-git")
 
 ; --- the url ---
 

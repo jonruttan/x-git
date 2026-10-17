@@ -122,7 +122,7 @@
 
 ; --- upload-pack ---
 
-(def %upload-caps "side-band-64k ofs-delta no-progress include-tag")
+(def %upload-caps "thin-pack side-band-64k ofs-delta no-progress include-tag")
 
 ; The wants, read to the flush: (SHAS . CAPS), or () when the client
 ; said nothing more.
@@ -193,9 +193,11 @@
         (if (null? req) (list (lit out) "" 0)
           (let ((common (%negotiate! w g)))
             (if (eq? common #f) (list (lit out) "" 0)
-              (let ((sent (git-objects-to-send g (first req) common)))
-                (let ((all (if (%member? "include-tag" (rest req)) (List append sent (%included-tags g sent)) sent)))
-                  (let ((pack (git-pack-bytes all)))
+              (let ((found (git-objects-to-send g (first req) common)))
+                (let ((all (if (%member? "include-tag" (rest req))
+                             (List append (first found) (%included-tags g (first found))) (first found))))
+                  (let ((pack (git-pack-bytes all (if (%member? "thin-pack" (rest req)) (rest found) ())
+                                (%member? "ofs-delta" (rest req)))))
                     (do (if (%member? "side-band-64k" (rest req))
                           (do (%band! w 1 (first pack) (rest pack)) (wire-flush! w))
                           (wire-send-raw! w (first pack) (rest pack)))
