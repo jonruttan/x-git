@@ -8,6 +8,6 @@
 ; ambient: objects are bytes, digests and files, none of the tower.
 (dialect he)
 
-(requires-release "v0.33.0")
+(requires-release "v0.34.0")
 
 (entry "run.x")
