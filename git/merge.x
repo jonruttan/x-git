@@ -42,7 +42,7 @@
 (import git/checkout git-checkout-tree! git-write-blob! git-remove-file! git-entry-of)
 (import git/diff git-tree-diffstat)
 (import git/remote git-fetch git-ancestor? git-peel git-write-ref! git-current-branch)
-(import git/threeway git-merge-base git-merge-trees git-tree-flat)
+(import git/threeway git-merge-base-files git-merge-trees git-tree-flat)
 
 (def %sub (prim-ref 'int '-))
 
@@ -133,21 +133,22 @@
     (def lists (git-status-lists wd gitdir))
     (List append (List map rest (first lists)) (List map rest (first (rest lists))))))
 
-; HEAD and commit `theirs` merged from their merge base into a merge
-; commit, or into the working directory and index with the conflicts
-; marked and MERGE_HEAD left to conclude it: (ERR OUT STATUS).  name2
-; is what the conflict markers call theirs.
+; HEAD and commit `theirs` merged from their merge base -- or, when they
+; have several, from those merged into one -- into a merge commit, or
+; into the working directory and index with the conflicts marked and
+; MERGE_HEAD left to conclude it: (ERR OUT STATUS).  name2 is what the
+; conflict markers call theirs.
 (def %merge-three!
   (fn (_ wd gitdir head theirs message name2)
-    (def base (git-merge-base gitdir head theirs))
-    (if (null? base) (list "fatal: refusing to merge unrelated histories\n" "" 128)
+    (def write-blob (fn (_ text) (git-object-write! gitdir "blob" text 0 (%str-byte-len text))))
+    (def base-files (git-merge-base-files gitdir head theirs write-blob))
+    (if (eq? base-files #f) (list "fatal: refusing to merge unrelated histories\n" "" 128)
       (let ((ours-files (git-tree-flat gitdir (git-tree-of gitdir head) ""))
             (r (git-merge-trees
-                 (git-tree-flat gitdir (git-tree-of gitdir base) "")
+                 base-files
                  (git-tree-flat gitdir (git-tree-of gitdir head) "")
                  (git-tree-flat gitdir (git-tree-of gitdir theirs) "")
-                 "HEAD" name2 (%dir-renames-mode gitdir) gitdir
-                 (fn (_ text) (git-object-write! gitdir "blob" text 0 (%str-byte-len text))))))
+                 "HEAD" name2 (%dir-renames-mode gitdir) 7 gitdir write-blob)))
         (let ((results (first r)) (messages (first (rest r))) (stopped? (first (rest (rest r)))))
           (let ((ours-of (fn (_ path) (List find (fn (_ f) (str=? (first f) path)) ours-files))))
             ; the paths the merge changes from what HEAD has

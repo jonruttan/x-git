@@ -61,7 +61,8 @@ the kernel and x are installed (x-os).
   --no-rebase] [<repository> [<branch>]]`: a fast-forward when the commit
   -- the upstream when none is named, what the fetch marks for merging for
   pull -- has the branch in its history; otherwise a three-way merge from
-  the merge base, into a merge commit, or with the conflicts marked in the
+  the merge base (several merged into one first, as git's ort does), into
+  a merge commit, or with the conflicts marked in the
   files, staged 1, 2 and 3 in the index and `MERGE_HEAD` left for `commit`
   (content, add/add, modify/delete, rename/delete and rename/rename
   conflicts).  A file renamed on one side is merged under its new name,
