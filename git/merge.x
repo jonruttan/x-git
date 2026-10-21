@@ -146,9 +146,9 @@
                  (git-tree-flat gitdir (git-tree-of gitdir base) "")
                  (git-tree-flat gitdir (git-tree-of gitdir head) "")
                  (git-tree-flat gitdir (git-tree-of gitdir theirs) "")
-                 "HEAD" name2 gitdir
+                 "HEAD" name2 (%dir-renames-mode gitdir) gitdir
                  (fn (_ text) (git-object-write! gitdir "blob" text 0 (%str-byte-len text))))))
-        (let ((results (first r)) (messages (first (rest r))))
+        (let ((results (first r)) (messages (first (rest r))) (stopped? (first (rest (rest r)))))
           (let ((ours-of (fn (_ path) (List find (fn (_ f) (str=? (first f) path)) ours-files))))
             ; the paths the merge changes from what HEAD has
             (let ((touched
@@ -169,12 +169,24 @@
                           (Str8 join "" (List map (fn (_ p) (Str8 append "\t" p "\n")) (List sort (fn (_ a b) (Str8 <? a b)) blocked)))
                           "Please commit your changes or stash them before you merge.\nAborting\nMerge with strategy ort failed.\n")
                         "" 2)
-                  (%apply-merge! wd gitdir head theirs results messages touched message ours-of))))))))))
+                  (%apply-merge! wd gitdir head theirs results messages stopped? touched message ours-of))))))))))
+
+; merge.directoryRenames: "conflict" when unset, as git takes it, and
+; git's other spellings of true and false read as those.
+(def %dir-renames-mode
+  (fn (_ gitdir)
+    (def v (git-config-get gitdir "merge" "directoryRenames"))
+    (match
+      ((null? v) "conflict")
+      ((List any? (fn (_ w) (Str8 ci=? v w)) (list "true" "yes" "on" "1")) "true")
+      ((List any? (fn (_ w) (Str8 ci=? v w)) (list "false" "no" "off" "0")) "false")
+      (#t "conflict"))))
 
 ; The merge's results put in place: each touched path written or
-; removed, the index set, and a merge commit made, or the conflicts left.
+; removed, the index set, and a merge commit made, or the conflicts left
+; -- left too when the merge stopped with none.
 (def %apply-merge!
-  (fn (_ wd gitdir head theirs results messages touched message ours-of)
+  (fn (_ wd gitdir head theirs results messages stopped? touched message ours-of)
     (def touched? (fn (_ p) (List any? (fn (_ t) (str=? t p)) touched)))
     (def kept (List filter (fn (_ e) (not (touched? (first e)))) (git-read-entries gitdir)))
     (def fresh
@@ -199,7 +211,7 @@
     (File write-all (Str8 append gitdir "/ORIG_HEAD") (Str8 append head "\n"))
     (def conflicted (List map first (List filter (fn (_ x) (eq? (first (rest x)) (lit conflict))) results)))
     (def said (Str8 join "" messages))
-    (if (not (null? conflicted))
+    (if (or stopped? (not (null? conflicted)))
       (do (File write-all (Str8 append gitdir "/MERGE_HEAD") (Str8 append theirs "\n"))
           (File write-all (Str8 append gitdir "/MERGE_MODE") "")
           (File write-all (Str8 append gitdir "/MERGE_MSG")
