@@ -17,6 +17,7 @@
 (import x/sys/posix Sys)
 (import git/objects git-write-file!)
 (import git/refs git-ref-read git-rev-parse git-commit-of)
+(import git/config git-config-value)
 
 (def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
@@ -40,7 +41,7 @@
 (def git-init-options
   (Opts declare "git init" "[-b <branch>] [<directory>]" ()
     (list
-      (Opts arg "-b" "--initial-branch" "<branch>" "The name of the first branch; master when not given"))))
+      (Opts arg "-b" "--initial-branch" "<branch>" "The name of the first branch; init.defaultBranch, else master, when not given"))))
 
 (def %mkdir-p
   (fn (_ path) (unless (File exists? path) (File mkdir path))))
@@ -75,7 +76,7 @@
       (#t
         (let ((dir (if (null? operands) wd
                      (if (Str8 starts? "/" (first operands)) (first operands) (Str8 append wd "/" (first operands))))))
-          (let ((again? (git-init-layout! dir (Opts value o "-b" "master"))))
+          (let ((again? (git-init-layout! dir (Opts value o "-b" (or (git-config-value gitdir "init.defaultBranch") "master")))))
             (list (lit out)
               (Str8 append (if again? "Reinitialized existing" "Initialized empty") " Git repository in " dir "/.git/\n")
               0)))))))

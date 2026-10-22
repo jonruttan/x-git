@@ -29,6 +29,7 @@
 (import git/index git-index-read git-status-lists git-tree-files git-untracked-with git-long-status)
 (import git/ignore git-ignorer)
 (import git/diff git-commit-summary)
+(import git/config git-config-value)
 
 (def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
@@ -264,25 +265,6 @@
 
 ; --- commit ---
 
-; A value of .git/config: the first `KEY = VALUE` under `[SECTION]`, or ().
-(def %config-get
-  (fn (_ gitdir section key)
-    (def path (Str8 append gitdir "/config"))
-    (if (not (File exists? path)) ()
-      ((fn (self lines in?)
-         (if (null? lines) ()
-           (let ((l (Str8 trim (first lines))))
-             (match
-               ((Str8 starts? "[" l) (self (rest lines) (str=? l (Str8 append "[" section "]"))))
-               ((and in? (not (null? (Str8 index-of "=" l))))
-                 (let ((i (Str8 index-of "=" l)))
-                   ; a variable's name is matched ignoring case, as git does
-                   (if (Str8 ci=? (Str8 trim (Str8 sub 0 i l)) key)
-                     (Str8 trim (Str8 sub (%add i 1) (%sub (Str8 length l) (%add i 1)) l))
-                     (self (rest lines) in?))))
-               (#t (self (rest lines) in?))))))
-       (Str8 split "\n" (File read-all path)) #f))))
-
 ; git's tree order: names compared as bytes, a subtree's with "/" after it.
 (def %tree-name<?
   (fn (_ a b)
@@ -396,8 +378,8 @@
 ; name or no email.
 (def %signature
   (fn (_ gitdir role)
-    (def name (or (%env (Str8 append "GIT_" role "_NAME")) (%config-get gitdir "user" "name")))
-    (def email (or (%env (Str8 append "GIT_" role "_EMAIL")) (%config-get gitdir "user" "email")))
+    (def name (or (%env (Str8 append "GIT_" role "_NAME")) (git-config-value gitdir "user.name")))
+    (def email (or (%env (Str8 append "GIT_" role "_EMAIL")) (git-config-value gitdir "user.email")))
     (def date (let ((d (%env (Str8 append "GIT_" role "_DATE")))) (if (null? d) () (%parse-date d))))
     (if (or (null? name) (null? email)) ()
       (Str8 append name " <" email "> " (if (null? date) (%timestamp) date)))))
@@ -510,11 +492,6 @@
 (def git-index-write!
   (fn (_ gitdir entries) (%index-write! gitdir entries)))
 
-; A value of .git/config, for the modules that read the remotes and the
-; branches' upstreams: SECTION is `user` or `remote "origin"`, say.
-(def git-config-get
-  (fn (_ gitdir section key) (%config-get gitdir section key)))
-
 ; The index's entries in the shape git-index-write! takes, for the
 ; commands that change the index: (PATH MODE-NUMBER SHA SIZE MTIME).
 (def git-read-entries
@@ -524,4 +501,4 @@
 (def git-write-tree! (fn (_ gitdir entries) (%write-tree! gitdir entries "")))
 
 (provide git/stage git-add git-add-options git-commit git-commit-options git-index-write!
-  git-config-get git-read-entries git-commit-write! git-write-tree! git-merge-state-clear!)
+  git-read-entries git-commit-write! git-write-tree! git-merge-state-clear!)

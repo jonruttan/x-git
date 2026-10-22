@@ -17,7 +17,7 @@
 
 (import git/wire wire-open wire-close! wire-pkt wire-line wire-split wire-send! wire-send-bytes! wire-flush! wire-send-raw!)
 (import git/packs git-bytes-make git-bytes-put! git-bytes-region git-bytes-count)
-(import git/stage git-config-get)
+(import git/config git-config-value)
 (import x/sys/posix Sys)
 
 (def %add (prim-ref 'int '+))
@@ -101,7 +101,7 @@
 (def %ssh-command
   (fn (_ gitdir)
     (def env (Sys getenv "GIT_SSH_COMMAND"))
-    (def conf (if (null? gitdir) () (git-config-get gitdir "core" "sshCommand")))
+    (def conf (git-config-value gitdir "core.sshCommand"))
     (def prog (Sys getenv "GIT_SSH"))
     (match
       ((and (not (null? env)) (> (Str8 length env) 0)) (pair #t env))
