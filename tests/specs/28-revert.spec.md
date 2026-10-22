@@ -32,17 +32,23 @@ collected after it.
     (File close (first t)) (File unlink (rest t)) (File mkdir (rest t))
     (set! %rv-d (rest t))
     (%rv-sh %rv-d (Str8 append "mkdir x g && cd x && " %rv-build more " && cd ../../g && " %rv-build more))))
+; standard error without git's hint: lines, which an advice.* setting
+; (macOS runners turn them off) leaves out
+(def %rv-plain
+  (fn (_ s)
+    (Str8 join "" (List map (fn (_ l) (Str8 append l "\n"))
+                    (List filter (fn (_ l) (not (or (= (Str8 length l) 0) (Str8 starts? "hint:" l)))) (Str8 split "\n" s))))))
 (def %rv-x
   (fn (_ ops)
     (def r (git-run (git-plan (pair "-C" (pair (Str8 append %rv-d "/x/r") ops)))))
     (def text (first (rest r)))
     (def more (rest (rest (rest r))))
     (if (eq? (first r) (lit out)) (list (first (rest (rest r))) text "")
-      (list (first (rest (rest r))) (if (null? more) "" (first more)) text))))
+      (list (first (rest (rest r))) (if (null? more) "" (first more)) (%rv-plain text)))))
 (def %rv-g
   (fn (_ ops)
     (def r (Proc capture (pair "/bin/sh" (pair "-c" (pair "cd \"$0\" && exec git \"$@\" 2>../git.err" (pair (Str8 append %rv-d "/g/r") ops))))))
-    (list (first r) (rest r) (File read-all (Str8 append %rv-d "/g/git.err")))))
+    (list (first r) (rest r) (%rv-plain (File read-all (Str8 append %rv-d "/g/git.err"))))))
 ; the lines whose answers differ, as (OPS X GIT)
 (def %rv-steps
   (fn (_ lines)
