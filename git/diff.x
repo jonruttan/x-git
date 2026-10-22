@@ -339,8 +339,9 @@
           counts))
       (%summary-line (List length counts) ins del))))
 
-; commit's lines after its header: the summary, then a line a mode
-; created or deleted, from two trees' flat files ((PATH . SHA) ...).
+; commit's lines after its header: the summary, then a line a file
+; created or deleted, in path order, from two trees' flat files ((PATH .
+; SHA) ...).
 (def git-commit-summary
   (fn (_ gitdir before after)
     (def side (fn (_ files) (List map (fn (_ f) (list (first f) (rest f) "100644")) files)))
@@ -351,10 +352,14 @@
       (%summary-line (List length counts)
         (List fold (fn (_ a c) (%add a (first (rest c)))) 0 counts)
         (List fold (fn (_ a c) (%add a (first (rest (rest c))))) 0 counts))
-      (Str8 join "" (List map (fn (_ c) (Str8 append " create mode " (mode-of (first c)) " " (first c) "\n"))
-                      (List filter (fn (_ c) (null? (first (rest c)))) changes)))
-      (Str8 join "" (List map (fn (_ c) (Str8 append " delete mode 100644 " (first c) "\n"))
-                      (List filter (fn (_ c) (null? (first (rest (rest c))))) changes))))))
+      (Str8 join ""
+        (List map
+          (fn (_ c)
+            (match
+              ((null? (first (rest c))) (Str8 append " create mode " (mode-of (first c)) " " (first c) "\n"))
+              ((null? (first (rest (rest c)))) (Str8 append " delete mode 100644 " (first c) "\n"))
+              (#t "")))
+          changes)))))
 
 ; What merge prints after "Fast-forward" or a merge commit: the --stat of
 ; one tree against another, renames found as git finds them -- a file

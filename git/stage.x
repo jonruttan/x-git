@@ -406,13 +406,24 @@
     (if (not (File exists? path)) ()
       (List filter (fn (_ l) (= (Str8 length l) 40)) (Str8 split "\n" (File read-all path))))))
 
-; The files a merge in progress leaves, removed once it is concluded or
-; abandoned.
+; The files a merge or a revert in progress leaves, removed once it is
+; concluded or abandoned.
 (def git-merge-state-clear!
   (fn (_ gitdir)
     (List for-each
       (fn (_ f) (let ((p (Str8 append gitdir "/" f))) (when (File exists? p) (File unlink p))))
-      (list "MERGE_HEAD" "MERGE_MSG" "MERGE_MODE" "AUTO_MERGE"))))
+      (list "MERGE_HEAD" "MERGE_MSG" "MERGE_MODE" "AUTO_MERGE" "REVERT_HEAD"))))
+
+; A message with git's comment lines (those starting #) taken out and its
+; trailing blank lines dropped, as git cleans one that was edited; "" when
+; nothing is left.
+(def git-message-strip
+  (fn (_ text)
+    (def kept (List filter (fn (_ l) (not (Str8 starts? "#" l))) (Str8 split "\n" text)))
+    (def trimmed
+      ((fn (self ls) (if (and (not (null? ls)) (= (Str8 length (Str8 trim (List last ls))) 0)) (self (List take (%sub (List length ls) 1) ls)) ls))
+       kept))
+    (if (null? trimmed) "" (Str8 append (Str8 join "\n" trimmed) "\n"))))
 
 (def git-commit-options
   (Opts declare "git commit" "-m <message> [-q] [--no-edit]" ()
@@ -447,9 +458,12 @@
     (def o (Opts parse git-commit-options ops))
     (def merging (if (null? gitdir) () (%merge-heads gitdir)))
     (def merge-msg-path (if (null? gitdir) () (Str8 append gitdir "/MERGE_MSG")))
-    ; a merge in progress concludes with the message it left, as --no-edit takes it
+    ; a merge in progress concludes with the message it left, as --no-edit
+    ; takes it; a revert's, its comment lines taken out
     (def msg (or (Opts value o "-m" ())
-                 (if (and (not (null? merging)) (File exists? merge-msg-path)) (File read-all merge-msg-path) ())))
+                 (if (and (not (null? merging)) (File exists? merge-msg-path)) (File read-all merge-msg-path) ())
+                 (if (and (not (null? gitdir)) (File exists? (Str8 append gitdir "/REVERT_HEAD")) (File exists? merge-msg-path))
+                   (git-message-strip (File read-all merge-msg-path)) ())))
     (def entries (if (null? gitdir) () (%read-entries gitdir)))
     (def unmerged
       ((fn (self es acc)
@@ -501,4 +515,4 @@
 (def git-write-tree! (fn (_ gitdir entries) (%write-tree! gitdir entries "")))
 
 (provide git/stage git-add git-add-options git-commit git-commit-options git-index-write!
-  git-read-entries git-commit-write! git-write-tree! git-merge-state-clear!)
+  git-read-entries git-commit-write! git-write-tree! git-merge-state-clear! git-message-strip)

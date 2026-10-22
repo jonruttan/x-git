@@ -109,6 +109,12 @@ the kernel and x are installed (x-os).
   set too (mixed) or the index and the working directory (hard), a merge
   in progress given up; with paths, their index entries alone.  git's
   report of the changes left unstaged, or of where a hard reset lands
+- `revert [--no-edit] [-n] <commit>`, `revert --continue | --abort`: a
+  commit's change undone by merge's three-way merge and committed with
+  git's message (`Revert "..."`, `Reapply "..."` for a revert of a
+  revert), edited first in git's editor unless `--no-edit`; a conflict
+  left with `REVERT_HEAD` and `MERGE_MSG` for `--continue` or `commit`.
+  One commit at a time; a merge, which needs `-m`, is refused
 - `rm [-r] [--cached] [-f] <pathspec>...`, `mv <source>... <destination>`;
   `.gitignore`, `.git/info/exclude` and `core.excludesFile` as
   gitignore(5) reads them
@@ -162,6 +168,7 @@ DIR holds this tree as `git` and x-ssh as `ssh`.
     git/serve.x       upload-pack and receive-pack, the services
     git/merge.x       merge and pull
     git/reset.x       reset
+    git/revert.x      revert
     git/threeway.x    the merge base, files and trees merged three ways
     git/renames.x     renames, as git finds them
     git/paths.x       rm, mv
