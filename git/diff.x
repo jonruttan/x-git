@@ -401,6 +401,17 @@
 
 (def %int-div (prim-ref (lit int) (lit /)))
 
+; One tree against another as show prints a commit's change: the patch,
+; or with stat? the --stat rows and summary; "" when they are the same.
+; A tree of () is the empty tree, a root commit's parent.
+(def git-tree-patch
+  (fn (_ gitdir old-tree new-tree stat?)
+    (def changes (%changed "" gitdir (%tree-side gitdir old-tree) (%tree-side gitdir new-tree) #f))
+    (match
+      ((null? changes) "")
+      (stat? (%stat-text changes))
+      (#t (Str8 join "" (List map (fn (_ c) (%file-diff (first c) (first (rest c)) (first (rest (rest c))))) changes))))))
+
 ; --- diff ---
 
 (def git-diff-options
@@ -446,4 +457,4 @@
                         (Str8 join "" (List map (fn (_ c) (%file-diff (first c) (first (rest c)) (first (rest (rest c))))) changes))))
                     0))))))))))
 
-(provide git/diff git-diff git-diff-options git-edit-script git-hunks git-commit-summary git-tree-diffstat)
+(provide git/diff git-diff git-diff-options git-edit-script git-hunks git-commit-summary git-tree-diffstat git-tree-patch)

@@ -16,7 +16,8 @@
 (import x/sys/opts Opts)
 (import x/sys/date Date)
 (import git/objects git-object-read git-tree-entries git-object-text)
-(import git/refs git-tree-of git-commit-of git-headers)
+(import git/refs git-tree-of git-commit-of git-headers git-rev-parse git-rev-path-missing)
+(import git/diff git-tree-patch)
 
 (def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
@@ -263,4 +264,185 @@
                       (Str8 join "\n" (List map (fn (_ c) (%commit-text gitdir c)) commits)))
                     0))))))))))
 
-(provide git/history git-ls-tree git-ls-tree-options git-log git-log-options)
+; --- show ---
+
+(def git-show-options
+  (Opts declare "git show" "[-s] [--stat] [--oneline | --format=<format>] [<object>...]" ()
+    (list
+      (Opts flag "-s" "--no-patch" "The commit alone, no change")
+      (Opts flag "--stat" "The change as a row a file and the summary")
+      (Opts flag "--oneline" "One line a commit: the abbreviated name and the subject")
+      (Opts arg "--format" "<format>" "A commit as the format says")
+      (Opts arg "--pretty" "<format>" "oneline, medium, format:<format> or tformat:<format>"))))
+
+; An object's text after its header's blank line: a commit's or a tag's
+; message as written.
+(def %raw-message
+  (fn (_ gitdir sha)
+    (def text (git-object-text (git-object-read gitdir sha)))
+    (def i (Str8 index-of "\n\n" text))
+    (if (null? i) "" (Str8 sub (%add i 2) (%sub (Str8 length text) (%add i 2)) text))))
+
+; A message's subject -- its first paragraph's lines joined by spaces --
+; and its body, what follows the blank lines after: (SUBJECT . BODY).
+(def %subject-body
+  (fn (_ raw)
+    (def blank? (fn (_ l) (= (Str8 length (Str8 trim l)) 0)))
+    (def para
+      ((fn (self ls acc) (if (or (null? ls) (blank? (first ls))) (pair (List reverse acc) ls) (self (rest ls) (pair (first ls) acc))))
+       (Str8 split "\n" raw) ()))
+    (def after ((fn (self ls) (if (and (not (null? ls)) (blank? (first ls))) (self (rest ls)) ls)) (rest para)))
+    (pair (Str8 join " " (first para)) (Str8 join "\n" after))))
+
+; A user format for a commit: git's placeholders for its names, its
+; people, their dates and its message; any other %x as written.
+(def %expand
+  (fn (_ gitdir sha fmt)
+    (def hs (git-headers gitdir sha))
+    (def header (fn (_ k) (let ((e (List find (fn (_ kv) (str=? (first kv) k)) hs))) (if (null? e) "" (rest e)))))
+    (def parents (List map rest (List filter (fn (_ kv) (str=? (first kv) "parent")) hs)))
+    (def person
+      (fn (_ k)
+        (def id (%ident (header k)))
+        (def who (first id))
+        (def lt (Str8 index-of " <" who))
+        (list (if (null? lt) who (Str8 sub 0 lt who))
+              (if (null? lt) "" (Str8 sub (%add lt 2) (%sub (Str8 length who) (%add lt 3)) who))
+              (%git-date (first (rest id)) (first (rest (rest id)))))))
+    (def raw (%raw-message gitdir sha))
+    (def sb (%subject-body raw))
+    (def n (Str8 length fmt))
+    (def one
+      (fn (_ code)
+        (match
+          ((str=? code "H") sha) ((str=? code "h") (Str8 sub 0 7 sha))
+          ((str=? code "T") (header "tree")) ((str=? code "t") (Str8 sub 0 7 (header "tree")))
+          ((str=? code "P") (Str8 join " " parents)) ((str=? code "p") (Str8 join " " (List map (fn (_ p) (Str8 sub 0 7 p)) parents)))
+          ((str=? code "s") (first sb)) ((str=? code "b") (rest sb)) ((str=? code "B") raw)
+          ((str=? code "an") (first (person "author"))) ((str=? code "ae") (first (rest (person "author"))))
+          ((str=? code "ad") (first (rest (rest (person "author")))))
+          ((str=? code "cn") (first (person "committer"))) ((str=? code "ce") (first (rest (person "committer"))))
+          ((str=? code "cd") (first (rest (rest (person "committer")))))
+          ((str=? code "n") "\n") ((str=? code "%") "%")
+          (#t ()))))
+    ((fn (self i acc)
+       (match
+         ((>= i n) (Str8 join "" (List reverse acc)))
+         ((str=? (Str8 sub i 1 fmt) "%")
+           (let ((two (if (<= (%add i 3) n) (one (Str8 sub (%add i 1) 2 fmt)) ()))
+                 (single (if (< (%add i 1) n) (one (Str8 sub (%add i 1) 1 fmt)) ())))
+             (match
+               ((not (null? two)) (self (%add i 3) (pair two acc)))
+               ((not (null? single)) (self (%add i 2) (pair single acc)))
+               (#t (self (%add i 1) (pair "%" acc))))))
+         (#t (self (%add i 1) (pair (Str8 sub i 1 fmt) acc)))))
+     0 ())))
+
+; How commits are shown: (KIND . FORMAT), KIND medium, oneline (--oneline),
+; full (--pretty=oneline), tformat (--format) or format (format:).
+(def %pretty
+  (fn (_ o)
+    (def spec (or (Opts value o "--format" ()) (Opts value o "--pretty" ())))
+    (def after (fn (_ prefix s) (Str8 sub (Str8 length prefix) (%sub (Str8 length s) (Str8 length prefix)) s)))
+    (match
+      ((null? spec) (pair (if (Opts on? o "--oneline") (lit oneline) (lit medium)) ()))
+      ((and (null? (Opts value o "--format" ())) (str=? spec "oneline")) (pair (lit full) ()))
+      ((and (null? (Opts value o "--format" ())) (str=? spec "medium")) (pair (lit medium) ()))
+      ((Str8 starts? "format:" spec) (pair (lit format) (after "format:" spec)))
+      ((Str8 starts? "tformat:" spec) (pair (lit tformat) (after "tformat:" spec)))
+      (#t (pair (lit tformat) spec)))))
+
+; A commit as show prints it: its header in the pretty form, then its
+; change against its first parent -- the patch, or the --stat -- after
+; the separator git puts there.  A merge's patch is its combined diff,
+; which is not drawn: the header and the blank line git ends it with.
+(def %show-commit
+  (fn (_ gitdir sha pretty patch? stat?)
+    (def kind (first pretty))
+    (def parents (List map rest (List filter (fn (_ kv) (str=? (first kv) "parent")) (git-headers gitdir sha))))
+    (def head
+      (match
+        ((eq? kind (lit oneline)) (%oneline-text gitdir sha))
+        ((eq? kind (lit full)) (Str8 append sha " " (first (%subject-body (%raw-message gitdir sha))) "\n"))
+        ((eq? kind (lit tformat)) (Str8 append (%expand gitdir sha (rest pretty)) "\n"))
+        ((eq? kind (lit format)) (%expand gitdir sha (rest pretty)))
+        (#t (%commit-text gitdir sha))))
+    (def gap (if (or (eq? kind (lit oneline)) (eq? kind (lit full))) "" "\n"))
+    (match
+      ((not (or patch? stat?)) head)
+      ((and (not stat?) (< 1 (List length parents))) (Str8 append head gap))
+      (#t
+        (let ((change (git-tree-patch gitdir (if (null? parents) () (git-tree-of gitdir (first parents))) (git-tree-of gitdir sha) stat?)))
+          (if (= (Str8 length change) 0) head (Str8 append head gap change)))))))
+
+; A tag as show prints it: its name, its tagger and date, its message
+; and the blank line after it.
+(def %show-tag
+  (fn (_ gitdir sha)
+    (def hs (git-headers gitdir sha))
+    (def get (fn (_ k) (let ((e (List find (fn (_ kv) (str=? (first kv) k)) hs))) (if (null? e) "" (rest e)))))
+    (def tagger (%ident (get "tagger")))
+    (Str8 append "tag " (get "tag") "\n"
+      "Tagger: " (first tagger) "\n"
+      "Date:   " (%git-date (first (rest tagger)) (first (rest (rest tagger)))) "\n\n"
+      (%raw-message gitdir sha) "\n")))
+
+; A tree as show prints it: `tree NAME`, then its entries' names, a
+; subtree's with a slash.
+(def %show-tree
+  (fn (_ gitdir sha name)
+    (Str8 append "tree " name "\n\n"
+      (Str8 join ""
+        (List map (fn (_ e) (Str8 append (first (rest e)) (if (str=? (first e) "40000") "/" "") "\n"))
+          (git-tree-entries (git-object-read gitdir sha)))))))
+
+(def git-show
+  (fn (_ wd gitdir ops)
+    (def o (Opts parse git-show-options ops))
+    (def names (if (null? (Opts operands o)) (list "HEAD") (Opts operands o)))
+    (def stat? (and (Opts on? o "--stat") (not (Opts on? o "-s"))))
+    (def patch? (not (or (Opts on? o "-s") (Opts on? o "--stat"))))
+    (def pretty (%pretty o))
+    (match
+      ((Opts help? git-show-options ops) (list (lit out) (Opts usage git-show-options) 0))
+      ((not (null? (Opts unknown o))) (%unknown-option (Opts unknown o) (Opts usage git-show-options)))
+      ((null? gitdir) (%no-repo))
+      (#t
+        ; each name resolved once, all before anything is shown
+        (let ((shas (List map (fn (_ n) (git-rev-parse gitdir n)) names)))
+        (let ((bad (let ((b (List find (fn (_ p) (null? (rest p))) (List map pair names shas)))) (if (null? b) () (first b)))))
+          (if (not (null? bad))
+            (let ((base (git-rev-path-missing gitdir bad)))
+              (if (not (null? base))
+                (%fatal (Str8 append "path '" (Str8 sub (%add (Str8 length base) 1) (%sub (Str8 length bad) (%add (Str8 length base) 1)) bad)
+                          "' does not exist in '" base "'"))
+                (list (lit err)
+                  (Str8 join "\n"
+                    (list (Str8 append "fatal: ambiguous argument '" bad "': unknown revision or path not in the working tree.")
+                          "Use '--' to separate paths from revisions, like this:"
+                          "'git <command> [<revision>...] -- [<file>...]'"
+                          ""))
+                  128)))
+            ; each object in turn; a commit after a commit set apart, by a
+            ; blank line when shown in full, as log sets them, by a newline
+            ; under format:, which ends none of its own
+            ((fn (self ns acc after-commit?)
+               (if (null? ns) (list (lit out) (Str8 join "" (List reverse acc)) 0)
+                 (let ((sha (rest (first ns))))
+                   (let ((type (first (git-object-read gitdir sha)))
+                         (sep (if (and after-commit? (or (eq? (first pretty) (lit medium)) (eq? (first pretty) (lit format)))) "\n" "")))
+                     (match
+                       ((str=? type "commit")
+                         (self (rest ns) (pair (Str8 append sep (%show-commit gitdir sha pretty patch? stat?)) acc) #t))
+                       ((str=? type "tag")
+                         (let ((target (git-commit-of gitdir sha)))
+                           (self (rest ns)
+                                 (pair (Str8 append sep (%show-tag gitdir sha)
+                                         (if (null? target) "" (%show-commit gitdir target pretty patch? stat?)))
+                                       acc)
+                                 (not (null? target)))))
+                       ((str=? type "tree") (self (rest ns) (pair (%show-tree gitdir sha (first (first ns))) acc) #f))
+                       (#t (self (rest ns) (pair (git-object-text (git-object-read gitdir sha)) acc) #f)))))))
+             (List map pair names shas) () #f))))))))
+
+(provide git/history git-ls-tree git-ls-tree-options git-log git-log-options git-show git-show-options)
