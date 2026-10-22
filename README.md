@@ -30,6 +30,11 @@ the kernel and x are installed (x-os).
 - `rev-parse <revision>...`
 - `ls-tree [-r] [-t] [-l] [--name-only] <tree-ish> [<path>...]`
 - `log [--oneline] [-n <number>] [<revision>]`, newest committer time first
+- `show [-s] [--stat] [--oneline | --pretty=<format> | --format=<format>]
+  [<object>...]`: a commit with its patch or --stat against its first
+  parent, an annotated tag then what it tags, a tree's entries, a blob's
+  text; git's placeholders for --format (%H %h %T %t %P %p %s %b %B %an
+  %ae %ad %cn %ce %cd %n %%).  A merge's combined diff is not drawn
 - `ls-files [--stage]` and `status [-s | --porcelain]` from the index
   (.gitignore is not read)
 - `add [-A] <pathspec>...`: the blobs written, the index written (version 2)
@@ -143,7 +148,7 @@ DIR holds this tree as `git` and x-ssh as `ssh`.
     git/delta.x       deltas made, as git's diff-delta makes them
     git/refs.x        refs, loose and packed; revision names to objects
     git/commands.x    cat-file, hash-object, rev-parse
-    git/history.x     ls-tree, log
+    git/history.x     ls-tree, log, show
     git/index.x       the index read; ls-files, status
     git/stage.x       the index written; add, commit
     git/config.x      configuration read and written; config
