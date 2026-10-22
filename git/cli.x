@@ -33,14 +33,16 @@
 (import git/serve git-upload-pack git-receive-pack)
 (import git/merge git-merge git-pull)
 (import git/paths git-rm git-mv)
+(import git/config git-config git-config-parameters)
 
 (def %byte-len (prim-ref (lit str) (lit byte-len)))
 
 (def git-options
-  (Opts declare "git" "[-v | --version] [-C <path>] <command> [<args>]" ()
+  (Opts declare "git" "[-v | --version] [-C <path>] [-c <name>=<value>] <command> [<args>]" ()
     (list
       (Opts flag "-v" "--version" "Print the version")
-      (Opts arg "-C" "<path>" "Run as if started in <path>"))))
+      (Opts arg "-C" "<path>" "Run as if started in <path>")
+      (Opts arg "-c" "<name>=<value>" "Set a configuration value for this command"))))
 
 (def %version-line
   (fn (_) (Str8 append "git version " git-version " (x-git)\n")))
@@ -73,7 +75,8 @@
         (pair "upload-pack" git-upload-pack)
         (pair "receive-pack" git-receive-pack)
         (pair "rm" git-rm)
-        (pair "mv" git-mv)))
+        (pair "mv" git-mv)
+        (pair "config" git-config)))
 
 ; The command a name runs, or ().
 (def %command
@@ -82,7 +85,8 @@
     (if (null? hit) () (rest hit))))
 
 ; A line to a plan: (help), (version), (refuse TEXT), (unknown-command NAME),
-; or (run DIR COMMAND ARGS), DIR the working directory asked for or ().
+; or (run DIR COMMAND ARGS SETTINGS), DIR the working directory asked for
+; or (), SETTINGS the -c values.
 (def git-plan
   (fn (_ ops)
     (def o (Opts parse-leading git-options ops))
@@ -94,7 +98,7 @@
       ((null? cmd) (list (lit usage)))
       ((str=? (first cmd) "version") (list (lit version)))
       ((null? (%command (first cmd))) (list (lit unknown-command) (first cmd)))
-      (#t (list (lit run) (Opts value o "-C" ()) (first cmd) (rest cmd))))))
+      (#t (list (lit run) (Opts value o "-C" ()) (first cmd) (rest cmd) (Opts values o "-c"))))))
 
 ; A plan done: (STREAM TEXT STATUS).
 (def git-run
@@ -113,9 +117,18 @@
       (#t
         (let ((dir (first (rest plan)))
               (cmd (first (rest (rest plan))))
-              (args (first (rest (rest (rest plan))))))
+              (args (first (rest (rest (rest plan)))))
+              (settings (first (rest (rest (rest (rest plan)))))))
           (let ((wd (if (null? dir) (Sys getcwd) dir)))
-            ((%command cmd) wd (git-dir wd) args)))))))
+            ; -c's settings in GIT_CONFIG_PARAMETERS for the command, and
+            ; for what it runs, as git passes them on; as they were after
+            (if (null? settings) ((%command cmd) wd (git-dir wd) args)
+              (let ((was (Sys getenv "GIT_CONFIG_PARAMETERS")))
+                (do (Sys setenv "GIT_CONFIG_PARAMETERS"
+                      (Str8 append (if (or (null? was) (= (Str8 length was) 0)) "" (Str8 append was " ")) (git-config-parameters settings)))
+                    (let ((r ((%command cmd) wd (git-dir wd) args)))
+                      (do (if (null? was) (Sys unsetenv "GIT_CONFIG_PARAMETERS") (Sys setenv "GIT_CONFIG_PARAMETERS" was))
+                          r)))))))))))
 
 ; The bytes of a TEXT: a string's, or a region's count.
 (def %text-count

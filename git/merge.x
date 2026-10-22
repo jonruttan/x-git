@@ -38,7 +38,8 @@
 (import git/objects git-object-write!)
 (import git/refs git-rev-parse git-tree-of git-ref-read)
 (import git/index git-status-lists)
-(import git/stage git-config-get git-read-entries git-index-write! git-write-tree! git-commit-write! git-merge-state-clear!)
+(import git/stage git-read-entries git-index-write! git-write-tree! git-commit-write! git-merge-state-clear!)
+(import git/config git-config-value)
 (import git/checkout git-checkout-tree! git-write-blob! git-remove-file! git-entry-of)
 (import git/diff git-tree-diffstat)
 (import git/remote git-fetch git-ancestor? git-peel git-write-ref! git-current-branch)
@@ -72,9 +73,8 @@
 ; or () when it has none.
 (def %upstream
   (fn (_ gitdir branch)
-    (def section (Str8 append "branch \"" branch "\""))
-    (def remote (git-config-get gitdir section "remote"))
-    (def merge (git-config-get gitdir section "merge"))
+    (def remote (git-config-value gitdir (Str8 append "branch." branch ".remote")))
+    (def merge (git-config-value gitdir (Str8 append "branch." branch ".merge")))
     (if (or (null? remote) (null? merge)) ()
       (Str8 append "refs/remotes/" remote "/"
         (if (Str8 starts? "refs/heads/" merge) (Str8 sub 11 (%sub (Str8 length merge) 11) merge) merge)))))
@@ -176,7 +176,7 @@
 ; git's other spellings of true and false read as those.
 (def %dir-renames-mode
   (fn (_ gitdir)
-    (def v (git-config-get gitdir "merge" "directoryRenames"))
+    (def v (git-config-value gitdir "merge.directoryRenames"))
     (match
       ((null? v) "conflict")
       ((List any? (fn (_ w) (Str8 ci=? v w)) (list "true" "yes" "on" "1")) "true")
@@ -349,7 +349,7 @@
                              ((Opts on? o "--ff-only")
                                (%refusal (Str8 append %diverging "fatal: Not possible to fast-forward, aborting.\n")))
                              ; told to merge, here or in the config
-                             ((or (Opts on? o "--no-rebase") (str=? (or (git-config-get gitdir "pull" "rebase") "") "false"))
+                             ((or (Opts on? o "--no-rebase") (str=? (or (git-config-value gitdir "pull.rebase") "") "false"))
                                (fn (_) (%merge-three! wd gitdir head target (%pull-message (rest fetched) branch) target)))
                              (#t (%refusal (Str8 append %pull-diverging "fatal: Need to specify how to reconcile divergent branches.\n")))))))
                   (let ((err (Str8 append (first (rest f)) (first r))))

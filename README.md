@@ -12,7 +12,15 @@ the kernel and x are installed (x-os).
 
 ## Served
 
-- `--version`, `-v`, `version`; `-C <path>`
+- `--version`, `-v`, `version`; `-C <path>`; `-c <name>=<value>`
+- `config`: get, set, `--add`, `--unset`, `--unset-all`,
+  `--remove-section`, `--list`, with `--global`, `--system`, `--local` or
+  `-f <file>`, `--bool`/`--int`, `--show-origin`, `--show-scope`; and the
+  `get`, `set`, `unset`, `list` and `remove-section` subcommands.  Every
+  command reads configuration as git does: the system's file, the
+  user's (`~/.gitconfig` and the XDG one), the repository's, then `-c`
+  and `GIT_CONFIG_COUNT`, the last value winning; files parsed and
+  written as git parses and writes them (includes are not followed)
 - `hash-object [-t <type>] [-w] [--stdin] <file>...`: an object's name,
   and with `-w` the object written loose, as a zlib stream of stored
   blocks (git reads it; the writer does not compress yet)
@@ -27,8 +35,8 @@ the kernel and x are installed (x-os).
 - `add [-A] <pathspec>...`: the blobs written, the index written (version 2)
 - `commit -m <message> [-q] [--no-edit]`: the trees from the index, the
   commit with the identity and time git takes -- `GIT_AUTHOR_*` and
-  `GIT_COMMITTER_*`, then `.git/config` (the global config is not read)
-  and the clock -- the branch moved; the summary as git prints it, its
+  `GIT_COMMITTER_*`, then `user.name` and `user.email` from the
+  configuration, and the clock -- the branch moved; the summary as git prints it, its
   line counts from a line diff.  A merge in progress is concluded: its
   second parent from `MERGE_HEAD`, its message from `MERGE_MSG` when no
   `-m` is given; a path still in conflict refuses it
@@ -36,8 +44,9 @@ the kernel and x are installed (x-os).
   git's unified form, hunks with three lines of context; the edit script
   is by longest common subsequence, so where several are shortest the
   hunks may differ from git's (Myers)
-- `init [-b <branch>] [<directory>]` (the hints git prints for an unnamed
-  first branch are not printed), `branch [-d] [<branch> [<start>]]`,
+- `init [-b <branch>] [<directory>]`, the first branch `init.defaultBranch`
+  when no `-b` is given (the hints git prints for an unnamed first branch
+  are not printed), `branch [-d] [<branch> [<start>]]`,
   `tag [-d] [<tag> [<object>]]` (lightweight tags only)
 - `checkout <branch> | <commit>`, `checkout -b <new> [<start>]`, `switch [-c <new>] <branch>`:
   the working directory and index set to the tree, a path with changes of
@@ -132,6 +141,7 @@ DIR holds this tree as `git` and x-ssh as `ssh`.
     git/history.x     ls-tree, log
     git/index.x       the index read; ls-files, status
     git/stage.x       the index written; add, commit
+    git/config.x      configuration read and written; config
     git/diff.x        lines compared: diff, and the summary commit prints
     git/repo.x        init, branch, tag
     git/checkout.x    the working directory set to a tree: checkout, switch, restore

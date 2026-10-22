@@ -32,7 +32,7 @@
 (import git/packs git-pack-has? git-pack-write! git-pack-bytes git-pack-index!)
 (import git/refs git-ref-read)
 (import git/repo git-refs-under)
-(import git/stage git-config-get)
+(import git/config git-config-value)
 (import git/clone git-source-gitdir)
 (import git/protocol proto-url? proto-connect proto-advertise proto-fetch! proto-push! proto-remote-lines proto-cannot-read)
 (import git/wire wire-close! wire-flush!)
@@ -332,7 +332,7 @@
   (fn (_ wd gitdir ops)
     (def o (Opts parse git-fetch-options ops))
     (def remote (if (null? (Opts operands o)) "origin" (first (Opts operands o))))
-    (def url (if (null? gitdir) () (git-config-get gitdir (Str8 append "remote \"" remote "\"") "url")))
+    (def url (if (null? gitdir) () (git-config-value gitdir (Str8 append "remote." remote ".url"))))
     (def src (if (null? gitdir) () (%source wd gitdir url)))
     (match
       ((Opts help? git-fetch-options ops) (list (lit out) (Opts usage git-fetch-options) 0))
@@ -348,8 +348,8 @@
           ; first, and the one FETCH_HEAD does not mark not-for-merge.
           (def merge
             (if (and (not (null? current))
-                     (str=? remote (or (git-config-get gitdir (Str8 append "branch \"" current "\"") "remote") "")))
-              (%strip-heads (or (git-config-get gitdir (Str8 append "branch \"" current "\"") "merge") ""))
+                     (str=? remote (or (git-config-value gitdir (Str8 append "branch." current ".remote")) "")))
+              (%strip-heads (or (git-config-value gitdir (Str8 append "branch." current ".merge")) ""))
               ""))
           (def all
             (%sorted (List map (fn (_ e) (%strip-heads (first e)))
@@ -423,7 +423,7 @@
   (fn (_ wd gitdir ops)
     (def o (Opts parse git-ls-remote-options ops))
     (def operand (if (null? (Opts operands o)) "origin" (first (Opts operands o))))
-    (def configured (if (null? gitdir) () (git-config-get gitdir (Str8 append "remote \"" operand "\"") "url")))
+    (def configured (if (null? gitdir) () (git-config-value gitdir (Str8 append "remote." operand ".url"))))
     (def url (if (null? configured) operand configured))
     (match
       ((Opts help? git-ls-remote-options ops) (list (lit out) (Opts usage git-ls-remote-options) 0))
@@ -658,16 +658,15 @@
     (def o (Opts parse git-push-options ops))
     (def operands (Opts operands o))
     (def current (if (null? gitdir) () (%current-branch gitdir)))
-    (def section (if (null? current) "" (Str8 append "branch \"" current "\"")))
+    (def tracked (fn (_ key) (if (or (null? gitdir) (null? current)) () (git-config-value gitdir (Str8 append "branch." current "." key)))))
     (def remote
       (match
         ((not (null? operands)) (first operands))
-        ((null? gitdir) "origin")
-        (#t (or (git-config-get gitdir section "remote") "origin"))))
-    (def upstream (if (null? gitdir) () (git-config-get gitdir section "merge")))
+        (#t (or (tracked "remote") "origin"))))
+    (def upstream (tracked "merge"))
     ; A remote's configured url, or the url or path named outright, which
     ; has no tracking ref to move.
-    (def configured (if (null? gitdir) () (git-config-get gitdir (Str8 append "remote \"" remote "\"") "url")))
+    (def configured (if (null? gitdir) () (git-config-value gitdir (Str8 append "remote." remote ".url"))))
     (def url (if (null? configured) (if (null? operands) () remote) configured))
     ; The branch named after the repository, or ().
     (def branch (if (or (null? operands) (null? (rest operands))) () (first (rest operands))))
