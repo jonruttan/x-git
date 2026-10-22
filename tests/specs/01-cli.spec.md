@@ -14,10 +14,11 @@ refusals and statuses are git's own.
 ```
 ---
 ```output
-Usage: git [-v | --version] [-C <path>] <command> [<args>]
+Usage: git [-v | --version] [-C <path>] [-c <name>=<value>] <command> [<args>]
 
-	-v,--version	Print the version
-	-C <path>	Run as if started in <path>
+	-v,--version		Print the version
+	-C <path>		Run as if started in <path>
+	-c <name>=<value>	Set a configuration value for this command
 ```
 
 ### the version, by option or by command, status 0
@@ -61,13 +62,14 @@ Usage: git [-v | --version] [-C <path>] <command> [<args>]
 ---
     ('err "git: 'frob' is not a git command. See 'git --help'.\n" 1)
 
-### -C and the command's arguments ride the plan
+### -C, -c and the command's arguments ride the plan
 
 ```git
-(write (git-plan (list "-C" "/somewhere" "cat-file" "-t" "abc")))
+(write (list (git-plan (list "-C" "/somewhere" "cat-file" "-t" "abc"))
+             (git-plan (list "-c" "a.b=1" "-c" "c.d=2" "status"))))
 ```
 ---
-    ('run "/somewhere" "cat-file" ("-t" "abc"))
+    (('run "/somewhere" "cat-file" ("-t" "abc") ()) ('run () "status" () ("a.b=1" "c.d=2")))
 
 ## main
 
