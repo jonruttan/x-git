@@ -99,6 +99,11 @@ the kernel and x are installed (x-os).
   them; thin packs both ways: a push or a served fetch builds on what
   the far end has, and a thin pack that arrives is completed with its
   bases from this repository, as `index-pack --fix-thin` completes one
+- `reset [--soft | --mixed | --hard] [-q] [<commit>] [[--] <pathspec>...]`:
+  HEAD's branch (or HEAD, detached) moved and `ORIG_HEAD` left; the index
+  set too (mixed) or the index and the working directory (hard), a merge
+  in progress given up; with paths, their index entries alone.  git's
+  report of the changes left unstaged, or of where a hard reset lands
 - `rm [-r] [--cached] [-f] <pathspec>...`, `mv <source>... <destination>`;
   `.gitignore`, `.git/info/exclude` and `core.excludesFile` as
   gitignore(5) reads them
@@ -151,6 +156,7 @@ DIR holds this tree as `git` and x-ssh as `ssh`.
     git/wire.x        a git service on two pipes, spoken in pkt-lines
     git/serve.x       upload-pack and receive-pack, the services
     git/merge.x       merge and pull
+    git/reset.x       reset
     git/threeway.x    the merge base, files and trees merged three ways
     git/renames.x     renames, as git finds them
     git/paths.x       rm, mv

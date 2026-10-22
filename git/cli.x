@@ -34,6 +34,7 @@
 (import git/merge git-merge git-pull)
 (import git/paths git-rm git-mv)
 (import git/config git-config git-config-parameters)
+(import git/reset git-reset)
 
 (def %byte-len (prim-ref (lit str) (lit byte-len)))
 
@@ -76,7 +77,8 @@
         (pair "receive-pack" git-receive-pack)
         (pair "rm" git-rm)
         (pair "mv" git-mv)
-        (pair "config" git-config)))
+        (pair "config" git-config)
+        (pair "reset" git-reset)))
 
 ; The command a name runs, or ().
 (def %command
