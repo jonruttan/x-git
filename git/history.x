@@ -170,6 +170,11 @@
     (def tail (Str8 split " " (Str8 trim (Str8 sub (%add gt 1) (%sub (Str8 length line) (%add gt 1)) line))))
     (list who (%str->number (first tail) 10) (first (rest tail)))))
 
+; An author or committer line's date as git prints it by default, for the
+; commands that report a commit they made.
+(def git-ident-date
+  (fn (_ line) (let ((id (%ident line))) (%git-date (first (rest id)) (first (rest (rest id)))))))
+
 ; A commit's message: the text after the header's blank line, trailing
 ; blank lines dropped.
 (def %message
@@ -445,4 +450,4 @@
                        (#t (self (rest ns) (pair (git-object-text (git-object-read gitdir sha)) acc) #f)))))))
              (List map pair names shas) () #f))))))))
 
-(provide git/history git-ls-tree git-ls-tree-options git-log git-log-options git-show git-show-options)
+(provide git/history git-ls-tree git-ls-tree-options git-log git-log-options git-show git-show-options git-ident-date)

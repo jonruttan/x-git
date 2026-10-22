@@ -143,34 +143,46 @@
     (def write-blob (fn (_ text) (git-object-write! gitdir "blob" text 0 (%str-byte-len text))))
     (def base-files (git-merge-base-files gitdir head theirs write-blob))
     (if (eq? base-files #f) (list "fatal: refusing to merge unrelated histories\n" "" 128)
-      (let ((ours-files (git-tree-flat gitdir (git-tree-of gitdir head) ""))
-            (r (git-merge-trees
-                 base-files
-                 (git-tree-flat gitdir (git-tree-of gitdir head) "")
-                 (git-tree-flat gitdir (git-tree-of gitdir theirs) "")
-                 "HEAD" name2 (%dir-renames-mode gitdir) 7 gitdir write-blob)))
-        (let ((results (first r)) (messages (first (rest r))) (stopped? (first (rest (rest r)))))
-          (let ((ours-of (fn (_ path) (List find (fn (_ f) (str=? (first f) path)) ours-files))))
-            ; the paths the merge changes from what HEAD has
-            (let ((touched
-                    (List map first
-                      (List filter
-                        (fn (_ x)
-                          (let ((o (ours-of (first x))))
-                            (match
-                              ((eq? (first (rest x)) (lit gone)) (not (null? o)))
-                              ((eq? (first (rest x)) (lit clean))
-                                (or (null? o) (not (str=? (first (rest (rest (rest x)))) (first (rest (rest o)))))
-                                    (not (str=? (first (rest (rest x))) (first (rest o))))))
-                              (#t #t))))
-                        results))))
-              (let ((blocked (List filter (fn (_ p) (List any? (fn (_ t) (str=? t p)) touched)) (%dirty wd gitdir))))
-                (if (not (null? blocked))
-                  (list (Str8 append "error: Your local changes to the following files would be overwritten by merge:\n"
-                          (Str8 join "" (List map (fn (_ p) (Str8 append "\t" p "\n")) (List sort (fn (_ a b) (Str8 <? a b)) blocked)))
-                          "Please commit your changes or stash them before you merge.\nAborting\nMerge with strategy ort failed.\n")
-                        "" 2)
-                  (%apply-merge! wd gitdir head theirs results messages stopped? touched message ours-of))))))))))
+      (let ((placed (git-merge-place! wd gitdir head base-files (git-tree-flat gitdir (git-tree-of gitdir theirs) "") name2)))
+        (if (eq? (first placed) (lit blocked))
+          (list (Str8 append "error: Your local changes to the following files would be overwritten by merge:\n"
+                  (Str8 join "" (List map (fn (_ p) (Str8 append "\t" p "\n")) (rest placed)))
+                  "Please commit your changes or stash them before you merge.\nAborting\nMerge with strategy ort failed.\n")
+                "" 2)
+          (%conclude-merge! gitdir head theirs placed message))))))
+
+; HEAD's files and theirs merged from base's into the working directory
+; and index, as merge and revert merge them: (placed RESULTS MESSAGES
+; CONFLICTED STOPPED?), the conflicts marked in the files and staged,
+; ORIG_HEAD left at head; or (blocked PATH ...) and nothing touched, when
+; the working directory's own changes are in the way.  name2 is what the
+; conflict markers call theirs.
+(def git-merge-place!
+  (fn (_ wd gitdir head base-files theirs-files name2)
+    (def write-blob (fn (_ text) (git-object-write! gitdir "blob" text 0 (%str-byte-len text))))
+    (def ours-files (git-tree-flat gitdir (git-tree-of gitdir head) ""))
+    (def r (git-merge-trees base-files ours-files theirs-files "HEAD" name2 (%dir-renames-mode gitdir) 7 gitdir write-blob))
+    (def results (first r))
+    (def ours-of (fn (_ path) (List find (fn (_ f) (str=? (first f) path)) ours-files)))
+    ; the paths the merge changes from what HEAD has
+    (def touched
+      (List map first
+        (List filter
+          (fn (_ x)
+            (let ((o (ours-of (first x))))
+              (match
+                ((eq? (first (rest x)) (lit gone)) (not (null? o)))
+                ((eq? (first (rest x)) (lit clean))
+                  (or (null? o) (not (str=? (first (rest (rest (rest x)))) (first (rest (rest o)))))
+                      (not (str=? (first (rest (rest x))) (first (rest o))))))
+                (#t #t))))
+          results)))
+    (def blocked (List filter (fn (_ p) (List any? (fn (_ t) (str=? t p)) touched)) (%dirty wd gitdir)))
+    (if (not (null? blocked)) (pair (lit blocked) (List sort (fn (_ a b) (Str8 <? a b)) blocked))
+      (do (%place! wd gitdir head results touched)
+          (list (lit placed) results (first (rest r))
+                (List map first (List filter (fn (_ x) (eq? (first (rest x)) (lit conflict))) results))
+                (first (rest (rest r))))))))
 
 ; merge.directoryRenames: "conflict" when unset, as git takes it, and
 ; git's other spellings of true and false read as those.
@@ -184,10 +196,9 @@
       (#t "conflict"))))
 
 ; The merge's results put in place: each touched path written or
-; removed, the index set, and a merge commit made, or the conflicts left
-; -- left too when the merge stopped with none.
-(def %apply-merge!
-  (fn (_ wd gitdir head theirs results messages stopped? touched message ours-of)
+; removed, the index set, ORIG_HEAD left at head.
+(def %place!
+  (fn (_ wd gitdir head results touched)
     (def touched? (fn (_ p) (List any? (fn (_ t) (str=? t p)) touched)))
     (def kept (List filter (fn (_ e) (not (touched? (first e)))) (git-read-entries gitdir)))
     (def fresh
@@ -209,9 +220,16 @@
                     (List map (fn (_ s) (list path (%mode-number (first (rest s))) (first (rest (rest s))) 0 0 (first s))) stages))))))
         results))
     (git-index-write! gitdir (List append kept fresh))
-    (File write-all (Str8 append gitdir "/ORIG_HEAD") (Str8 append head "\n"))
-    (def conflicted (List map first (List filter (fn (_ x) (eq? (first (rest x)) (lit conflict))) results)))
-    (def said (Str8 join "" messages))
+    (File write-all (Str8 append gitdir "/ORIG_HEAD") (Str8 append head "\n"))))
+
+; A merge placed: a merge commit made, or the conflicts left with
+; MERGE_HEAD -- left too when the merge stopped with none.
+(def %conclude-merge!
+  (fn (_ gitdir head theirs placed message)
+    (def results (first (rest placed)))
+    (def conflicted (first (rest (rest (rest placed)))))
+    (def stopped? (first (rest (rest (rest (rest placed))))))
+    (def said (Str8 join "" (first (rest (rest placed)))))
     (if (or stopped? (not (null? conflicted)))
       (do (File write-all (Str8 append gitdir "/MERGE_HEAD") (Str8 append theirs "\n"))
           (File write-all (Str8 append gitdir "/MERGE_MODE") "")
@@ -237,17 +255,24 @@
   (fn (_ wd gitdir)
     (if (not (File exists? (Str8 append gitdir "/MERGE_HEAD")))
       (list "fatal: There is no merge to abort (MERGE_HEAD missing).\n" "" 128)
-      (let ((files (git-tree-flat gitdir (git-tree-of gitdir "HEAD") "")))
-        (do (List for-each
-              (fn (_ e) (unless (List any? (fn (_ f) (str=? (first f) (first e))) files) (git-remove-file! wd (first e))))
-              (git-read-entries gitdir))
-            (git-index-write! gitdir
-              (List map
-                (fn (_ f) (do (git-write-blob! wd gitdir (first f) (first (rest (rest f))) (first (rest f)))
-                              (git-entry-of wd (first f) (first (rest (rest f))) (first (rest f)))))
-                files))
-            (git-merge-state-clear! gitdir)
-            (list "" "" 0))))))
+      (do (git-restore-head! wd gitdir)
+          (git-merge-state-clear! gitdir)
+          (list "" "" 0)))))
+
+; The working directory and index set back to HEAD's files: what the
+; index holds and HEAD lacks taken out, HEAD's written.  For merge's and
+; revert's --abort.
+(def git-restore-head!
+  (fn (_ wd gitdir)
+    (def files (git-tree-flat gitdir (git-tree-of gitdir "HEAD") ""))
+    (List for-each
+      (fn (_ e) (unless (List any? (fn (_ f) (str=? (first f) (first e))) files) (git-remove-file! wd (first e))))
+      (git-read-entries gitdir))
+    (git-index-write! gitdir
+      (List map
+        (fn (_ f) (do (git-write-blob! wd gitdir (first f) (first (rest (rest f))) (first (rest f)))
+                      (git-entry-of wd (first f) (first (rest (rest f))) (first (rest f)))))
+        files))))
 
 ; (ERR OUT STATUS) as a command's answer: the error stream's text, then
 ; standard output's after it.
@@ -356,4 +381,4 @@
                     (if (= (Str8 length err) 0) (list (lit out) (first (rest r)) (first (rest (rest r))))
                       (list (lit err) err (first (rest (rest r))) (first (rest r)))))))))))))))
 
-(provide git/merge git-merge git-merge-options git-pull git-pull-options)
+(provide git/merge git-merge git-merge-options git-pull git-pull-options git-merge-place! git-restore-head!)

@@ -35,6 +35,7 @@
 (import git/paths git-rm git-mv)
 (import git/config git-config git-config-parameters)
 (import git/reset git-reset)
+(import git/revert git-revert)
 
 (def %byte-len (prim-ref (lit str) (lit byte-len)))
 
@@ -79,7 +80,8 @@
         (pair "rm" git-rm)
         (pair "mv" git-mv)
         (pair "config" git-config)
-        (pair "reset" git-reset)))
+        (pair "reset" git-reset)
+        (pair "revert" git-revert)))
 
 ; The command a name runs, or ().
 (def %command
