@@ -88,11 +88,15 @@ the kernel and x are installed (x-os).
   diffstat (renames as `OLD => NEW`) and messages; a change of the working
   directory's own in the way refused in git's words; pull merges diverged
   histories when `--no-rebase` or `pull.rebase=false` says to
-- `push [<repository> [<branch>]]`: one branch, by path or by url to
-  `git-receive-pack` with the pack of what the remote lacks and its
-  report read back; refused as git refuses a push that is not a
-  fast-forward, one whose remote has work this repository has not seen,
-  or one into a non-bare remote's checked-out branch
+- `push [-f] [-d] [--tags] [-u] [<repository> [<refspec>...]]`: refspecs
+  as git takes them (`src`, `src:dst`, `:dst` to delete, `+src:dst` to
+  force, a revision to a full ref), by path or by url to
+  `git-receive-pack`, every update in one batch with the pack of what the
+  remote lacks and its report read back; a ref refused as git refuses it
+  -- not a fast-forward, work the remote has that this repository has
+  not seen, a tag that exists, the checked-out branch of a non-bare
+  remote -- unless forced; git's line for each ref and its hint; the
+  tracking refs moved, and with `-u` each branch's upstream recorded
 - `ls-remote [<repository>]`: what the remote's service advertises
 - `upload-pack <directory>` and `receive-pack <directory>`: the services
   git runs on the far end of a fetch or a push, on standard input and
