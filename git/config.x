@@ -651,4 +651,10 @@
     (Str8 join " "
       (List map (fn (_ s) (Str8 append "'" (Str8 replace "'" "'\\''" s) "'")) settings))))
 
-(provide git/config git-config-value git-config git-config-options git-config-parameters)
+; A name set in the repository's file, as `git config NAME VALUE` sets
+; it, for the commands that record what they did (push -u).
+(def git-config-set!
+  (fn (_ gitdir name value)
+    (%change! (Str8 append gitdir "/config") (list (lit set) (%name name) value #f #f ""))))
+
+(provide git/config git-config-value git-config git-config-options git-config-parameters git-config-set!)

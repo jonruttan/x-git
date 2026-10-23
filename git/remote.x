@@ -30,9 +30,9 @@
 (import x/sys/file File)
 (import git/objects git-object-read git-object-text git-tree-entries)
 (import git/packs git-pack-has? git-pack-write! git-pack-bytes git-pack-index!)
-(import git/refs git-ref-read)
-(import git/repo git-refs-under)
-(import git/config git-config-value)
+(import git/refs git-ref-read git-rev-parse)
+(import git/repo git-refs-under git-unpack-ref!)
+(import git/config git-config-value git-config-set!)
 (import git/clone git-source-gitdir)
 (import git/protocol proto-url? proto-connect proto-advertise proto-fetch! proto-push! proto-remote-lines proto-cannot-read)
 (import git/wire wire-close! wire-flush!)
@@ -440,7 +440,12 @@
 ; --- push ---
 
 (def git-push-options
-  (Opts declare "git push" "[<repository> [<branch>]]" () ()))
+  (Opts declare "git push" "[-f] [-d] [--tags] [-u] [<repository> [<refspec>...]]" ()
+    (list
+      (Opts flag "-f" "--force" "Update refs that are not fast-forwards")
+      (Opts flag "-d" "--delete" "Delete the refs named")
+      (Opts flag "--tags" "Push every tag too")
+      (Opts flag "-u" "--set-upstream" "Track each branch pushed"))))
 
 (def %hint (fn (_ lines) (Str8 join "" (List map (fn (_ l) (Str8 append "hint: " l "\n")) lines))))
 
@@ -485,11 +490,8 @@
 
 (def %failed (fn (_ url) (Str8 append "error: failed to push some refs to '" url "'\n")))
 
-(def %rejected
-  (fn (_ url src dst msg advice)
-    (list (lit err)
-      (Str8 append "To " url "\n" (%report-line "!" "[rejected]" src 0 dst msg) (%failed url) (%hint advice))
-      1)))
+(def %advice-already-exists
+  (list "Updates were rejected because the tag already exists in the remote."))
 
 (def %no-upstream
   (fn (_ branch remote)
@@ -504,27 +506,63 @@
 ;
 ; A destination is what push needs of a remote, however it is reached:
 ; (REFS DELIVER! DONE!) -- REFS its refs as (NAME . SHA), DELIVER! a
-; function of (OLD NEW NAME) that sends the objects behind NEW and asks
-; for the ref to move, answering (REMOTE . REASON): the remote's words as
-; git prints them, and () when the ref moved or why it did not; DONE!
+; function of the updates, (OLD NEW NAME) each, OLD () for a ref the
+; remote lacks and NEW %ZERO to delete one, that sends the objects behind
+; the new tips and asks for the refs to move, answering (REMOTE .
+; RESULTS): the remote's words as git prints them, and for each name
+; (NAME . ()) when it moved or (NAME . REASON) when it did not; DONE!
 ; what to call when push sends nothing after all.
 
 (def %ZERO "0000000000000000000000000000000000000000")
 
+; What receive-pack says, on band 2, when a non-bare remote's checked-out
+; branch would be deleted.
+(def %deny-delete-current
+  (fn (_ name)
+    (Str8 append
+      "error: By default, deleting the current branch is denied, because the next\n"
+      "'git clone' won't result in any file checked out, causing confusion.\n"
+      "\n"
+      "You can set 'receive.denyDeleteCurrent' configuration variable to\n"
+      "'warn' or 'ignore' in the remote repository to allow deleting the\n"
+      "current branch, with or without a warning message.\n"
+      "\n"
+      "To squelch this message, you can set it to 'refuse'.\n"
+      "error: refusing to delete the current branch: " name "\n")))
+
+; A ref deleted, loose and packed.
+(def %delete-ref!
+  (fn (_ gitdir name)
+    (def path (Str8 append gitdir "/" name))
+    (when (File exists? path) (File unlink path))
+    (git-unpack-ref! gitdir name)))
+
 ; A repository on a path: its refs read from its files, the objects it
-; lacks written as a pack, the ref written -- unless it is the branch a
-; non-bare repository has checked out, refused as receive-pack refuses
-; it, after the objects landed.
+; lacks written as a pack, the refs written or deleted -- unless it is
+; the branch a non-bare repository has checked out, refused as
+; receive-pack refuses it, after the objects landed.
 (def %path-destination
   (fn (_ gitdir dgit)
     (def bare? (not (Str8 ends? "/.git" dgit)))
     (list (List map (fn (_ n) (pair n (git-ref-read dgit n))) (%ref-names dgit "refs/"))
-          (fn (_ old new name)
-            (def dst (%strip-heads name))
-            (%send! gitdir dgit (list new))
-            (if (and (not bare?) (str=? (or (%current-branch dgit) "") dst))
-              (pair (proto-remote-lines (%deny-current dst)) "branch is currently checked out")
-              (do (%write-ref! dgit name new) (pair "" ()))))
+          (fn (_ updates)
+            (def tips (List filter (fn (_ s) (not (str=? s %ZERO))) (List map (fn (_ u) (first (rest u))) updates)))
+            (unless (null? tips) (%send! gitdir dgit tips))
+            (def checked-out (if bare? () (%current-branch dgit)))
+            (def done
+              (List map
+                (fn (_ u)
+                  (def new (first (rest u)))
+                  (def name (first (rest (rest u))))
+                  (def current? (and (not (null? checked-out)) (str=? name (Str8 append "refs/heads/" checked-out))))
+                  (match
+                    ((and (str=? new %ZERO) current?)
+                      (list (proto-remote-lines (%deny-delete-current name)) name "deletion of the current branch prohibited"))
+                    ((str=? new %ZERO) (do (%delete-ref! dgit name) (list "" name)))
+                    (current? (list (proto-remote-lines (%deny-current checked-out)) name "branch is currently checked out"))
+                    (#t (do (%write-ref! dgit name new) (list "" name)))))
+                updates))
+            (pair (Str8 join "" (List map first done)) (List map (fn (_ d) (pair (first (rest d)) (if (null? (rest (rest d))) () (first (rest (rest d)))))) done)))
           (fn (_) ()))))
 
 (def %member? (fn (_ s l) (List any? (fn (_ x) (str=? x s)) l)))
@@ -592,23 +630,32 @@
     (if (null? adv) (do (wire-close! w) ())
       (let ((refs (List filter (fn (_ e) (not (Str8 ends? "^{}" (first e)))) (first adv))))
         (list refs
-              (fn (_ old new name)
+              (fn (_ updates)
                 (def stops
                   (List map (fn (_ sha) (%peel gitdir sha))
                     (List filter (fn (_ sha) (%has? gitdir sha)) (List map rest refs))))
-                ; thin, as git push sends: receive-pack completes it
-                (def objs (%objects-to-send gitdir (list new) stops))
-                (def r (proto-push! w (list (list (if (null? old) %ZERO old) new name))
-                         (git-pack-bytes (first objs) (rest objs)
-                           (List any? (fn (_ c) (str=? c "ofs-delta")) (first (rest adv))))))
+                (def tips (List filter (fn (_ s) (not (str=? s %ZERO))) (List map (fn (_ u) (first (rest u))) updates)))
+                ; thin, as git push sends: receive-pack completes it; no
+                ; pack when every update deletes
+                (def pack
+                  (if (null? tips) ()
+                    (let ((objs (%objects-to-send gitdir tips stops)))
+                      (git-pack-bytes (first objs) (rest objs) (List any? (fn (_ c) (str=? c "ofs-delta")) (first (rest adv)))))))
+                (def r (proto-push! w (List map (fn (_ u) (list (if (null? (first u)) %ZERO (first u)) (first (rest u)) (first (rest (rest u))))) updates)
+                         pack))
                 (wire-close! w)
                 (def unpack (first (rest r)))
-                (def hit (List find (fn (_ e) (str=? (first e) name)) (first (rest (rest r)))))
                 (pair (first r)
-                      (match
-                        ((not (str=? unpack "ok")) (Str8 append "unpacker error: " unpack))
-                        ((null? hit) "no report")
-                        (#t (rest hit)))))
+                      (List map
+                        (fn (_ u)
+                          (def name (first (rest (rest u))))
+                          (def hit (List find (fn (_ e) (str=? (first e) name)) (first (rest (rest r)))))
+                          (pair name
+                                (match
+                                  ((and (not (null? pack)) (not (str=? unpack "ok"))) (Str8 append "unpacker error: " unpack))
+                                  ((null? hit) "no report")
+                                  (#t (rest hit)))))
+                        updates)))
               (fn (_) (do (wire-flush! w) (wire-close! w))))))))
 
 ; The destination a remote's url names: by wire for a url, by path for
@@ -620,38 +667,171 @@
       ((proto-url? url) (%wire-destination gitdir url))
       (#t (let ((dgit (%remote-gitdir wd url))) (if (null? dgit) () (%path-destination gitdir dgit)))))))
 
-; One branch sent: src here to dst there; remote the name whose
-; tracking ref follows, or () for a url or path named outright.
-(def %push-branch!
-  (fn (_ gitdir dest url remote src dst current?)
-    (def new (git-ref-read gitdir (Str8 append "refs/heads/" src)))
-    (def name (Str8 append "refs/heads/" dst))
-    (def old (%lookup name (first dest)))
+; --- refspecs ---
+
+; A push refspec taken apart: (FORCE? SRC DST), SRC "" to delete, DST ()
+; when the refspec names only a source.
+(def %refspec
+  (fn (_ spec force?)
+    (def plus? (Str8 starts? "+" spec))
+    (def s (if plus? (Str8 sub 1 (%sub (Str8 length spec) 1) spec) spec))
+    (def colon (Str8 index-of ":" s))
+    (if (null? colon) (list (or plus? force?) s ())
+      (list (or plus? force?) (Str8 sub 0 colon s) (Str8 sub (%add colon 1) (%sub (Str8 length s) (%add colon 1)) s)))))
+
+; What a source names here: (REF . SHA), REF the full ref, or () for a
+; revision that is no ref; () when nothing answers.  A short name is
+; looked for as git looks: a tag, a branch, a remote-tracking branch.
+(def %push-source
+  (fn (_ gitdir current src)
+    (def as-ref (fn (_ r) (let ((s (git-ref-read gitdir r))) (if (null? s) () (pair r s)))))
+    (match
+      ((and (str=? src "HEAD") (not (null? current))) (as-ref (Str8 append "refs/heads/" current)))
+      ((Str8 starts? "refs/" src) (as-ref src))
+      (#t
+        (let ((hit (List find (fn (_ r) (not (null? (git-ref-read gitdir r))))
+                     (list (Str8 append "refs/tags/" src) (Str8 append "refs/heads/" src) (Str8 append "refs/remotes/" src)))))
+          (if (not (null? hit)) (as-ref hit)
+            (let ((s (git-rev-parse gitdir src))) (if (null? s) () (pair () s)))))))))
+
+; The ref a destination names there: a full name as it is; a short one
+; the remote's branch or tag of that name, else a tag when the source is
+; one, else a branch.
+(def %push-target
+  (fn (_ given src-ref remote-refs)
+    (def has? (fn (_ r) (not (null? (%lookup r remote-refs)))))
+    (match
+      ((Str8 starts? "refs/" given) given)
+      ((has? (Str8 append "refs/heads/" given)) (Str8 append "refs/heads/" given))
+      ((has? (Str8 append "refs/tags/" given)) (Str8 append "refs/tags/" given))
+      ((and (not (null? src-ref)) (Str8 starts? "refs/tags/" src-ref)) (Str8 append "refs/tags/" given))
+      (#t (Str8 append "refs/heads/" given)))))
+
+; A ref's name as push reports it: a branch's or a tag's short name.
+(def %short
+  (fn (_ ref)
+    (match
+      ((Str8 starts? "refs/heads/" ref) (Str8 sub 11 (%sub (Str8 length ref) 11) ref))
+      ((Str8 starts? "refs/tags/" ref) (Str8 sub 10 (%sub (Str8 length ref) 10) ref))
+      (#t ref))))
+
+; --- push ---
+;
+; Each update is judged as git judges it before anything is sent: up to
+; date, or a delete, a new ref, a fast-forward, or (forced, or refused) a
+; ref that would lose commits, one the remote has that is not here, a tag
+; that exists.  What is to be sent goes in one batch; then each ref's line
+; is reported in the order given, the refused and the remote's refusals
+; with them, and one hint for what was refused.
+
+(def %ref-kind
+  (fn (_ ref)
+    (match ((Str8 starts? "refs/heads/" ref) "[new branch]") ((Str8 starts? "refs/tags/" ref) "[new tag]") (#t "[new reference]"))))
+
+; An update judged: (VERDICT UPDATE), UPDATE (SHOWN DST OLD NEW SRC-REF),
+; VERDICT one of uptodate, (rejected REASON KIND), delete, new, ff, forced.
+(def %judge
+  (fn (_ gitdir u force?)
+    (def dst (first (rest u)))
+    (def old (first (rest (rest u))))
+    (def new (first (rest (rest (rest u)))))
+    (match
+      ((str=? new %ZERO) (if (null? old) (list (lit missing)) (list (lit delete))))
+      ((null? old) (list (lit new)))
+      ((str=? old new) (list (lit uptodate)))
+      ; a tag moved is always a forced update
+      (force? (if (and (not (Str8 starts? "refs/tags/" dst)) (%has? gitdir old) (%ancestor? gitdir old new)) (list (lit ff)) (list (lit forced))))
+      ((Str8 starts? "refs/tags/" dst) (list (lit rejected) "already exists" (lit exists)))
+      ((not (%has? gitdir old)) (list (lit rejected) "fetch first" (lit fetch-first)))
+      ((not (%ancestor? gitdir old new)) (list (lit rejected) "non-fast-forward" (lit non-ff)))
+      (#t (list (lit ff))))))
+
+(def %push-line
+  (fn (_ verdict u)
+    (def shown (first u))
+    (def dst (%short (first (rest u))))
+    (def old (first (rest (rest u))))
+    (def new (first (rest (rest (rest u)))))
+    (match
+      ((eq? verdict (lit delete)) (Str8 append " - " (Str8 pad-right 17 #\space "[deleted]") " " dst "\n"))
+      ((eq? verdict (lit new)) (%report-line "*" (%ref-kind (first (rest u))) shown 0 dst ()))
+      ((eq? verdict (lit forced))
+        (%report-line "+" (Str8 append (%abbrev old) "..." (%abbrev new)) shown 0 dst "forced update"))
+      (#t (%report-line " " (Str8 append (%abbrev old) ".." (%abbrev new)) shown 0 dst ())))))
+
+; The updates pushed to dest: what git prints, (STREAM TEXT STATUS
+; STDOUT), STDOUT what -u says.  remote is the name whose tracking refs
+; follow, or () for a url or path named outright; upstream? is -u.
+(def %push-updates!
+  (fn (_ gitdir dest url remote updates current upstream?)
     (def deliver! (first (rest dest)))
     (def done! (first (rest (rest dest))))
-    (match
-      ((null? new)
-        (do (done!) (list (lit err) (Str8 append "error: src refspec " src " does not match any\n" (%failed url)) 1)))
-      ((and (not (null? old)) (str=? old new)) (do (done!) (list (lit err) "Everything up-to-date\n" 0)))
-      ((and (not (null? old)) (not (%has? gitdir old)))
-        (do (done!) (%rejected url src dst "fetch first" %advice-fetch-first)))
-      ((and (not (null? old)) (not (%ancestor? gitdir old new)))
-        (do (done!) (%rejected url src dst "non-fast-forward" (if current? %advice-pull-before-push %advice-checkout-pull-push))))
-      (#t
-        (let ((r (deliver! old new name)))
-          (if (null? (rest r))
-            (do (unless (null? remote) (%write-ref! gitdir (Str8 append "refs/remotes/" remote "/" dst) new))
-                (list (lit err)
-                  (Str8 append (first r) "To " url "\n"
-                    (if (null? old)
-                      (%report-line "*" "[new branch]" src 0 dst ())
-                      (%report-line " " (Str8 append (%abbrev old) ".." (%abbrev new)) src 0 dst ())))
-                  0))
-            (list (lit err)
-              (Str8 append (first r) "To " url "\n"
-                (%report-line "!" "[remote rejected]" src 0 dst (rest r))
-                (%failed url))
-              1)))))))
+    (def judged (List map (fn (_ u) (pair (%judge gitdir (List take 5 u) (first (rest (rest (rest (rest (rest u))))))) (List take 5 u))) updates))
+    (def verdict (fn (_ j) (first (first j))))
+    (def to-send (List filter (fn (_ j) (List any? (fn (_ v) (eq? (verdict j) v)) (list (lit delete) (lit new) (lit ff) (lit forced)))) judged))
+    (def missing (List filter (fn (_ j) (eq? (verdict j) (lit missing))) judged))
+    (def refused (List filter (fn (_ j) (eq? (verdict j) (lit rejected))) judged))
+    (def r (if (null? to-send) (do (done!) (pair "" ()))
+             (deliver! (List map (fn (_ j) (let ((u (rest j))) (list (first (rest (rest u))) (first (rest (rest (rest u)))) (first (rest u))))) to-send))))
+    (def outcome (fn (_ j) (let ((hit (List find (fn (_ x) (str=? (first x) (first (rest (rest j))))) (rest r)))) (if (null? hit) () (rest hit)))))
+    (def moved (List filter (fn (_ j) (null? (outcome j))) to-send))
+    (def lines
+      (Str8 join ""
+        (List map
+          (fn (_ j)
+            (def u (rest j))
+            (match
+              ((eq? (verdict j) (lit rejected)) (%report-line "!" "[rejected]" (first u) 0 (%short (first (rest u))) (first (rest (first j)))))
+              ((List any? (fn (_ s) (eq? s j)) to-send)
+                (if (null? (outcome j)) (%push-line (verdict j) u)
+                  (%report-line "!" "[remote rejected]" (first u) 0 (%short (first (rest u))) (outcome j))))
+              (#t "")))
+          judged)))
+    (def failed? (or (not (null? missing)) (not (null? refused)) (< (List length moved) (List length to-send))))
+    (def kinds (List map (fn (_ j) (first (rest (rest (first j))))) refused))
+    (def head-ref (if (null? current) "" (Str8 append "refs/heads/" current)))
+    (def hint
+      (match
+        ((List any? (fn (_ j) (and (eq? (first (rest (rest (first j)))) (lit non-ff)) (str=? (or (first (rest (rest (rest (rest (rest j)))))) "") head-ref))) refused)
+          %advice-pull-before-push)
+        ((List any? (fn (_ k) (eq? k (lit non-ff))) kinds) %advice-checkout-pull-push)
+        ((List any? (fn (_ k) (eq? k (lit exists))) kinds) %advice-already-exists)
+        ((List any? (fn (_ k) (eq? k (lit fetch-first))) kinds) %advice-fetch-first)
+        (#t ())))
+    ; the tracking refs follow what moved; -u records each branch pushed
+    (unless (null? remote)
+      (List for-each
+        (fn (_ j)
+          (def dst (first (rest (rest j))))
+          (when (Str8 starts? "refs/heads/" dst)
+            (let ((tracking (Str8 append "refs/remotes/" remote "/" (%short dst))))
+              (if (str=? (first (rest (rest (rest (rest j))))) %ZERO) (%delete-ref! gitdir tracking)
+                (%write-ref! gitdir tracking (first (rest (rest (rest (rest j))))))))))
+        moved))
+    (def tracked
+      (if (or (not upstream?) (null? remote)) ""
+        (Str8 join ""
+          (List flat-map
+            (fn (_ j)
+              (def src-ref (first (rest (rest (rest (rest (rest j)))))))
+              (def dst (first (rest (rest j))))
+              (if (and (not (null? src-ref)) (Str8 starts? "refs/heads/" src-ref) (Str8 starts? "refs/heads/" dst)
+                       (not (str=? (first (rest (rest (rest (rest j))))) %ZERO)))
+                (do (git-config-set! gitdir (Str8 append "branch." (%short src-ref) ".remote") remote)
+                    (git-config-set! gitdir (Str8 append "branch." (%short src-ref) ".merge") dst)
+                    (list (Str8 append "branch '" (%short src-ref) "' set up to track '" remote "/" (%short dst) "'.\n")))
+                ()))
+            moved))))
+    (def errors
+      (Str8 join "" (List map (fn (_ j) (Str8 append "error: unable to delete '" (first (rest j)) "': remote ref does not exist\n")) missing)))
+    (if (and (null? to-send) (null? refused) (null? missing))
+      (list (lit err) "Everything up-to-date\n" 0)
+      (list (lit err)
+        (Str8 append errors (first r)
+          (if (= (Str8 length lines) 0) "" (Str8 append "To " url "\n" lines))
+          (if failed? (Str8 append (%failed url) (if (null? hint) "" (%hint hint))) ""))
+        (if failed? 1 0)
+        tracked))))
 
 (def git-push
   (fn (_ wd gitdir ops)
@@ -668,24 +848,53 @@
     ; has no tracking ref to move.
     (def configured (if (null? gitdir) () (git-config-value gitdir (Str8 append "remote." remote ".url"))))
     (def url (if (null? configured) (if (null? operands) () remote) configured))
-    ; The branch named after the repository, or ().
-    (def branch (if (or (null? operands) (null? (rest operands))) () (first (rest operands))))
+    (def force? (Opts on? o "-f"))
+    ; the refspecs named after the repository; -d makes each a delete,
+    ; --tags adds every tag
+    (def named (if (null? operands) () (rest operands)))
+    (def specs
+      (List append
+        (List map (fn (_ s) (%refspec (if (Opts on? o "-d") (Str8 append ":" s) s) force?)) named)
+        (if (Opts on? o "--tags") (List map (fn (_ t) (%refspec (Str8 append "refs/tags/" t) force?)) (git-refs-under gitdir "refs/tags/")) ())))
     ; The remote reached only once push has something to say to it.
     (def push!
-      (fn (_ src dst current?)
+      (fn (_ specs)
         (def dest (%destination wd gitdir url))
         (match
           ((and (null? dest) (proto-url? url)) (%not-read))
           ((null? dest) (%no-remote remote))
-          (#t (%push-branch! gitdir dest url (if (null? configured) () remote) src dst current?)))))
+          (#t
+            (let ((sources (List map (fn (_ s) (if (= (Str8 length (first (rest s))) 0) () (%push-source gitdir current (first (rest s))))) specs)))
+              (let ((unknown (List find (fn (_ p) (and (> (Str8 length (first (rest (first p)))) 0) (null? (rest p)))) (List map pair specs sources))))
+                (if (not (null? unknown))
+                  (do ((first (rest (rest dest))))
+                      (list (lit err) (Str8 append "error: src refspec " (first (rest (first unknown))) " does not match any\n" (%failed url)) 1))
+                  ; each update (SHOWN DST OLD NEW SRC-REF FORCE?)
+                  (%push-updates! gitdir dest url (if (null? configured) () remote)
+                    (List map
+                      (fn (_ s src)
+                        (def deleting? (= (Str8 length (first (rest s))) 0))
+                        (def given (first (rest (rest s))))
+                        (def dst
+                          (match
+                            (deleting? (%push-target given () (first dest)))
+                            ((null? given) (if (null? (first src)) (Str8 append "refs/heads/" (first (rest s))) (first src)))
+                            (#t (%push-target given (first src) (first dest)))))
+                        ; a source named by its full ref is shown by its short name
+                        (list (match (deleting? given) ((Str8 starts? "refs/" (first (rest s))) (%short (first (rest s)))) (#t (first (rest s))))
+                              dst (%lookup dst (first dest))
+                              (if deleting? %ZERO (rest src)) (if deleting? () (first src)) (first s)))
+                      specs sources)
+                    current (Opts on? o "-u")))))))))
     (match
       ((Opts help? git-push-options ops) (list (lit out) (Opts usage git-push-options) 0))
       ((null? gitdir) (%not-a-repo))
-      ((and (null? current) (null? branch)) (%fatal "You are not currently on a branch."))
+      ((and (Opts on? o "-d") (null? named)) (%fatal "--delete doesn't make sense without any refs"))
+      ((not (null? specs)) (push! specs))
+      ((null? current) (%fatal "You are not currently on a branch."))
       ((and (null? operands) (null? upstream)) (%no-upstream current remote))
-      ((not (null? branch)) (push! branch branch (str=? branch (or current ""))))
-      ((null? operands) (push! current (%strip-heads upstream) #t))
-      (#t (push! current current #t)))))
+      ((null? operands) (push! (list (list force? current (%strip-heads upstream)))))
+      (#t (push! (list (list force? current current)))))))
 
 ; --- for the services ---
 
