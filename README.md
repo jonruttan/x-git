@@ -61,7 +61,9 @@ the kernel and x are installed (x-os).
   or scp's `[user@]host:path`.  Over ssh the service is run on the host
   as git runs it, `ssh [-p port] host "git-upload-pack '/path'"`, the
   ssh chosen as git chooses one: `GIT_SSH_COMMAND`, `core.sshCommand`,
-  `GIT_SSH`, then `ssh` -- on x-os, x-ssh's client
+  `GIT_SSH`, then `ssh` -- on x-os, x-ssh's client.  `http://host[:port]/path`
+  is git's smart http protocol, for fetching (ls-remote, clone, fetch);
+  a push over http is refused, and so for now is `https://`
 - `clone <repository> [<directory>]` from a local path or a url: the
   objects copied, or brought as one pack over git's pack protocol from
   `git-upload-pack`; the source's branches as

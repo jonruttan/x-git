@@ -34,7 +34,7 @@
 (import git/repo git-refs-under git-unpack-ref!)
 (import git/config git-config-value git-config-set!)
 (import git/clone git-source-gitdir)
-(import git/protocol proto-url? proto-connect proto-advertise proto-fetch! proto-push! proto-remote-lines proto-cannot-read)
+(import git/protocol proto-url? proto-connect proto-advertise proto-fetch! proto-push! proto-remote-lines proto-cannot-read proto-unreadable)
 (import git/wire wire-close! wire-flush!)
 (import x/type/vector Vector)
 
@@ -55,8 +55,9 @@
       128)))
 
 ; The service on the wire said nothing: it has said why on its own
-; standard error, as git's does; this is the rest of what git prints.
-(def %not-read (fn (_) (list (lit err) %cannot-read 128)))
+; standard error, as git's does; this is the rest of what git prints --
+; or, over http, why the exchange failed.
+(def %not-read (fn (_) (list (lit err) (proto-unreadable) 128)))
 
 ; --- objects ---
 
