@@ -76,14 +76,15 @@ else
 	fi
 fi
 
-# No collect at the snippet seam (x-lang#568/#572): the per-seam heap collect
-# exhausted the allocation ceiling on x-ash's and x-python's suites; this
-# bundle sets the same knob.
-export SPEC_SEAM_COLLECT=0
+# The platform's collect at each snippet seam stays on: a case's garbage is
+# reclaimed as it finishes, so the ceiling bounds one case's peak.  With it
+# off (SPEC_SEAM_COLLECT=0, for a suite whose code holds objects only C can
+# reach, which x-git's does not), a file kept every case's garbage to its
+# end, and the heavy files came near the ceiling -- over it, on a slow
+# runner, as "allocation limit exceeded".
 
 # One spec file per process, and with it the platform's own 300M-object
-# ceiling rather than a raised one.  Nothing collects between snippets, so a
-# batch's allocation is the sum of its files.
+# ceiling rather than a raised one.
 # x-cc, x-infocom, x-r5rs and x-r7rs set the same knob.
 export SPEC_BATCH="${SPEC_BATCH:-1}"
 
