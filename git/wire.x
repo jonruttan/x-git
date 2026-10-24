@@ -129,11 +129,16 @@
 
 ; At least n unread bytes in the buffer, or #f when the child's output
 ; ended first.  The unread bytes move to the front when the room after
-; them is short; the buffer grows when they would not fit at all.
+; them is short; the buffer grows when they would not fit at all.  A read
+; takes what room there is after them, up to a chunk: once they are at the
+; front, n fitting means some room is left, so each pass reads.  (Moving
+; them only when they were already at the front looped forever, a read
+; that ended inside a packet leaving the room short of a chunk.)
 (def %fill!
   (fn (self w n)
     (def start (%oref w 6))
     (def end (%oref w 7))
+    (def room (%sub (%oref w 5) end))
     (match
       ((>= (%sub end start) n) #t)
       ((> n (%oref w 5))
@@ -142,13 +147,13 @@
             (%mem-copy (%str->ptr r) (%at (%str->ptr (%oref w 4)) start) (%sub end start))
             (%oset! w 4 r) (%oset! w 5 cap) (%oset! w 6 0) (%oset! w 7 (%sub end start))
             (self w n)))
-      ((> (%add end %CHUNK) (%oref w 5))
+      ((and (> start 0) (< room %CHUNK))
         (do (%mem-copy (%str->ptr (%oref w 4)) (%at (%str->ptr (%oref w 4)) start) (%sub end start))
             (%oset! w 6 0) (%oset! w 7 (%sub end start))
             (self w n)))
       (#t
-        (let ((got (if (null? (%driver w)) (File read (%oref w 3) (%oref w 8) %CHUNK)
-                     ((first (rest (%driver w))) (%oref w 8) %CHUNK))))
+        (let ((got (if (null? (%driver w)) (File read (%oref w 3) (%oref w 8) (if (< room %CHUNK) room %CHUNK))
+                     ((first (rest (%driver w))) (%oref w 8) (if (< room %CHUNK) room %CHUNK)))))
           (if (<= got 0) #f
             (do (%mem-copy (%at (%str->ptr (%oref w 4)) end) (%str->ptr (%oref w 8)) got)
                 (%oset! w 7 (%add end got))
