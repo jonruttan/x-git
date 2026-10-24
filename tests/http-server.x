@@ -69,16 +69,25 @@
     (File close fd)
     b))
 
-; One connection answered.
+; One connection answered; closed unanswered when it ends before its head
+; does, or speaks TLS -- a handshake record's first byte is 22 -- which
+; would otherwise wait on a head that never comes.
 (def %serve
   (fn (_ c)
     (def b (%buf))
     (def head-end
       ((fn (self)
          (let ((at (%blank b)))
-           (if (not (null? at)) at
-             (let ((run (Socket recv-run c 65536)))
-               (if (null? run) () (do (%put! b (%ptr (first run)) (rest run)) (self)))))))))
+           (match
+             ((not (null? at)) at)
+             ((and (> (Vector ref 1 b) 0) (= (%pref (%ptr (Vector ref 0 b)) 0 1) 22)) ())
+             (#t (let ((run (Socket recv-run c 65536)))
+                   (if (null? run) () (do (%put! b (%ptr (first run)) (rest run)) (self))))))))))
+    (if (null? head-end) (Socket close c) (%answer c b head-end))))
+
+; The request whose head ends at head-end in b answered on c.
+(def %answer
+  (fn (_ c b head-end)
     (def lines (Str8 split "\r\n" (%text b head-end)))
     (def words (Str8 split " " (first lines)))
     (def target (first (rest words)))

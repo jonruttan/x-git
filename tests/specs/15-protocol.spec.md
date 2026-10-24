@@ -41,6 +41,24 @@ rest of what git prints.
 ---
     (128 . "fatal: Could not read from remote repository.\n\nPlease make sure you have the correct access rights\nand the repository exists.\n")
 
+### an advertisement longer than one read
+
+1500 refs advertise some 90 KB, more than the wire reads at once, so a
+read ends inside a packet and the rest is read after it -- which once
+went round forever, the room after the unread bytes never enough for a
+read.  A hosted repository's pull requests are refs like these.
+
+```git
+(%pr-sh %pr-d (Str8 append "git init -q -b main many && cd many && " %pr-git " commit -q --allow-empty -m one"
+  " && h=$(git rev-parse HEAD) && i=1000 && { echo '# pack-refs with: peeled fully-peeled sorted '"
+  " && while [ $i -lt 2500 ]; do echo \"$h refs/pull/$i/head\"; i=$((i+1)); done; } > .git/packed-refs"))
+(def %pr-many (git-text-in %pr-d "ls-remote" (%pr-url (Str8 append %pr-d "/many"))))
+(write (list (equal? %pr-many (git-oracle-in %pr-d "ls-remote" (%pr-url (Str8 append %pr-d "/many"))))
+             (List length (Str8 split "\n" (rest %pr-many)))))
+```
+---
+    (#t 1503)
+
 ## clone
 
 ### a clone over the wire is git's clone: refs, tree, config, one pack

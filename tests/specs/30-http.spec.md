@@ -8,7 +8,9 @@ each request, runs the backend with the request in its environment and
 its body on its input, and answers with what the backend wrote.  x-git
 and git each reach the same repository through it -- ls-remote, clone,
 then a fetch after more commits land -- and what each prints and ends
-with is compared.  https is refused for now, and that refusal is checked.
+with is compared.  https is the same exchange over x-lang's Tls; a real
+one needs a certificate the client trusts, so here https meets the
+plain server, and the handshake's failure is refused in git's form.
 
 ## the server
 
@@ -85,7 +87,7 @@ with is compared.  https is refused for now, and that refusal is checked.
 
 ## refusals
 
-### no repository there; a push, which x-git does not make over http; https, not yet
+### no repository there; a push, which x-git does not make over http; https to a plain server
 
 ```git
 (def %ht-nope (Str8 append (Str8 sub 0 (- (Str8 length %ht-url) 8) %ht-url) "/nope.git"))
@@ -98,7 +100,8 @@ with is compared.  https is refused for now, and that refusal is checked.
              (first %ht-push)
              (Str8 includes? "pushing over http is not supported by x-git" (first (rest (rest %ht-push))))
              (first %ht-tls)
-             (Str8 includes? "https is not yet supported by x-git" (first (rest (rest %ht-tls))))))
+             (Str8 starts? (Str8 append "fatal: unable to access 'https" (Str8 sub 4 (- (Str8 length %ht-url) 4) %ht-url) "/': ")
+                           (first (rest (rest %ht-tls))))))
 ```
 ---
     (#t 128 #t 128 #t)

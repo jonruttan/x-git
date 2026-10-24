@@ -317,6 +317,7 @@
                    (let ((size (Assoc get (lit size) (File stat (rest (first pks))))))
                      (let ((o (%object-at fd size off read-base)))
                        (do (File close fd)
+                           (%churned! (%add (first (rest (rest o))) 4096))
                            (list (first o) (first (rest (rest o))) (first (rest o)) 0))))))))))
      (git-packs gitdir))))
 
@@ -708,10 +709,11 @@
              (if (>= i count) (List reverse acc)
                (let ((e (%entry fd off n)))
                  (let ((base (first (rest (rest (rest e))))) (end (first (rest (rest (rest (rest e)))))))
+                   (do (%churned! (first (rest (rest e))))
                    (self (%add i 1) end
                          (pair (list off end base
                                      (if (null? base) (%object-sha (%type-name (first e)) (first (rest e)) (first (rest (rest e)))) ()))
-                               acc))))))
+                               acc)))))))
            0 12 ()))
         (def named (List filter (fn (_ e) (not (null? (first (rest (rest (rest e))))))) entries))
         ; the bases from outside the pack a thin pack's deltas named,
@@ -734,7 +736,8 @@
               (def sha
                 (if (null? (first (rest (rest e)))) (first (rest (rest (rest e))))
                   (let ((o (%object-at fd n off in-pack)))
-                    (%object-sha (first o) (first (rest o)) (first (rest (rest o)))))))
+                    (do (%churned! 16384)
+                        (%object-sha (first o) (first (rest o)) (first (rest (rest o))))))))
               (list sha off (Crc32 of r off (%sub (first (rest e)) off))))
             entries))
         (File close fd)

@@ -17,11 +17,9 @@
 ; is held until it is read from again; that read sends it, and goes on
 ; in the reply.
 ;
-; https would be x-lang's Tls -- the server's certificate checked against
+; https is x-lang's Tls: the server's certificate checked against
 ; Mozilla's roots, unless http.sslVerify is false or GIT_SSL_NO_VERIFY is
-; set -- but it is refused for now: reading a real server's first reply
-; through it, x-git runs out of memory where x-lang's Http alone does
-; not.  What went wrong is left in git's words for the command to say,
+; set.  What went wrong is left in git's words for the command to say,
 ; through http-refusal.  Fetching only: a push's pack is binary, and
 ; Http's request body is text.
 
@@ -114,8 +112,6 @@
                      (%Http open method (Str8 append base path) headers body opts))))
             (do (Heap collect) s)))))
     (match
-      ((Str8 starts? "https://" url)
-        (%refuse! (Str8 append "fatal: unable to access '" shown "': https is not yet supported by x-git\n")))
       ((str=? service "receive-pack")
         (%refuse! (Str8 append "fatal: unable to access '" shown "': pushing over http is not supported by x-git\n")))
       (#t
@@ -144,11 +140,16 @@
               (Vector set! 2 "" st)
               (let ((w (wire-of-driver
                          (fn (_ r at n) (git-bytes-put! (%pending st) (%at (%str->ptr r) at) n))
+                         ; each read collected after: a TLS record decrypted leaves
+                         ; its garbage, and a hosted repository's advertisement
+                         ; (its pull requests' refs) runs to hundreds of KB
                          (fn (_ region max)
                            (when (> (git-bytes-count (%pending st)) 0) (%post! st service open))
                            (let ((run (%Http read (%stream st) max)))
                              (if (null? run) 0
-                               (do (%mem-copy (%str->ptr region) (%str->ptr (first run)) (rest run)) (rest run)))))
+                               (do (%mem-copy (%str->ptr region) (%str->ptr (first run)) (rest run))
+                                   (Heap collect)
+                                   (rest run)))))
                          (fn (_) (%Http close (%stream st))))))
                 ; the advertisement's first packet names the service, a flush after it
                 (let ((head (wire-line w)))
