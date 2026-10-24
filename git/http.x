@@ -13,15 +13,16 @@
 ; URL/git-SERVICE.  The service keeps nothing between requests, so each
 ; POST carries everything said since the advertisement, as git's own
 ; client sends it: the wants, then every round of haves, the last round
-; ending in a flush (more to come) or done.  What is written to the wire
-; is held until it is read from again; that read sends it, and goes on
-; in the reply.
+; ending in a flush (more to come) or done.  A push is one turn: the
+; commands, then the pack, sent as bytes -- the first command has its
+; capabilities after a NUL, and a pack is binary throughout.  What is
+; written to the wire is held until it is read from again; that read
+; sends it, and goes on in the reply.
 ;
 ; https is x-lang's Tls: the server's certificate checked against
 ; Mozilla's roots, unless http.sslVerify is false or GIT_SSL_NO_VERIFY is
 ; set.  What went wrong is left in git's words for the command to say,
-; through http-refusal.  Fetching only: a push's pack is binary, and
-; Http's request body is text.
+; through http-refusal.
 
 (module git/http)
 
@@ -111,13 +112,9 @@
           (let ((s (if (null? opts) (%Http open method (Str8 append base path) headers body)
                      (%Http open method (Str8 append base path) headers body opts))))
             (do (Heap collect) s)))))
-    (match
-      ((str=? service "receive-pack")
-        (%refuse! (Str8 append "fatal: unable to access '" shown "': pushing over http is not supported by x-git\n")))
-      (#t
-       (do (when (null? %Http) (%load-http!))
-           (%advertised (open "GET" (Str8 append "/info/refs?service=git-" service) (list (pair "Pragma" "no-cache")) ())
-                        shown service open))))))
+    (when (null? %Http) (%load-http!))
+    (%advertised (open "GET" (Str8 append "/info/refs?service=git-" service) (list (pair "Pragma" "no-cache")) ())
+                 shown service open)))
 
 ; The wire on the advertisement's stream s, or the refusal its status
 ; calls for.
@@ -160,13 +157,18 @@
 ; What was written since the last read sent as the next request, after
 ; all that went before it; its reply the stream read from now.  A request
 ; that ends in a flush is one round of more to come: what it said is
-; said again, the flush aside, at the head of the next.
+; said again, the flush aside, at the head of the next.  A push's one
+; request is its bytes as they were written, a run.
 (def %post!
   (fn (_ st service open)
-    (def req (Str8 append (%said st) (%text (%pending st))))
+    (def pending (%pending st))
+    (def req
+      (if (str=? service "receive-pack") (pair (git-bytes-region pending) (git-bytes-count pending))
+        (let ((text (Str8 append (%said st) (%text pending))))
+          (do (Vector set! 2 (if (Str8 ends? "0000" text) (Str8 sub 0 (%sub (Str8 length text) 4) text) text) st)
+              text))))
     (%Http close (%stream st))
     (Vector set! 1 (git-bytes-make) st)
-    (Vector set! 2 (if (Str8 ends? "0000" req) (Str8 sub 0 (%sub (Str8 length req) 4) req) req) st)
     (def reply
       (open "POST" (Str8 append "/git-" service)
         (list (pair "Content-Type" (Str8 append "application/x-git-" service "-request"))

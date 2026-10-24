@@ -7,8 +7,9 @@ small http server this spec starts as a process of its own: it reads
 each request, runs the backend with the request in its environment and
 its body on its input, and answers with what the backend wrote.  x-git
 and git each reach the same repository through it -- ls-remote, clone,
-then a fetch after more commits land -- and what each prints and ends
-with is compared.  https is the same exchange over x-lang's Tls; a real
+then a fetch after more commits land -- and each pushes the same commits
+to a repository of its own there; what each prints and ends with is
+compared, and what each pushed.  https is the same exchange over x-lang's Tls; a real
 one needs a certificate the client trusts, so here https meets the
 plain server, and the handshake's failure is refused in git's form.
 
@@ -85,23 +86,48 @@ plain server, and the handshake's failure is refused in git's form.
 ---
     (#t #t 0)
 
+## pushing
+
+### push: a branch moved and one made, one deleted, one refused as no fast-forward
+
+```git
+; a repository for each to push to, the same commit made in each clone
+(%ht-sh %ht-d
+  (Str8 append "for r in px pg; do git clone -q --bare srv/repo.git srv/$r.git && git -C srv/$r.git config http.receivepack true; done"
+    " && for c in x/c g/c; do (cd $c && git checkout -q main && git merge -q --ff-only origin/main"
+    " && printf 'p\\n' >> a && git commit -qam pushed && git branch new); done"))
+(def %ht-at (fn (_ name) (Str8 append (Str8 sub 0 (- (Str8 length %ht-url) 8) %ht-url) name)))
+; x's words with its repository's name as git's, to compare them
+(def %ht-xp (fn (_ . ops) (List map (fn (_ v) (if (str? v) (Str8 replace "px.git" "pg.git" v) v)) (apply %ht-x (pair "x/c" (pair "push" (pair (%ht-at "px.git") ops)))))))
+(def %ht-gp (fn (_ . ops) (apply %ht-g (pair "g/c" (pair "push" (pair (%ht-at "pg.git") ops))))))
+(def %ht-pushed
+  (fn (_ . ops) (equal? (apply %ht-xp ops) (apply %ht-gp ops))))
+(def %ht-served
+  (fn (_) (equal? (git-oracle-in (Str8 append %ht-d "/srv/px.git") "for-each-ref" "--format=%(refname) %(objectname)")
+                  (git-oracle-in (Str8 append %ht-d "/srv/pg.git") "for-each-ref" "--format=%(refname) %(objectname)"))))
+(write (list (%ht-pushed "main" "new") (%ht-served)
+             (first (git-oracle-in (Str8 append %ht-d "/srv/px.git") "fsck" "--strict"))
+             (%ht-pushed ":new") (%ht-served)
+             ; refused, HEAD's branch the one refused, reported after what moved
+             (%ht-pushed "main~1:main" "main:other") (%ht-served)))
+```
+---
+    (#t #t 0 #t #t #t #t)
+
 ## refusals
 
-### no repository there; a push, which x-git does not make over http; https to a plain server
+### no repository there; https to a plain server
 
 ```git
 (def %ht-nope (Str8 append (Str8 sub 0 (- (Str8 length %ht-url) 8) %ht-url) "/nope.git"))
-(def %ht-push (%ht-x "x/c" "push" %ht-url "main"))
 (def %ht-tls (%ht-x "x" "ls-remote" (Str8 append "https" (Str8 sub 4 (- (Str8 length %ht-url) 4) %ht-url))))
 (def %ht-missing (equal? (%ht-x "x" "ls-remote" %ht-nope) (%ht-g "g" "ls-remote" %ht-nope)))
 (%ht-sh %ht-d "kill $(cat srvd/pid)")
 (Sys wait %ht-server)
 (write (list %ht-missing
-             (first %ht-push)
-             (Str8 includes? "pushing over http is not supported by x-git" (first (rest (rest %ht-push))))
              (first %ht-tls)
              (Str8 starts? (Str8 append "fatal: unable to access 'https" (Str8 sub 4 (- (Str8 length %ht-url) 4) %ht-url) "/': ")
                            (first (rest (rest %ht-tls))))))
 ```
 ---
-    (#t 128 #t 128 #t)
+    (#t 128 #t)

@@ -62,9 +62,9 @@ the kernel and x are installed (x-os).
   as git runs it, `ssh [-p port] host "git-upload-pack '/path'"`, the
   ssh chosen as git chooses one: `GIT_SSH_COMMAND`, `core.sshCommand`,
   `GIT_SSH`, then `ssh` -- on x-os, x-ssh's client.  `http[s]://host[:port]/path`
-  is git's smart http protocol, for fetching (ls-remote, clone, fetch);
+  is git's smart http protocol, for ls-remote, clone, fetch and push;
   https checks the server's certificate unless `http.sslVerify` is false
-  or `GIT_SSL_NO_VERIFY` is set; a push over http is refused
+  or `GIT_SSL_NO_VERIFY` is set
 - `clone <repository> [<directory>]` from a local path or a url: the
   objects copied, or brought as one pack over git's pack protocol from
   `git-upload-pack`; the source's branches as
