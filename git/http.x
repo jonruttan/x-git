@@ -27,7 +27,6 @@
 
 (module git/http)
 
-(import x/net/http Http)
 (import x/sys/posix Sys)
 (import x/type/vector Vector)
 (import x/sys/gc Heap)
@@ -53,6 +52,17 @@
 (def http-forget! (fn (_) (set! %refusal ())))
 
 (def %refuse! (fn (_ text) (do (set! %refusal text) ())))
+
+; x-lang's Http, loaded the first time a service is reached by http and
+; not before: it brings Tls, and Tls the compiled engines and the
+; toolchain that builds them, which every other x-git process -- each
+; service git starts, each command -- would otherwise load, and with
+; them pay to compile an engine for a long enough digest.
+(def %Http ())
+(def %load-http!
+  (fn (_)
+    (import x/net/http Http)
+    (set! %Http Http)))
 
 ; A url without its trailing slashes, as git joins paths to it.
 (def %base
@@ -100,8 +110,8 @@
     (def open
       (fn (_ method path headers body)
         (guard (e (%refuse! (Str8 append "fatal: unable to access '" shown "': " (e msg) "\n")))
-          (let ((s (if (null? opts) (Http open method (Str8 append base path) headers body)
-                     (Http open method (Str8 append base path) headers body opts))))
+          (let ((s (if (null? opts) (%Http open method (Str8 append base path) headers body)
+                     (%Http open method (Str8 append base path) headers body opts))))
             (do (Heap collect) s)))))
     (match
       ((Str8 starts? "https://" url)
@@ -109,8 +119,9 @@
       ((str=? service "receive-pack")
         (%refuse! (Str8 append "fatal: unable to access '" shown "': pushing over http is not supported by x-git\n")))
       (#t
-       (%advertised (open "GET" (Str8 append "/info/refs?service=git-" service) (list (pair "Pragma" "no-cache")) ())
-                   shown service open)))))
+       (do (when (null? %Http) (%load-http!))
+           (%advertised (open "GET" (Str8 append "/info/refs?service=git-" service) (list (pair "Pragma" "no-cache")) ())
+                        shown service open))))))
 
 ; The wire on the advertisement's stream s, or the refusal its status
 ; calls for.
@@ -118,13 +129,13 @@
   (fn (_ s shown service open)
     (match
       ((null? s) ())
-      ((= (s status) 404) (do (Http close s) (%refuse! (Str8 append "fatal: repository '" shown "' not found\n"))))
-      ((= (s status) 401) (do (Http close s) (%refuse! (Str8 append "fatal: Authentication failed for '" shown "'\n"))))
+      ((= (s status) 404) (do (%Http close s) (%refuse! (Str8 append "fatal: repository '" shown "' not found\n"))))
+      ((= (s status) 401) (do (%Http close s) (%refuse! (Str8 append "fatal: Authentication failed for '" shown "'\n"))))
       ((not (= (s status) 200))
-        (do (Http close s)
+        (do (%Http close s)
             (%refuse! (Str8 append "fatal: unable to access '" shown "': The requested URL returned error: " (Str8 str (s status)) "\n"))))
       ((not (str=? (%header s "content-type") (Str8 append "application/x-git-" service "-advertisement")))
-        (do (Http close s)
+        (do (%Http close s)
             (%refuse! (Str8 append "fatal: unable to access '" shown "': not a smart http server, which x-git needs\n"))))
       (#t
         (let ((st (Vector make 3 ())))
@@ -135,14 +146,14 @@
                          (fn (_ r at n) (git-bytes-put! (%pending st) (%at (%str->ptr r) at) n))
                          (fn (_ region max)
                            (when (> (git-bytes-count (%pending st)) 0) (%post! st service open))
-                           (let ((run (Http read (%stream st) max)))
+                           (let ((run (%Http read (%stream st) max)))
                              (if (null? run) 0
                                (do (%mem-copy (%str->ptr region) (%str->ptr (first run)) (rest run)) (rest run)))))
-                         (fn (_) (Http close (%stream st))))))
+                         (fn (_) (%Http close (%stream st))))))
                 ; the advertisement's first packet names the service, a flush after it
                 (let ((head (wire-line w)))
                   (if (or (not (pair? head)) (not (Str8 starts? "# service=" (first head))))
-                    (do (Http close (%stream st)) (%refuse! (Str8 append "fatal: unable to access '" shown "': a bad advertisement\n")))
+                    (do (%Http close (%stream st)) (%refuse! (Str8 append "fatal: unable to access '" shown "': a bad advertisement\n")))
                     (do (wire-pkt w) w))))))))))
 
 ; What was written since the last read sent as the next request, after
@@ -152,7 +163,7 @@
 (def %post!
   (fn (_ st service open)
     (def req (Str8 append (%said st) (%text (%pending st))))
-    (Http close (%stream st))
+    (%Http close (%stream st))
     (Vector set! 1 (git-bytes-make) st)
     (Vector set! 2 (if (Str8 ends? "0000" req) (Str8 sub 0 (%sub (Str8 length req) 4) req) req) st)
     (def reply
