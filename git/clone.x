@@ -24,7 +24,7 @@
 (import git/repo git-init-layout! git-refs-under)
 (import git/checkout git-checkout-tree!)
 (import git/packs git-pack-index!)
-(import git/protocol proto-url? proto-url-path proto-connect proto-advertise proto-cap proto-fetch! proto-cannot-read)
+(import git/protocol proto-url? proto-url-path proto-connect proto-advertise proto-cap proto-fetch! proto-unreadable)
 (import git/wire wire-close!)
 
 (def %add (prim-ref 'int '+))
@@ -92,7 +92,7 @@
     (def adv (proto-advertise w))
     (if (null? adv)
       (do (wire-close! w)
-          (list (lit err) (Str8 append "Cloning into '" name "'...\n" proto-cannot-read) 128))
+          (list (lit err) (Str8 append "Cloning into '" name "'...\n" (proto-unreadable)) 128))
       (let ((refs (List filter (fn (_ e) (not (Str8 ends? "^{}" (first e)))) (first adv)))
             (caps (first (rest adv))))
         (let ((head (%lookup "HEAD" refs))

@@ -14,9 +14,14 @@
 ;
 ; A wire is a vector: 1 the child's pid, 2 the end we write, 3 the end we
 ; read, 4 the read buffer, 5 its size, 6 and 7 where the unread bytes
-; start and end in it, 8 the region each read lands in.  The child's
-; standard error is ours: git's services say what is wrong on it
-; themselves, and git lets them.
+; start and end in it, 8 the region each read lands in, 9 a driver or ().
+; The child's standard error is ours: git's services say what is wrong
+; on it themselves, and git lets them.
+;
+; A driver stands for the pipes when the service is no child: (SEND!
+; RECV! CLOSE!), SEND! of (REGION AT N) taking bytes written, RECV! of
+; (REGION MAX) putting up to MAX bytes read in REGION and answering how
+; many (0 at the end), CLOSE! of nothing.  An http exchange is one.
 
 (module git/wire)
 
@@ -64,23 +69,12 @@
       (Sys exit 127))
     (Sys close (first i))
     (Sys close (rest o))
-    (def w (Vector make 8 0))
-    (%oset! w 1 pid)
-    (%oset! w 2 (rest i))
-    (%oset! w 3 (first o))
-    (%oset! w 4 (%make-str %CHUNK))
-    (%oset! w 5 %CHUNK)
-    (%oset! w 6 0)
-    (%oset! w 7 0)
-    (%oset! w 8 (%make-str %CHUNK))
-    w))
+    (%wire pid (rest i) (first o) ())))
 
-; A wire on descriptors this process already has: a service's own
-; standard input and output, with no child behind them.
-(def wire-of-fds
-  (fn (_ in out)
-    (def w (Vector make 8 0))
-    (%oset! w 1 -1)
+(def %wire
+  (fn (_ pid out in driver)
+    (def w (Vector make 9 0))
+    (%oset! w 1 pid)
     (%oset! w 2 out)
     (%oset! w 3 in)
     (%oset! w 4 (%make-str %CHUNK))
@@ -88,19 +82,37 @@
     (%oset! w 6 0)
     (%oset! w 7 0)
     (%oset! w 8 (%make-str %CHUNK))
+    (%oset! w 9 driver)
     w))
+
+; A wire on descriptors this process already has: a service's own
+; standard input and output, with no child behind them.
+(def wire-of-fds
+  (fn (_ in out) (%wire -1 out in ())))
+
+; A wire through a driver, (SEND! RECV! CLOSE!), with neither pipes nor
+; child.
+(def wire-of-driver
+  (fn (_ send! recv! close!) (%wire -1 -1 -1 (list send! recv! close!))))
+
+(def %driver (fn (_ w) (%oref w 9)))
 
 ; Our end of the child's input closed: it reads EOF.
 (def wire-close-in!
   (fn (_ w)
     (unless (< (%oref w 2) 0) (do (Sys close (%oref w 2)) (%oset! w 2 -1)))))
 
-; Both ends closed and the child waited for; answers how it ended.
+; Both ends closed and the child waited for; answers how it ended.  A
+; driver's wire closes through its driver, and ends well; no wire at all
+; (an http service that could not be reached) is nothing to close.
 (def wire-close!
   (fn (_ w)
-    (wire-close-in! w)
-    (Sys close (%oref w 3))
-    (Sys wait (%oref w 1))))
+    (match
+      ((null? w) 0)
+      ((not (null? (%driver w))) (do ((first (rest (rest (%driver w))))) 0))
+      (#t (do (wire-close-in! w)
+              (Sys close (%oref w 3))
+              (Sys wait (%oref w 1)))))))
 
 ; The bytes that come next, outside any packet: what the buffer holds
 ; unread, or one read's worth when it holds none.  (REGION . N), or ()
@@ -135,7 +147,8 @@
             (%oset! w 6 0) (%oset! w 7 (%sub end start))
             (self w n)))
       (#t
-        (let ((got (File read (%oref w 3) (%oref w 8) %CHUNK)))
+        (let ((got (if (null? (%driver w)) (File read (%oref w 3) (%oref w 8) %CHUNK)
+                     ((first (rest (%driver w))) (%oref w 8) %CHUNK))))
           (if (<= got 0) #f
             (do (%mem-copy (%at (%str->ptr (%oref w 4)) end) (%str->ptr (%oref w 8)) got)
                 (%oset! w 7 (%add end got))
@@ -212,6 +225,12 @@
         (do (when (<= w 0) (%fail "the connection closed while writing"))
             (self fd r (%add at w) (%sub n w)))))))
 
+; n bytes of region r from at sent on the wire: to the child's input, or
+; to its driver.
+(def %out!
+  (fn (_ w r at n)
+    (if (null? (%driver w)) (%write-all! (%oref w 2) r at n) ((first (%driver w)) r at n))))
+
 ; n bytes of region r sent as one packet.
 (def wire-send-bytes!
   (fn (_ w r n)
@@ -224,7 +243,7 @@
     (%pset! p 2 (%hex-digit (& (>> len 4) 15)) 1)
     (%pset! p 3 (%hex-digit (& len 15)) 1)
     (when (> n 0) (%mem-copy (%at p 4) (%str->ptr r) n))
-    (%write-all! (%oref w 2) pk 0 len)))
+    (%out! w pk 0 len)))
 
 ; A text line sent as one packet, a newline after it, as git sends its
 ; own.
@@ -234,11 +253,11 @@
     (wire-send-bytes! w s (%str-byte-len s))))
 
 (def wire-flush!
-  (fn (_ w) (%write-all! (%oref w 2) "0000" 0 4)))
+  (fn (_ w) (%out! w "0000" 0 4)))
 
 ; n bytes of region r sent as they are, outside any packet: a pack.
 (def wire-send-raw!
-  (fn (_ w r n) (%write-all! (%oref w 2) r 0 n)))
+  (fn (_ w r n) (%out! w r 0 n)))
 
-(provide git/wire wire-open wire-of-fds wire-close! wire-close-in! wire-pkt wire-line wire-split wire-raw
+(provide git/wire wire-open wire-of-fds wire-of-driver wire-close! wire-close-in! wire-pkt wire-line wire-split wire-raw
   wire-send! wire-send-bytes! wire-flush! wire-send-raw!)

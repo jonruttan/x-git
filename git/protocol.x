@@ -18,6 +18,7 @@
 (import git/wire wire-open wire-close! wire-pkt wire-line wire-split wire-send! wire-send-bytes! wire-flush! wire-send-raw!)
 (import git/packs git-bytes-make git-bytes-put! git-bytes-region git-bytes-count)
 (import git/config git-config-value)
+(import git/http http-connect http-refusal http-forget!)
 (import x/sys/posix Sys)
 
 (def %add (prim-ref 'int '+))
@@ -39,14 +40,16 @@
 
 ; --- the url ---
 
-; A url names a repository one of three ways, as git reads them:
+; A url names a repository one of four ways, as git reads them:
 ;   file:///path                      the service run here
 ;   ssh://[user@]host[:port]/path     the service run there, through ssh;
 ;                                     git+ssh:// and ssh+git:// the same
 ;   [user@]host:path                  ssh, scp's form: a colon before any
 ;                                     slash
-; A url is taken apart as (SCHEME HOST PORT PATH): file with host () or
-; ssh, the port () when none is named.  () for a path, which is no url.
+;   http[s]://host[:port]/path        the service over http (git/http)
+; A url is taken apart as (SCHEME HOST PORT PATH): file with host (),
+; ssh or http, the port () when none is named.  () for a path, which is
+; no url.
 
 (def %tail (fn (_ s n) (Str8 sub n (%sub (Str8 length s) n) s)))
 
@@ -64,6 +67,15 @@
     (match
       ((null? url) ())
       ((Str8 starts? "file://" url) (list (lit file) () () (%tail url 7)))
+      ((or (Str8 starts? "http://" url) (Str8 starts? "https://" url))
+        (let ((after (%tail url (if (Str8 starts? "https://" url) 8 7))))
+          (let ((slash (Str8 index-of "/" after)))
+            (let ((authority (if (null? slash) after (Str8 sub 0 slash after))))
+              (let ((colon (Str8 last-index-of ":" authority)))
+                (list (lit http)
+                      (if (null? colon) authority (Str8 sub 0 colon authority))
+                      (if (null? colon) () (%tail authority (%add colon 1)))
+                      (if (null? slash) "/" (%tail after slash))))))))
       ((not (null? rest-ssh))
         (let ((slash (Str8 index-of "/" rest-ssh)))
           (let ((authority (if (null? slash) rest-ssh (Str8 sub 0 slash rest-ssh)))
@@ -113,13 +125,17 @@
 ; git-receive-pack on the repository the url names -- run here for a
 ; file:// url, through ssh on the host for the others, given its port
 ; with -p and the service's command line as one word, the path quoted,
-; as git gives them.  gitdir, when there is one, is read for
-; core.sshCommand.
+; as git gives them; over http for an http or https url, () when that
+; fails (proto-unreadable says why).  gitdir, when there is one, is read
+; for core.sshCommand and http.sslVerify.
 (def proto-connect
   (fn (_ url service . gitdir)
     (def parts (proto-url-parts url))
-    (if (eq? (first parts) (lit file))
-      (wire-open (list "git" service (proto-url-path url)))
+    (http-forget!)
+    (match
+      ((eq? (first parts) (lit file)) (wire-open (list "git" service (proto-url-path url))))
+      ((eq? (first parts) (lit http)) (http-connect url service (if (null? gitdir) () (first gitdir))))
+      (#t
       (let ((ssh (%ssh-command (if (null? gitdir) () (first gitdir))))
             (args (List append
                     (if (null? (first (rest (rest parts)))) () (list "-p" (first (rest (rest parts)))))
@@ -128,7 +144,7 @@
         (wire-open
           (if (first ssh)
             (List append (list "/bin/sh" "-c" (Str8 append (rest ssh) " \"$@\"") (rest ssh)) args)
-            (pair (rest ssh) args)))))))
+            (pair (rest ssh) args))))))))
 
 ; --- the advertisement ---
 
@@ -149,10 +165,11 @@
 ; What the service advertises, read to its flush: (REFS CAPS), REFS each
 ; (NAME . SHA) in the service's order with a peeled tag as "NAME^{}" after
 ; its tag, CAPS the capability words.  () when the service said nothing,
-; as git-upload-pack does on a path that is no repository.
+; as git-upload-pack does on a path that is no repository, or when there
+; is no wire (an http service that could not be reached).
 (def proto-advertise
   (fn (_ w)
-    (def l (%text-line w))
+    (def l (if (null? w) () (%text-line w)))
     (match
       ((null? l) ())
       ((not (pair? l)) (list () ()))
@@ -383,5 +400,10 @@
     "Please make sure you have the correct access rights\n"
     "and the repository exists.\n"))
 
+; What git prints when the service it reached last said nothing: over
+; http, why the exchange failed; otherwise proto-cannot-read.
+(def proto-unreadable
+  (fn (_) (or (http-refusal) proto-cannot-read)))
+
 (provide git/protocol proto-url? proto-url-parts proto-url-path proto-sq-quote proto-connect
-  proto-advertise proto-cap proto-fetch! proto-push! proto-remote-lines proto-cannot-read)
+  proto-advertise proto-cap proto-fetch! proto-push! proto-remote-lines proto-cannot-read proto-unreadable)
