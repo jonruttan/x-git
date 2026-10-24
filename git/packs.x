@@ -286,16 +286,56 @@
              (#t (let ((r (copy! (%add i 1) c at))) (self (first r) (rest r))))))))
      (rest v2) 0)))
 
-; The object at off in the pack open on fd: (TYPE BODY N), deltas applied.
-; read-base answers (TYPE SIZE REGION START) for a name, for REF_DELTA.
+; --- the delta base cache ---
+;
+; Objects resolved from packs, kept by pack and offset, as git's delta
+; base cache keeps them: a delta's chain is then applied once a link, not
+; inflated again from its root for every delta along it.  Slots chosen
+; by offset, each holding one object, a newcomer taking its slot; at most
+; %BC-LIMIT bytes held, all let go when a newcomer would pass it, and
+; none bigger than an eighth of it.
+(def %BC-SLOTS 1024)
+(def %BC-LIMIT 16777216)
+(def %bc (Vector make %BC-SLOTS ()))
+(def %bc-bytes 0)
+
+; The object at off of the pack at path, (TYPE BODY N), or () when not
+; held.  A slot is (PATH OFF TYPE BODY N).
+(def %bc-get
+  (fn (_ path off)
+    (let ((e (Vector ref (& off (%sub %BC-SLOTS 1)) %bc)))
+      (if (and (pair? e) (= (first (rest e)) off) (str=? (first e) path)) (rest (rest e)) ()))))
+
+(def %bc-put!
+  (fn (_ path off o)
+    (def n (first (rest (rest o))))
+    (when (<= n (>> %BC-LIMIT 3))
+      (let ((i (& off (%sub %BC-SLOTS 1))))
+        (do (let ((old (Vector ref i %bc)))
+              (when (pair? old) (set! %bc-bytes (%sub %bc-bytes (first (rest (rest (rest (rest old)))))))))
+            (when (> (%add %bc-bytes n) %BC-LIMIT)
+              (do (set! %bc (Vector make %BC-SLOTS ())) (set! %bc-bytes 0)))
+            (Vector set! i (pair path (pair off o)) %bc)
+            (set! %bc-bytes (%add %bc-bytes n)))))))
+
+; The object at off in the pack at path, open on fd: (TYPE BODY N),
+; deltas applied.  read-base answers (TYPE SIZE REGION START) for a
+; name, for REF_DELTA.
 (def %object-at
-  (fn (self fd size off read-base)
+  (fn (_ path fd size off read-base)
+    (def held (%bc-get path off))
+    (if (not (null? held)) held
+      (let ((o (%object-resolved path fd size off read-base)))
+        (do (%bc-put! path off o) o)))))
+
+(def %object-resolved
+  (fn (_ path fd size off read-base)
     (def e (%entry fd off size))
     (def base (first (rest (rest (rest e)))))
     (if (null? base)
       (list (%type-name (first e)) (first (rest e)) (first (rest (rest e))))
       (let ((b (if (eq? (first base) (lit ofs))
-                 (self fd size (rest base) read-base)
+                 (%object-at path fd size (rest base) read-base)
                  (let ((o (read-base (rest base))))
                    (do (when (null? o) (%fail (Str8 append "a delta's base is missing: " (rest base))))
                        (let ((body (%make-str (if (= (first (rest o)) 0) 1 (first (rest o))))))
@@ -315,7 +355,7 @@
              (let ((fd (File open (rest (first pks)) (lit rdonly))))
                (do (when (< fd 0) (%fail (Str8 append "cannot open " (rest (first pks)))))
                    (let ((size (Assoc get (lit size) (File stat (rest (first pks))))))
-                     (let ((o (%object-at fd size off read-base)))
+                     (let ((o (%object-at (rest (first pks)) fd size off read-base)))
                        (do (File close fd)
                            (%churned! (%add (first (rest (rest o))) 4096))
                            (list (first o) (first (rest (rest o))) (first (rest o)) 0))))))))))
@@ -727,7 +767,7 @@
                 (do (unless (or (null? o) (List any? (fn (_ x) (str=? (first x) sha)) outside))
                       (set! outside (pair (pair sha o) outside)))
                     o))
-              (let ((o (%object-at fd n (first hit) self)))
+              (let ((o (%object-at path fd n (first hit) self)))
                 (list (first o) (first (rest (rest o))) (first (rest o)) 0)))))
         (def rows
           (List map
@@ -735,8 +775,8 @@
               (def off (first e))
               (def sha
                 (if (null? (first (rest (rest e)))) (first (rest (rest (rest e))))
-                  (let ((o (%object-at fd n off in-pack)))
-                    (do (%churned! 16384)
+                  (let ((o (%object-at path fd n off in-pack)))
+                    (do (%churned! (first (rest (rest o))))
                         (%object-sha (first o) (first (rest o)) (first (rest (rest o))))))))
               (list sha off (Crc32 of r off (%sub (first (rest e)) off))))
             entries))
