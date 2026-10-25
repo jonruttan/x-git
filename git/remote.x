@@ -722,8 +722,10 @@
 ; date, or a delete, a new ref, a fast-forward, or (forced, or refused) a
 ; ref that would lose commits, one the remote has that is not here, a tag
 ; that exists.  What is to be sent goes in one batch; then each ref's line
-; is reported in the order given, the refused and the remote's refusals
-; with them, and one hint for what was refused.
+; is reported, as git reports them: what moved, in the order given, then
+; the refused and the remote's refusals, and one hint for what was
+; refused -- the current branch's when the ref refused is the one HEAD
+; names here.
 
 (def %ref-kind
   (fn (_ ref)
@@ -776,24 +778,26 @@
              (deliver! (List map (fn (_ j) (let ((u (rest j))) (list (first (rest (rest u))) (first (rest (rest (rest u)))) (first (rest u))))) to-send))))
     (def outcome (fn (_ j) (let ((hit (List find (fn (_ x) (str=? (first x) (first (rest (rest j))))) (rest r)))) (if (null? hit) () (rest hit)))))
     (def moved (List filter (fn (_ j) (null? (outcome j))) to-send))
+    (def line
+      (fn (_ j)
+        (def u (rest j))
+        (match
+          ((eq? (verdict j) (lit rejected)) (%report-line "!" "[rejected]" (first u) 0 (%short (first (rest u))) (first (rest (first j)))))
+          ((List any? (fn (_ s) (eq? s j)) to-send)
+            (if (null? (outcome j)) (%push-line (verdict j) u)
+              (%report-line "!" "[remote rejected]" (first u) 0 (%short (first (rest u))) (outcome j))))
+          (#t ""))))
+    (def ok? (fn (_ j) (List any? (fn (_ m) (eq? m j)) moved)))
     (def lines
-      (Str8 join ""
-        (List map
-          (fn (_ j)
-            (def u (rest j))
-            (match
-              ((eq? (verdict j) (lit rejected)) (%report-line "!" "[rejected]" (first u) 0 (%short (first (rest u))) (first (rest (first j)))))
-              ((List any? (fn (_ s) (eq? s j)) to-send)
-                (if (null? (outcome j)) (%push-line (verdict j) u)
-                  (%report-line "!" "[remote rejected]" (first u) 0 (%short (first (rest u))) (outcome j))))
-              (#t "")))
-          judged)))
+      (Str8 append
+        (Str8 join "" (List map line (List filter ok? judged)))
+        (Str8 join "" (List map line (List filter (fn (_ j) (not (ok? j))) judged)))))
     (def failed? (or (not (null? missing)) (not (null? refused)) (< (List length moved) (List length to-send))))
     (def kinds (List map (fn (_ j) (first (rest (rest (first j))))) refused))
     (def head-ref (if (null? current) "" (Str8 append "refs/heads/" current)))
     (def hint
       (match
-        ((List any? (fn (_ j) (and (eq? (first (rest (rest (first j)))) (lit non-ff)) (str=? (or (first (rest (rest (rest (rest (rest j)))))) "") head-ref))) refused)
+        ((List any? (fn (_ j) (and (eq? (first (rest (rest (first j)))) (lit non-ff)) (str=? (first (rest (rest j))) head-ref))) refused)
           %advice-pull-before-push)
         ((List any? (fn (_ k) (eq? k (lit non-ff))) kinds) %advice-checkout-pull-push)
         ((List any? (fn (_ k) (eq? k (lit exists))) kinds) %advice-already-exists)
