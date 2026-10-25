@@ -8,8 +8,8 @@ each request, runs the backend with the request in its environment and
 its body on its input, and answers with what the backend wrote.  x-git
 and git each reach the same repository through it -- ls-remote, clone,
 then a fetch after more commits land -- and each pushes the same commits
-to a repository of its own there; what each prints and ends with is
-compared, and what each pushed.  https is the same exchange over x-lang's Tls; a real
+to a repository of its own there; what each prints (a push's hint:
+lines aside) and ends with is compared, and what each pushed.  https is the same exchange over x-lang's Tls; a real
 one needs a certificate the client trusts, so here https meets the
 plain server, and the handshake's failure is refused in git's form.
 
@@ -100,9 +100,18 @@ plain server, and the handshake's failure is refused in git's form.
 ; x's words with its repository's name as git's, to compare them
 (def %ht-xp (fn (_ . ops) (List map (fn (_ v) (if (str? v) (Str8 replace "px.git" "pg.git" v) v)) (apply %ht-x (pair "x/c" (pair "push" (pair (%ht-at "px.git") ops)))))))
 (def %ht-gp (fn (_ . ops) (apply %ht-g (pair "g/c" (pair "push" (pair (%ht-at "pg.git") ops))))))
+; git's hint: lines aside -- whether it gives them depends on where it
+; runs -- each side's words; x's hint is looked for on its own
+(def %ht-plain
+  (fn (_ r)
+    (List map (fn (_ v) (if (str? v) (Str8 join "" (List map (fn (_ l) (Str8 append l "\n")) (List filter (fn (_ l) (not (or (= (Str8 length l) 0) (Str8 starts? "hint:" l)))) (Str8 split "\n" v)))) v)) r)))
+(def %ht-last ())
 ; #t when they match, else both, to show how they differ
 (def %ht-pushed
-  (fn (_ . ops) (let ((x (apply %ht-xp ops)) (g (apply %ht-gp ops))) (if (equal? x g) #t (list x g)))))
+  (fn (_ . ops)
+    (let ((x (apply %ht-xp ops)) (g (apply %ht-gp ops)))
+      (do (set! %ht-last x)
+          (if (equal? (%ht-plain x) (%ht-plain g)) #t (list x g))))))
 (def %ht-served
   (fn (_) (equal? (git-oracle-in (Str8 append %ht-d "/srv/px.git") "for-each-ref" "--format=%(refname) %(objectname)")
                   (git-oracle-in (Str8 append %ht-d "/srv/pg.git") "for-each-ref" "--format=%(refname) %(objectname)"))))
@@ -110,10 +119,11 @@ plain server, and the handshake's failure is refused in git's form.
              (first (git-oracle-in (Str8 append %ht-d "/srv/px.git") "fsck" "--strict"))
              (%ht-pushed ":new") (%ht-served)
              ; refused, HEAD's branch the one refused, reported after what moved
-             (%ht-pushed "main~1:main" "main:other") (%ht-served)))
+             (%ht-pushed "main~1:main" "main:other") (%ht-served)
+             (Str8 includes? "hint: Updates were rejected because the tip of your current branch is behind" (first (rest (rest %ht-last))))))
 ```
 ---
-    (#t #t 0 #t #t #t #t)
+    (#t #t 0 #t #t #t #t #t)
 
 ## refusals
 
