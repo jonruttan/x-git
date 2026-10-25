@@ -100,8 +100,9 @@ plain server, and the handshake's failure is refused in git's form.
 ; x's words with its repository's name as git's, to compare them
 (def %ht-xp (fn (_ . ops) (List map (fn (_ v) (if (str? v) (Str8 replace "px.git" "pg.git" v) v)) (apply %ht-x (pair "x/c" (pair "push" (pair (%ht-at "px.git") ops)))))))
 (def %ht-gp (fn (_ . ops) (apply %ht-g (pair "g/c" (pair "push" (pair (%ht-at "pg.git") ops))))))
+; #t when they match, else both, to show how they differ
 (def %ht-pushed
-  (fn (_ . ops) (equal? (apply %ht-xp ops) (apply %ht-gp ops))))
+  (fn (_ . ops) (let ((x (apply %ht-xp ops)) (g (apply %ht-gp ops))) (if (equal? x g) #t (list x g)))))
 (def %ht-served
   (fn (_) (equal? (git-oracle-in (Str8 append %ht-d "/srv/px.git") "for-each-ref" "--format=%(refname) %(objectname)")
                   (git-oracle-in (Str8 append %ht-d "/srv/pg.git") "for-each-ref" "--format=%(refname) %(objectname)"))))
