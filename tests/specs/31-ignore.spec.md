@@ -111,7 +111,8 @@ set to nothing, so only the repository's own patterns count.
           (g (apply git-oracle-in (pair %ci-s (pair "-c" (pair "core.excludesFile=/dev/null" ops))))))
       (if (equal? x g) #t (list x g)))))
 (write (list (%ci-in "status" "--porcelain" "--ignored")
-             (%ci-in "status" "--ignored")
+             ; git's hints asked for: the macOS runner's git has them off
+             (%ci-in "-c" "advice.statusHints=true" "status" "--ignored")
              (%ci-in "status" "-s" "--ignored=matching")
              (%ci-in "status" "-s" "--ignored=no")
              (%ci-in "status" "-s" "--ignored=traditional")
