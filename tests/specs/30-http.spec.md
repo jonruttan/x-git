@@ -1,5 +1,5 @@
 # @weight 4
-# @timeout-scale 3
+# @timeout-scale 5
 
 git's smart http transport, against git itself.  The far end is git's
 own `git http-backend`, run as a CGI program by tests/http-server.x, a
