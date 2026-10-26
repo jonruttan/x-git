@@ -6,22 +6,29 @@
 ; @copyright 2026 Jon Ruttan
 ; @license MIT No Attribution (MIT-0)
 ;
-; The patterns of .git/info/exclude and of every .gitignore above a path,
-; read as git reads them (gitignore(5)): a line a pattern, blank and `#`
-; lines nothing, trailing spaces dropped unless escaped, a leading `!`
-; negating, a trailing `/` matching a directory alone, a `/` anywhere else
-; anchoring the pattern at its file's directory, and `*`, `?`, `[...]` and
-; `**` as in a shell, `*` never crossing a `/`.  Of the patterns that
-; match a path, the one in the deepest file, and latest in it, decides;
-; a directory ignored takes everything in it with it, past any `!`.
+; The patterns of every .gitignore above a path, of .git/info/exclude and
+; of core.excludesFile -- $XDG_CONFIG_HOME/git/ignore or
+; ~/.config/git/ignore when it is not set -- read as git reads them
+; (gitignore(5)): a line a pattern, blank and `#` lines nothing, trailing
+; spaces dropped unless escaped, a leading `!` negating, a trailing `/`
+; matching a directory alone, a `/` anywhere else anchoring the pattern
+; at its file's directory, and `*`, `?`, `[...]` and `**` as in a shell,
+; `*` never crossing a `/`.  A directory above the path that is ignored
+; takes everything in it with it, past any `!`; otherwise, of the
+; patterns that match the path, the one in the deepest .gitignore, and
+; latest in it, decides, then info/exclude's, then core.excludesFile's.
 ;
-; (git-ignorer wd gitdir) answers a function of a path and whether it is a
-; directory, reading each directory's .gitignore the first time a path
-; under it is asked about.
+; (git-ignore-matcher wd gitdir) answers a function of a path and whether
+; it is a directory: the rule that decides, or () -- the rule's file,
+; line and text for check-ignore -v.  (git-ignorer wd gitdir) answers
+; whether it is ignored.  Each directory's .gitignore is read the first
+; time a path under it is asked about.
 
 (module git/ignore)
 
 (import x/sys/file File)
+(import x/sys/posix Sys)
+(import git/config git-config-value)
 
 (def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
@@ -73,14 +80,16 @@
 ; --- a pattern against a path ---
 
 ; Do the pattern's segments match the path's from its start, `**` taking
-; any number?  Answers how many path segments they took, or () -- a match
-; of a prefix is a match of the directory that prefix names.
+; any number -- at least one when it ends the pattern, which matches what
+; is inside a directory and not the directory?  Answers how many path
+; segments they took, or () -- a match of a prefix is a match of the
+; directory that prefix names.
 (def %prefix-match
   (fn (self ps segs taken)
     (match
       ((null? ps) taken)
       ((str=? (first ps) "**")
-        (if (null? (rest ps)) (%add taken (List length segs))
+        (if (null? (rest ps)) (if (null? segs) () (%add taken (List length segs)))
           ((fn (try ss k)
              (if (null? ss) ()
                (do (def r (self (rest ps) ss k))
@@ -90,10 +99,12 @@
       ((%segment? (first ps) (first segs)) (self (rest ps) (rest segs) (%add taken 1)))
       (#t ()))))
 
-; A rule: (NEGATED? DIR-ONLY? ANCHORED? SEGMENTS BASE), BASE the directory
-; of the file it came from, "" or "sub/".
+; A rule: (NEGATED? DIR-ONLY? ANCHORED? SEGMENTS BASE SOURCE LINE TEXT),
+; BASE the directory of the file it came from, "" or "sub/", SOURCE that
+; file as check-ignore names it, LINE its line there, TEXT the pattern as
+; written, its trailing spaces dropped.
 (def %rule
-  (fn (_ line base)
+  (fn (_ line base source at)
     (def l (%trim-trailing line))
     (if (or (= (Str8 length l) 0) (Str8 starts? "#" l)) ()
       (do (def negated (Str8 starts? "!" l))
@@ -105,7 +116,12 @@
           (def anchored (not (null? (Str8 index-of "/" body1))))
           (def body (if (Str8 starts? "/" body1) (Str8 sub 1 (%sub (Str8 length body1) 1) body1) body1))
           (if (= (Str8 length body) 0) ()
-            (list negated dir-only anchored (Str8 split "/" body) base))))))
+            (list negated dir-only anchored (Str8 split "/" body) base source at l))))))
+
+(def git-ignore-rule-negated? (fn (_ rule) (first rule)))
+(def git-ignore-rule-source (fn (_ rule) (List ref 5 rule)))
+(def git-ignore-rule-line (fn (_ rule) (List ref 6 rule)))
+(def git-ignore-rule-text (fn (_ rule) (List ref 7 rule)))
 
 ; Trailing spaces dropped, unless the last is escaped.
 (def %trim-trailing
@@ -139,13 +155,30 @@
                    (self (rest ss) (%add i 1)))))
              segs 0))))))
 
-; The rules of a file, latest first, or () when there is no file.
+; The rules of a file, latest first, or () when there is no file; source
+; is the file as check-ignore names it.
 (def %rules-of
-  (fn (_ path base)
+  (fn (_ path base source)
     (if (not (File exists? path)) ()
-      (List reverse
-        (List filter (fn (_ r) (not (null? r)))
-          (List map (fn (_ l) (%rule l base)) (Str8 split "\n" (File read-all path))))))))
+      ((fn (self lines at acc)
+         (if (null? lines) acc
+           (let ((r (%rule (first lines) base source at)))
+             (self (rest lines) (%add at 1) (if (null? r) acc (pair r acc))))))
+       (Str8 split "\n" (File read-all path)) 1 ()))))
+
+; core.excludesFile, ~/ for the home directory, or git's default in the
+; user's configuration directory; () when there is none.
+(def %excludes-file
+  (fn (_ gitdir)
+    (def env (fn (_ n) (let ((v (Sys getenv n))) (if (or (null? v) (= (Str8 length v) 0)) () v))))
+    (def named (git-config-value gitdir "core.excludesFile"))
+    (def home (env "HOME"))
+    (match
+      ((not (null? named))
+        (if (and (Str8 starts? "~/" named) (not (null? home))) (Str8 append home (Str8 sub 1 (%sub (Str8 length named) 1) named)) named))
+      ((not (null? (env "XDG_CONFIG_HOME"))) (Str8 append (env "XDG_CONFIG_HOME") "/git/ignore"))
+      ((not (null? home)) (Str8 append home "/.config/git/ignore"))
+      (#t ()))))
 
 ; The directories above a path, deepest first: "a/b/" "a/" "" for a/b/c.
 (def %dirs-above
@@ -156,15 +189,22 @@
          (self j (pair (Str8 sub 0 (%add j 1) path) acc))))
      (Str8 length path) ())))
 
-(def git-ignorer
+(def git-ignore-matcher
   (fn (_ wd gitdir)
-    ; the rules by directory, read once each; info/exclude under every file
-    (def cache (list (pair (lit exclude) (%rules-of (Str8 append gitdir "/info/exclude") ""))))
+    ; the rules by directory, read once each; info/exclude's then
+    ; core.excludesFile's under every file's
+    (def info (Str8 append gitdir "/info/exclude"))
+    (def user (%excludes-file gitdir))
+    (def global
+      (List append
+        (%rules-of info "" (if (str=? gitdir (Str8 append wd "/.git")) ".git/info/exclude" info))
+        (if (null? user) () (%rules-of (if (Str8 starts? "/" user) user (Str8 append wd "/" user)) "" user))))
+    (def cache ())
     (def rules-for
       (fn (_ dir)
         (def hit (Assoc entry dir cache))
         (if (not (null? hit)) (rest hit)
-          (do (def r (%rules-of (Str8 append wd "/" dir ".gitignore") dir))
+          (do (def r (%rules-of (Str8 append wd "/" dir ".gitignore") dir (Str8 append dir ".gitignore")))
               (set! cache (pair (pair dir r) cache))
               r))))
     ; the first rule, deepest file and latest line first, that matches
@@ -173,21 +213,23 @@
         ((fn (self rs)
            (match
              ((null? rs) ())
-             ((%matches? (first rs) path dir?) (not (first (first rs))))
+             ((%matches? (first rs) path dir?) (first rs))
              (#t (self (rest rs)))))
-         (List append
-           (List flat-map rules-for (List reverse (%dirs-above path)))
-           (rest (Assoc entry (lit exclude) cache))))))
-    ; a directory above the path ignored takes it with it
+         (List append (List flat-map rules-for (List reverse (%dirs-above path))) global))))
+    ; a directory above the path ignored takes it with it, the shallowest
+    ; first, as git looks; then the path's own rule
     (fn (_ path dir?)
-      (def own (decide path dir?))
-      (if (not (null? own)) own
-        ((fn (self ds)
-           (if (null? ds) #f
-             (if (str=? (first ds) "") #f
-               (do (def d (Str8 sub 0 (%sub (Str8 length (first ds)) 1) (first ds)))
-                   (def r (decide d #t))
-                   (if (null? r) (self (rest ds)) r)))))
-         (%dirs-above path))))))
+      ((fn (self ds)
+         (if (null? ds) (decide path dir?)
+           (if (str=? (first ds) "") (self (rest ds))
+             (do (def r (decide (Str8 sub 0 (%sub (Str8 length (first ds)) 1) (first ds)) #t))
+                 (if (or (null? r) (first r)) (self (rest ds)) r)))))
+       (%dirs-above path)))))
 
-(provide git/ignore git-ignorer)
+(def git-ignorer
+  (fn (_ wd gitdir)
+    (def rule-of (git-ignore-matcher wd gitdir))
+    (fn (_ path dir?) (let ((r (rule-of path dir?))) (if (null? r) #f (not (first r)))))))
+
+(provide git/ignore git-ignorer git-ignore-matcher git-ignore-rule-negated? git-ignore-rule-source
+  git-ignore-rule-line git-ignore-rule-text)

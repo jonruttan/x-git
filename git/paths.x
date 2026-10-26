@@ -12,7 +12,10 @@
 ; whose working copy or index entry differs from HEAD unless -f or
 ; --cached; a directory left empty goes with its files.  mv [-f] [-k] [-v]
 ; <source>... <destination> renames a file or a directory, or moves
-; several into a directory, the index following.  The words are git's.
+; several into a directory, the index following.  check-ignore [-q] [-v
+; [-n]] [--no-index] <pathname>... names the paths .gitignore ignores,
+; with -v the pattern that decides, its file and line.  The words are
+; git's.
 
 (module git/paths)
 
@@ -22,6 +25,8 @@
 (import git/index git-tree-files)
 (import git/refs git-tree-of)
 (import git/stage git-index-write! git-read-entries)
+(import git/ignore git-ignore-matcher git-ignore-rule-negated? git-ignore-rule-source git-ignore-rule-line
+  git-ignore-rule-text)
 
 (def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
@@ -267,4 +272,57 @@
           (File rmdir dir))
       ())))
 
-(provide git/paths git-rm git-rm-options git-mv git-mv-options)
+; --- check-ignore ---
+
+(def git-check-ignore-options
+  (Opts declare "git check-ignore" "[<options>] <pathname>..." ()
+    (list
+      (Opts flag "-q" "--quiet" "Print nothing; the status says whether the path is ignored")
+      (Opts flag "-v" "--verbose" "Name the pattern that decides each path")
+      (Opts flag "-n" "--non-matching" "With -v, list the paths no pattern matches too")
+      (Opts flag "--no-index" "Ask about tracked paths too"))))
+
+; What check-ignore prints for a path and the rule that decided it, ()
+; when none did: a line, or nothing.
+(def %ignore-line
+  (fn (_ path rule verbose? all?)
+    (match
+      ((not verbose?) (if (null? rule) "" (Str8 append path "\n")))
+      ((not (null? rule))
+        (Str8 append (git-ignore-rule-source rule) ":" (Str8 str (git-ignore-rule-line rule)) ":"
+          (git-ignore-rule-text rule) "\t" path "\n"))
+      (all? (Str8 append "::\t" path "\n"))
+      (#t ""))))
+
+(def git-check-ignore
+  (fn (_ wd gitdir ops)
+    (def o (Opts parse git-check-ignore-options ops))
+    (def on? (fn (_ f) (Opts on? o f)))
+    (def paths (Opts operands o))
+    (match
+      ((Opts help? git-check-ignore-options ops) (list (lit out) (Opts usage git-check-ignore-options) 0))
+      ((not (null? (Opts unknown o))) (%unknown-option (Opts unknown o) (Opts usage git-check-ignore-options)))
+      ((null? gitdir) (%no-repo))
+      ((null? paths) (%fatal "no path specified"))
+      ((and (on? "-q") (> (List length paths) 1)) (%fatal "--quiet is only valid with a single pathname"))
+      ((and (on? "-q") (on? "-v")) (%fatal "cannot have both --quiet and --verbose"))
+      ((and (on? "-n") (not (on? "-v"))) (%fatal "--non-matching is only valid with --verbose"))
+      (#t
+        (let ((rule-of (git-ignore-matcher wd gitdir))
+              (index (if (on? "--no-index") () (git-read-entries gitdir))))
+          ; a tracked path, or a directory with one in it, is no question
+          ; of ignoring; a negation decides only what -v says
+          (let ((found (List map
+                         (fn (_ p)
+                           (def s (%strip-slash p))
+                           (pair p
+                             (if (not (null? (%entries-under index s))) ()
+                               (let ((r (rule-of s (%dir? (Str8 append wd "/" s)))))
+                                 (if (and (not (null? r)) (git-ignore-rule-negated? r) (not (on? "-v"))) () r)))))
+                         paths)))
+            (list (lit out)
+              (if (on? "-q") ""
+                (Str8 join "" (List map (fn (_ f) (%ignore-line (first f) (rest f) (on? "-v") (on? "-n"))) found)))
+              (if (List any? (fn (_ f) (not (null? (rest f)))) found) 0 1))))))))
+
+(provide git/paths git-rm git-rm-options git-mv git-mv-options git-check-ignore git-check-ignore-options)

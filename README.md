@@ -35,8 +35,8 @@ the kernel and x are installed (x-os).
   parent, an annotated tag then what it tags, a tree's entries, a blob's
   text; git's placeholders for --format (%H %h %T %t %P %p %s %b %B %an
   %ae %ad %cn %ce %cd %n %%).  A merge's combined diff is not drawn
-- `ls-files [--stage]` and `status [-s | --porcelain]` from the index
-  (.gitignore is not read)
+- `ls-files [--stage]` and `status [-s | --porcelain]` from the index,
+  the untracked paths as `.gitignore` leaves them
 - `add [-A] <pathspec>...`: the blobs written, the index written (version 2)
 - `commit -m <message> [-q] [--no-edit]`: the trees from the index, the
   commit with the identity and time git takes -- `GIT_AUTHOR_*` and
@@ -123,8 +123,10 @@ the kernel and x are installed (x-os).
   left with `REVERT_HEAD` and `MERGE_MSG` for `--continue` or `commit`.
   One commit at a time; a merge, which needs `-m`, is refused
 - `rm [-r] [--cached] [-f] <pathspec>...`, `mv <source>... <destination>`;
-  `.gitignore`, `.git/info/exclude` and `core.excludesFile` as
-  gitignore(5) reads them
+  `.gitignore`, `.git/info/exclude` and `core.excludesFile` (or
+  `~/.config/git/ignore`) as gitignore(5) reads them, and
+  `check-ignore [-q] [-v [-n]] [--no-index] <pathname>...`, which says
+  what they ignore and, with -v, which pattern decides
 - an object named in full, by a unique hex prefix of four digits or more,
   or by a revision: `HEAD`, a branch or tag (loose or in `packed-refs`,
   looked up as gitrevisions(7) does), with `~N`, `^N`, `^{tree}`,
