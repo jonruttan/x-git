@@ -18,10 +18,11 @@
 ; patterns that match the path, the one in the deepest .gitignore, and
 ; latest in it, decides, then info/exclude's, then core.excludesFile's.
 ;
-; (git-ignore-matcher wd gitdir) answers a function of a path and whether
-; it is a directory: the rule that decides, or () -- the rule's file,
-; line and text for check-ignore -v.  (git-ignorer wd gitdir) answers
-; whether it is ignored.  Each directory's .gitignore is read the first
+; (git-ignore-matcher wd gitdir [patterns]) answers a function of a path
+; and whether it is a directory: the rule that decides, or () -- the
+; rule's file, line and text for check-ignore -v; patterns, as clean's -e
+; gives them, come before every file's.  (git-ignorer wd gitdir
+; [patterns]) answers whether it is ignored.  Each directory's .gitignore is read the first
 ; time a path under it is asked about.
 
 (module git/ignore)
@@ -190,9 +191,14 @@
      (Str8 length path) ())))
 
 (def git-ignore-matcher
-  (fn (_ wd gitdir)
+  (fn (_ wd gitdir . given)
+    ; the patterns given (clean's -e), latest first, before every file's;
     ; the rules by directory, read once each; info/exclude's then
     ; core.excludesFile's under every file's
+    (def extra
+      (List reverse
+        (List filter (fn (_ r) (not (null? r)))
+          (List map (fn (_ p) (%rule p "" "" 0)) (if (null? given) () (first given))))))
     (def info (Str8 append gitdir "/info/exclude"))
     (def user (%excludes-file gitdir))
     (def global
@@ -215,7 +221,7 @@
              ((null? rs) ())
              ((%matches? (first rs) path dir?) (first rs))
              (#t (self (rest rs)))))
-         (List append (List flat-map rules-for (List reverse (%dirs-above path))) global))))
+         (List append extra (List append (List flat-map rules-for (List reverse (%dirs-above path))) global)))))
     ; a directory above the path ignored takes it with it, the shallowest
     ; first, as git looks; then the path's own rule
     (fn (_ path dir?)
@@ -227,8 +233,8 @@
        (%dirs-above path)))))
 
 (def git-ignorer
-  (fn (_ wd gitdir)
-    (def rule-of (git-ignore-matcher wd gitdir))
+  (fn (_ wd gitdir . given)
+    (def rule-of (git-ignore-matcher wd gitdir (if (null? given) () (first given))))
     (fn (_ path dir?) (let ((r (rule-of path dir?))) (if (null? r) #f (not (first r)))))))
 
 (provide git/ignore git-ignorer git-ignore-matcher git-ignore-rule-negated? git-ignore-rule-source
