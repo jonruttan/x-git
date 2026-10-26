@@ -7,7 +7,8 @@ nested one, info/exclude and core.excludesFile -- and a list of paths
 that each touch one.  x-git and git are asked about all of them at once,
 `-v -n` naming the deciding pattern of each (or none), and what each
 prints and ends with is compared; then the plain form, a tracked path,
-the default excludes file and the refusals.
+the default excludes file and the refusals.  Then what status --ignored
+and ls-files -o/-i list, against git's lists of the same tree.
 
 ## check-ignore
 
@@ -77,14 +78,65 @@ the default excludes file and the refusals.
 ### refusals in git's words
 
 ```git
-(def %ci-refused
-  (list (%ci-ask "check-ignore")
-        (%ci-ask "check-ignore" "-q" "a" "b")
-        (%ci-ask "check-ignore" "-q" "-v" "a")
-        (%ci-ask "check-ignore" "-n" "a")
-        (git-text-in %ci-r "check-ignore" "-n" "a")))
-(%ci-sh "rm -rf \"$0\"")
-(write %ci-refused)
+(write (list (%ci-ask "check-ignore")
+             (%ci-ask "check-ignore" "-q" "a" "b")
+             (%ci-ask "check-ignore" "-q" "-v" "a")
+             (%ci-ask "check-ignore" "-n" "a")
+             (git-text-in %ci-r "check-ignore" "-n" "a")))
 ```
 ---
     (#t #t #t #t (128 . "fatal: --non-matching is only valid with --verbose\n"))
+
+## the ignored listed
+
+A second repository: an untracked directory holding both kinds of file,
+one holding only ignored files (and one nested so), an ignored
+directory, an ignored file beside a tracked one, an empty directory, and
+`a-b` beside `a/`, which sort as whole paths do.  core.excludesFile is
+set to nothing, so only the repository's own patterns count.
+
+### status --ignored: traditional, matching, no; short and long
+
+```git
+(%ci-sh
+  (Str8 append "git init -q -b main s && cd s && printf '*.log\\nbuild/\\n' > .gitignore"
+    " && mkdir -p u build onlyign t emptyd e2/x a && printf a > u/a.txt && printf b > u/b.log && printf c > build/c"
+    " && printf d > onlyign/d.log && printf t > t/t.txt && git add .gitignore t/t.txt"
+    " && git -c user.name=A -c user.email=a@b.c commit -qm one"
+    " && printf l > t/l.log && printf r > root.log && printf o > a-b && printf p > a/p && printf z > e2/x/z.log"))
+(def %ci-s (Str8 append %ci-d "/s"))
+(def %ci-in
+  (fn (_ . ops)
+    (let ((x (apply git-text-in (pair %ci-s (pair "-c" (pair "core.excludesFile=/dev/null" ops)))))
+          (g (apply git-oracle-in (pair %ci-s (pair "-c" (pair "core.excludesFile=/dev/null" ops))))))
+      (if (equal? x g) #t (list x g)))))
+(write (list (%ci-in "status" "--porcelain" "--ignored")
+             (%ci-in "status" "--ignored")
+             (%ci-in "status" "-s" "--ignored=matching")
+             (%ci-in "status" "-s" "--ignored=no")
+             (%ci-in "status" "-s" "--ignored=traditional")
+             (%ci-in "status" "--porcelain")
+             (%ci-in "status" "--ignored=bad")
+             (git-text-in %ci-s "-c" "core.excludesFile=/dev/null" "status" "--porcelain" "--ignored")))
+```
+---
+    (#t #t #t #t #t #t #t (0 . "?? a-b\n?? a/\n?? u/\n!! build/\n!! e2/\n!! onlyign/\n!! root.log\n!! t/l.log\n!! u/b.log\n"))
+
+### ls-files: the others, the ignored among them or the rest, the ignored tracked, the refusals
+
+```git
+(%ci-sh "cd s && git add -f root.log")
+(def %ci-ls
+  (list (%ci-in "ls-files" "-o")
+        (%ci-in "ls-files" "-o" "--exclude-standard")
+        (%ci-in "ls-files" "-o" "-i" "--exclude-standard")
+        (%ci-in "ls-files" "-c" "-i" "--exclude-standard")
+        (%ci-in "ls-files" "-o" "-c" "--exclude-standard")
+        (%ci-in "ls-files" "-i")
+        (%ci-in "ls-files" "-i" "-o")
+        (git-text-in %ci-s "-c" "core.excludesFile=/dev/null" "ls-files" "-o" "-i" "--exclude-standard")))
+(%ci-sh "rm -rf \"$0\"")
+(write %ci-ls)
+```
+---
+    (#t #t #t #t #t #t #t (0 . "build/c\ne2/x/z.log\nonlyign/d.log\nt/l.log\nu/b.log\n"))
