@@ -16,25 +16,12 @@
 (import x/sys/file File)
 (import x/sys/posix Sys)
 (import git/objects git-write-file!)
+(import git/commands git-fatal git-no-repo git-unknown-option)
 (import git/refs git-ref-read git-rev-parse git-commit-of)
 (import git/config git-config-value)
 
 (def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
-
-(def %fatal (fn (_ text) (list (lit err) (Str8 append "fatal: " text "\n") 128)))
-(def %no-repo
-  (fn (_) (%fatal "not a git repository (or any of the parent directories): .git")))
-(def %unknown-option
-  (fn (_ w usage)
-    (def n (Str8 length w))
-    (list (lit err)
-      (Str8 append
-        (if (Str8 starts? "--" w)
-          (Str8 append "error: unknown option `" (Str8 sub 2 (- n 2) w))
-          (Str8 append "error: unknown switch `" (Str8 sub 1 (- n 1) w)))
-        "'\n" usage)
-      129)))
 
 ; --- init ---
 
@@ -72,7 +59,7 @@
     (def operands (Opts operands o))
     (match
       ((Opts help? git-init-options ops) (list (lit out) (Opts usage git-init-options) 0))
-      ((not (null? (Opts unknown o))) (%unknown-option (Opts unknown o) (Opts usage git-init-options)))
+      ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-init-options)))
       (#t
         (let ((dir (if (null? operands) wd
                      (if (Str8 starts? "/" (first operands)) (first operands) (Str8 append wd "/" (first operands))))))
@@ -178,9 +165,9 @@
           (let ((sha (if (str=? kind "branch") (git-commit-of gitdir start) (git-rev-parse gitdir start))))
             (match
               ((not (null? (git-ref-read gitdir (Str8 append prefix name))))
-                (%fatal (Str8 append (if (str=? kind "branch") "a branch named '" "tag '") name "' already exists")))
+                (git-fatal (Str8 append (if (str=? kind "branch") "a branch named '" "tag '") name "' already exists")))
               ((null? sha)
-                (%fatal (Str8 append "not a valid object name: '" start "'")))
+                (git-fatal (Str8 append "not a valid object name: '" start "'")))
               (#t
                 (do (git-write-file! (Str8 append gitdir "/" prefix name) (Str8 append sha "\n") 41)
                     (list (lit out) "" 0))))))))))
@@ -194,8 +181,8 @@
     (def o (Opts parse git-branch-options ops))
     (match
       ((Opts help? git-branch-options ops) (list (lit out) (Opts usage git-branch-options) 0))
-      ((not (null? (Opts unknown o))) (%unknown-option (Opts unknown o) (Opts usage git-branch-options)))
-      ((null? gitdir) (%no-repo))
+      ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-branch-options)))
+      ((null? gitdir) (git-no-repo))
       (#t (%ref-command gitdir "branch" "refs/heads/" (Opts usage git-branch-options) o)))))
 
 (def git-tag-options
@@ -207,8 +194,8 @@
     (def o (Opts parse git-tag-options ops))
     (match
       ((Opts help? git-tag-options ops) (list (lit out) (Opts usage git-tag-options) 0))
-      ((not (null? (Opts unknown o))) (%unknown-option (Opts unknown o) (Opts usage git-tag-options)))
-      ((null? gitdir) (%no-repo))
+      ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-tag-options)))
+      ((null? gitdir) (git-no-repo))
       (#t (%ref-command gitdir "tag" "refs/tags/" (Opts usage git-tag-options) o)))))
 
 ; The names under a refs prefix, for clone.

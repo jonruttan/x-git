@@ -29,6 +29,7 @@
 (import x/sys/opts Opts)
 (import x/sys/file File)
 (import git/objects git-object-read git-object-text git-tree-entries)
+(import git/commands git-fatal)
 (import git/packs git-pack-has? git-pack-write! git-pack-bytes git-pack-index!)
 (import git/refs git-ref-read git-rev-parse)
 (import git/repo git-refs-under git-unpack-ref!)
@@ -41,10 +42,8 @@
 (def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
 
-(def %fatal (fn (_ text) (list (lit err) (Str8 append "fatal: " text "\n") 128)))
-
 (def %not-a-repo
-  (fn (_) (%fatal "not a git repository (or any of the parent directories): .git")))
+  (fn (_) (git-fatal "not a git repository (or any of the parent directories): .git")))
 
 (def %cannot-read proto-cannot-read)
 
@@ -496,7 +495,7 @@
 
 (def %no-upstream
   (fn (_ branch remote)
-    (%fatal
+    (git-fatal
       (Str8 append "The current branch " branch " has no upstream branch.\n"
         "To push the current branch and set the remote as upstream, use\n\n"
         "    git push --set-upstream " remote " " branch "\n\n"
@@ -894,9 +893,9 @@
     (match
       ((Opts help? git-push-options ops) (list (lit out) (Opts usage git-push-options) 0))
       ((null? gitdir) (%not-a-repo))
-      ((and (Opts on? o "-d") (null? named)) (%fatal "--delete doesn't make sense without any refs"))
+      ((and (Opts on? o "-d") (null? named)) (git-fatal "--delete doesn't make sense without any refs"))
       ((not (null? specs)) (push! specs))
-      ((null? current) (%fatal "You are not currently on a branch."))
+      ((null? current) (git-fatal "You are not currently on a branch."))
       ((and (null? operands) (null? upstream)) (%no-upstream current remote))
       ((null? operands) (push! (list (list force? current (%strip-heads upstream)))))
       (#t (push! (list (list force? current current)))))))

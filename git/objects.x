@@ -199,7 +199,7 @@
 ; --- trees ---
 
 ; What a tree entry's mode names.
-(def %mode-type
+(def git-mode-type
   (fn (_ mode)
     (match
       ((str=? mode "40000") "tree")
@@ -239,7 +239,7 @@
     (Str8 join ""
       (List map
         (fn (_ e)
-          (Str8 append (Str8 pad-left 6 #\0 (first e)) " " (%mode-type (first e)) " "
+          (Str8 append (Str8 pad-left 6 #\0 (first e)) " " (git-mode-type (first e)) " "
                        (first (rest (rest e))) "\t" (first (rest e)) "\n"))
         (git-tree-entries (list "tree" size r start))))))
 
@@ -248,5 +248,13 @@
   (fn (_ o)
     (%bytes->string (first (rest (rest o))) (first (rest (rest (rest o)))) (first (rest o)))))
 
+; A commit's subject: its message's first line.
+(def git-subject
+  (fn (_ gitdir sha)
+    (def text (git-object-text (git-object-read gitdir sha)))
+    (def i (Str8 index-of "\n\n" text))
+    (if (null? i) "" (first (Str8 split "\n" (Str8 sub (%add i 2) (%sub (Str8 length text) (%add i 2)) text))))))
+
 (provide git/objects git-dir git-parent git-read-file git-write-file! git-hash
-  git-object-write! git-object-read git-resolve git-tree-pretty git-tree-entries git-object-text)
+  git-object-write! git-object-read git-resolve git-tree-pretty git-tree-entries git-object-text
+  git-mode-type git-subject)

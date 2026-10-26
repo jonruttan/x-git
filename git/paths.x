@@ -22,6 +22,7 @@
 (import x/sys/opts Opts)
 (import x/sys/file File)
 (import git/objects git-hash git-read-file)
+(import git/commands git-fatal git-no-repo git-unknown-option git-strip-slash)
 (import git/index git-tree-files)
 (import git/refs git-tree-of)
 (import git/stage git-index-write! git-read-entries)
@@ -30,23 +31,6 @@
 
 (def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
-
-(def %fatal (fn (_ text) (list (lit err) (Str8 append "fatal: " text "\n") 128)))
-(def %no-repo
-  (fn (_) (%fatal "not a git repository (or any of the parent directories): .git")))
-(def %unknown-option
-  (fn (_ w usage)
-    (def n (Str8 length w))
-    (list (lit err)
-      (Str8 append
-        (if (Str8 starts? "--" w)
-          (Str8 append "error: unknown option `" (Str8 sub 2 (- n 2) w))
-          (Str8 append "error: unknown switch `" (Str8 sub 1 (- n 1) w)))
-        "'\n" usage)
-      129)))
-
-(def %strip-slash
-  (fn (_ s) (if (and (> (Str8 length s) 1) (Str8 ends? "/" s)) (Str8 sub 0 (%sub (Str8 length s) 1) s) s)))
 
 ; The index entries (PATH MODE SHA SIZE MTIME ...) under a path: the
 ; entry itself, or every one below it when it names a directory.
@@ -95,11 +79,11 @@
 (def git-rm
   (fn (_ wd gitdir ops)
     (def o (Opts parse git-rm-options ops))
-    (def specs (List map (fn (_ s) (%strip-slash s)) (Opts operands o)))
+    (def specs (List map (fn (_ s) (git-strip-slash s)) (Opts operands o)))
     (match
       ((Opts help? git-rm-options ops) (list (lit out) (Opts usage git-rm-options) 0))
-      ((not (null? (Opts unknown o))) (%unknown-option (Opts unknown o) (Opts usage git-rm-options)))
-      ((null? gitdir) (%no-repo))
+      ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-rm-options)))
+      ((null? gitdir) (git-no-repo))
       ((null? specs) (list (lit err) (Opts usage git-rm-options) 129))
       (#t
         (do
@@ -107,8 +91,8 @@
           (def missing (List find (fn (_ s) (null? (%entries-under index s))) specs))
           (def dir (List find (fn (_ s) (if (Opts on? o "-r") #f (null? (List find (fn (_ e) (str=? (first e) s)) index)))) specs))
           (match
-            ((not (null? missing)) (%fatal (Str8 append "pathspec '" missing "' did not match any files")))
-            ((not (null? dir)) (%fatal (Str8 append "not removing '" dir "' recursively without -r")))
+            ((not (null? missing)) (git-fatal (Str8 append "pathspec '" missing "' did not match any files")))
+            ((not (null? dir)) (git-fatal (Str8 append "not removing '" dir "' recursively without -r")))
             (#t
               (do
                 (def head (git-tree-files gitdir (git-tree-of gitdir "HEAD")))
@@ -173,15 +157,15 @@
     (def entries (%entries-under index src))
     (def tracked-file? (not (null? (List find (fn (_ e) (str=? (first e) src)) index))))
     (match
-      ((not (File exists? full-src)) (%fatal (Str8 append "bad source, source=" src ", destination=" dst)))
+      ((not (File exists? full-src)) (git-fatal (Str8 append "bad source, source=" src ", destination=" dst)))
       ((if (%dir? full-src) (null? entries) (not tracked-file?))
-        (%fatal (Str8 append "not under version control, source=" src ", destination=" dst)))
+        (git-fatal (Str8 append "not under version control, source=" src ", destination=" dst)))
       ((or (str=? src dst) (Str8 starts? (Str8 append src "/") dst))
-        (%fatal (Str8 append "can not move directory into itself, source=" src ", destination=" dst)))
+        (git-fatal (Str8 append "can not move directory into itself, source=" src ", destination=" dst)))
       ((and (File exists? full-dst) (not force?))
-        (%fatal (Str8 append "destination exists, source=" src ", destination=" dst)))
+        (git-fatal (Str8 append "destination exists, source=" src ", destination=" dst)))
       ((not (File exists? (Str8 append wd "/" (%parent dst))))
-        (%fatal (Str8 append "renaming '" src "' failed: No such file or directory")))
+        (git-fatal (Str8 append "renaming '" src "' failed: No such file or directory")))
       (#t
         (List map
           (fn (_ e)
@@ -198,11 +182,11 @@
 (def git-mv
   (fn (_ wd gitdir ops)
     (def o (Opts parse git-mv-options ops))
-    (def operands (List map (fn (_ s) (%strip-slash s)) (Opts operands o)))
+    (def operands (List map (fn (_ s) (git-strip-slash s)) (Opts operands o)))
     (match
       ((Opts help? git-mv-options ops) (list (lit out) (Opts usage git-mv-options) 0))
-      ((not (null? (Opts unknown o))) (%unknown-option (Opts unknown o) (Opts usage git-mv-options)))
-      ((null? gitdir) (%no-repo))
+      ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-mv-options)))
+      ((null? gitdir) (git-no-repo))
       ((or (null? operands) (null? (rest operands))) (list (lit err) (Opts usage git-mv-options) 129))
       (#t
         (do
@@ -212,7 +196,7 @@
           (def into-dir? (%dir? (Str8 append wd "/" dst)))
           (match
             ((and (not (null? (rest srcs))) (not into-dir?))
-              (%fatal (Str8 append "destination '" dst "' is not a directory")))
+              (git-fatal (Str8 append "destination '" dst "' is not a directory")))
             (#t
               (do
                 ; each source to its own destination: into the directory by its
@@ -301,12 +285,12 @@
     (def paths (Opts operands o))
     (match
       ((Opts help? git-check-ignore-options ops) (list (lit out) (Opts usage git-check-ignore-options) 0))
-      ((not (null? (Opts unknown o))) (%unknown-option (Opts unknown o) (Opts usage git-check-ignore-options)))
-      ((null? gitdir) (%no-repo))
-      ((null? paths) (%fatal "no path specified"))
-      ((and (on? "-q") (> (List length paths) 1)) (%fatal "--quiet is only valid with a single pathname"))
-      ((and (on? "-q") (on? "-v")) (%fatal "cannot have both --quiet and --verbose"))
-      ((and (on? "-n") (not (on? "-v"))) (%fatal "--non-matching is only valid with --verbose"))
+      ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-check-ignore-options)))
+      ((null? gitdir) (git-no-repo))
+      ((null? paths) (git-fatal "no path specified"))
+      ((and (on? "-q") (> (List length paths) 1)) (git-fatal "--quiet is only valid with a single pathname"))
+      ((and (on? "-q") (on? "-v")) (git-fatal "cannot have both --quiet and --verbose"))
+      ((and (on? "-n") (not (on? "-v"))) (git-fatal "--non-matching is only valid with --verbose"))
       (#t
         (let ((rule-of (git-ignore-matcher wd gitdir))
               (index (if (on? "--no-index") () (git-read-entries gitdir))))
@@ -314,7 +298,7 @@
           ; of ignoring; a negation decides only what -v says
           (let ((found (List map
                          (fn (_ p)
-                           (def s (%strip-slash p))
+                           (def s (git-strip-slash p))
                            (pair p
                              (if (not (null? (%entries-under index s))) ()
                                (let ((r (rule-of s (%dir? (Str8 append wd "/" s)))))

@@ -36,7 +36,7 @@
 (import git/remote git-advertised git-objects-to-send git-has-object? git-write-ref!
   git-current-branch git-deny-current)
 (import git/wire wire-of-fds wire-line wire-split wire-raw wire-send! wire-send-bytes! wire-flush!
-  wire-send-raw!)
+  wire-send-raw! wire-send-split!)
 
 (def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
@@ -77,27 +77,13 @@
   (fn (_ dir)
     (list (lit err) (Str8 append "fatal: '" dir "' does not appear to be a git repository\n") 128)))
 
-; A line of text with a NUL between its two parts sent as one packet.
-(def %send-split!
-  (fn (_ w before after)
-    (def bn (%str-byte-len before))
-    (def an (%str-byte-len after))
-    (def n (%add (%add bn an) 2))
-    (def r (%make-str n))
-    (def p (%str->ptr r))
-    (%mem-copy p (%str->ptr before) bn)
-    (%pset! p bn 0 1)
-    (%mem-copy (%at p (%add bn 1)) (%str->ptr after) an)
-    (%pset! p (%sub n 1) 10 1)
-    (wire-send-bytes! w r n)))
-
 ; The refs advertised, (NAME . SHA) each, the capabilities on the first;
 ; with none, the line git sends for an empty repository.
 (def %advertise!
   (fn (_ w refs caps)
     (if (null? refs)
-      (%send-split! w (Str8 append %ZERO " capabilities^{}") caps)
-      (do (%send-split! w (Str8 append (rest (first refs)) " " (first (first refs))) caps)
+      (wire-send-split! w (Str8 append %ZERO " capabilities^{}") caps)
+      (do (wire-send-split! w (Str8 append (rest (first refs)) " " (first (first refs))) caps)
           (List for-each (fn (_ e) (wire-send! w (Str8 append (rest e) " " (first e)))) (rest refs))))
     (wire-flush! w)))
 

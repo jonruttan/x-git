@@ -23,7 +23,8 @@
 (import x/sys/file File)
 (import x/sys/proc Proc)
 (import x/sys/posix Sys)
-(import git/objects git-object-read git-object-text)
+(import git/objects git-subject)
+(import git/commands git-no-repo)
 (import git/refs git-commit-of git-tree-of git-headers)
 (import git/index git-status-lists git-tree-files)
 (import git/stage git-read-entries git-write-tree! git-commit-write! git-merge-state-clear! git-message-strip git-commit)
@@ -34,11 +35,7 @@
 (import git/history git-ident-date)
 (import git/config git-config-value)
 
-(def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
-
-(def %no-repo
-  (fn (_) (list (lit err) "fatal: not a git repository (or any of the parent directories): .git\n" 128)))
 
 ; A refusal as the sequencer words one: the error, then "revert failed".
 (def %failed
@@ -52,13 +49,6 @@
       (Opts flag "-n" "--no-commit" "Leave the change staged, uncommitted")
       (Opts flag "--continue" "Commit once the conflicts are resolved")
       (Opts flag "--abort" "Give up, the working directory and index set back"))))
-
-; A commit's subject: its message's first line.
-(def %subject
-  (fn (_ gitdir sha)
-    (def text (git-object-text (git-object-read gitdir sha)))
-    (def i (Str8 index-of "\n\n" text))
-    (if (null? i) "" (first (Str8 split "\n" (Str8 sub (%add i 2) (%sub (Str8 length text) (%add i 2)) text))))))
 
 ; git's message for a revert: a revert of a revert reapplies.
 (def %message
@@ -130,7 +120,7 @@
       ((Opts help? git-revert-options ops) (list (lit out) (Opts usage git-revert-options) 0))
       ((not (null? (Opts unknown o)))
         (list (lit err) (Str8 append "error: unknown option `" (Opts unknown o) "'\n" (Opts usage git-revert-options)) 129))
-      ((null? gitdir) (%no-repo))
+      ((null? gitdir) (git-no-repo))
       ; giving up: the working directory and index back at HEAD
       ((Opts on? o "--abort")
         (if (not (%in-progress? gitdir)) (%failed "error: no cherry-pick or revert in progress\n")
@@ -157,7 +147,7 @@
                 ((< 1 (List length parents))
                   (%failed (Str8 append "error: commit " sha " is a merge but no -m option was given.\n")))
                 (#t
-                  (let ((subject (%subject gitdir sha)))
+                  (let ((subject (git-subject gitdir sha)))
                     (let ((placed (git-merge-place! wd gitdir head
                                     (git-tree-flat gitdir (git-tree-of gitdir sha) "")
                                     (if (null? parents) () (git-tree-flat gitdir (git-tree-of gitdir (first parents)) ""))

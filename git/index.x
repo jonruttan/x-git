@@ -18,6 +18,7 @@
 (import x/sys/opts Opts)
 (import x/sys/file File)
 (import git/objects git-object-read git-tree-entries git-hash git-read-file)
+(import git/commands git-no-repo git-unknown-option)
 (import git/refs git-ref-read git-tree-of git-rev-parse)
 (import git/ignore git-ignorer)
 
@@ -54,20 +55,6 @@
            (let ((b (%byte p (%add i k))))
              (self (%sub k 1) (pair (Str8 append (Str8 sub (>> b 4) 1 %hex-digits) (Str8 sub (& b 15) 1 %hex-digits)) acc)))))
        19 ()))))
-
-(def %fatal (fn (_ text) (list (lit err) (Str8 append "fatal: " text "\n") 128)))
-(def %no-repo
-  (fn (_) (%fatal "not a git repository (or any of the parent directories): .git")))
-(def %unknown-option
-  (fn (_ w usage)
-    (def n (Str8 length w))
-    (list (lit err)
-      (Str8 append
-        (if (Str8 starts? "--" w)
-          (Str8 append "error: unknown option `" (Str8 sub 2 (- n 2) w))
-          (Str8 append "error: unknown switch `" (Str8 sub 1 (- n 1) w)))
-        "'\n" usage)
-      129)))
 
 ; --- the index ---
 
@@ -347,8 +334,8 @@
     (def o (Opts parse git-status-options ops))
     (match
       ((Opts help? git-status-options ops) (list (lit out) (Opts usage git-status-options) 0))
-      ((not (null? (Opts unknown o))) (%unknown-option (Opts unknown o) (Opts usage git-status-options)))
-      ((null? gitdir) (%no-repo))
+      ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-status-options)))
+      ((null? gitdir) (git-no-repo))
       (#t
         (let ((lists (git-status-lists wd gitdir)))
           (list (lit out) (if (Opts on? o "-s") (%porcelain lists) (%long-status gitdir lists)) 0))))))
@@ -365,8 +352,8 @@
     (def o (Opts parse git-ls-files-options ops))
     (match
       ((Opts help? git-ls-files-options ops) (list (lit out) (Opts usage git-ls-files-options) 0))
-      ((not (null? (Opts unknown o))) (%unknown-option (Opts unknown o) (Opts usage git-ls-files-options)))
-      ((null? gitdir) (%no-repo))
+      ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-ls-files-options)))
+      ((null? gitdir) (git-no-repo))
       (#t
         (list (lit out)
           (Str8 join ""

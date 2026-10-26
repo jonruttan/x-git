@@ -25,6 +25,7 @@
 (import x/codec/sha1 Sha1)
 (import x/codec/hex Hex)
 (import git/objects git-hash git-object-write! git-object-read git-object-text git-read-file git-write-file!)
+(import git/commands git-fatal git-no-repo git-unknown-option git-strip-slash)
 (import git/refs git-ref-read git-rev-parse git-tree-of git-commit-of)
 (import git/index git-index-read git-status-lists git-tree-files git-untracked-with git-long-status)
 (import git/ignore git-ignorer)
@@ -43,20 +44,6 @@
 (def %str-byte-len (prim-ref (lit str) (lit byte-len)))
 
 (def %at (fn (_ p off) (%int->ptr (%add (%ptr->int p) off))))
-
-(def %fatal (fn (_ text) (list (lit err) (Str8 append "fatal: " text "\n") 128)))
-(def %no-repo
-  (fn (_) (%fatal "not a git repository (or any of the parent directories): .git")))
-(def %unknown-option
-  (fn (_ w usage)
-    (def n (Str8 length w))
-    (list (lit err)
-      (Str8 append
-        (if (Str8 starts? "--" w)
-          (Str8 append "error: unknown option `" (Str8 sub 2 (- n 2) w))
-          (Str8 append "error: unknown switch `" (Str8 sub 1 (- n 1) w)))
-        "'\n" usage)
-      129)))
 
 ; --- bytes ---
 
@@ -175,9 +162,6 @@
             (#t (list path)))))
       (File list-dir dir))))
 
-(def %strip-slash
-  (fn (_ s) (if (and (> (Str8 length s) 1) (Str8 ends? "/" s)) (Str8 sub 0 (%sub (Str8 length s) 1) s) s)))
-
 ; --- add ---
 
 (def git-add-options
@@ -199,7 +183,7 @@
 (def git-add
   (fn (_ wd gitdir ops)
     (def o (Opts parse git-add-options ops))
-    (def specs (List map (fn (_ s) (%strip-slash s)) (Opts operands o)))
+    (def specs (List map (fn (_ s) (git-strip-slash s)) (Opts operands o)))
     ; with -f nothing is ignored
     (def ignored?
       (if (or (null? gitdir) (Opts on? o "-f")) (fn (_ path dir?) #f) (git-ignorer wd gitdir)))
@@ -212,8 +196,8 @@
         specs))
     (match
       ((Opts help? git-add-options ops) (list (lit out) (Opts usage git-add-options) 0))
-      ((not (null? (Opts unknown o))) (%unknown-option (Opts unknown o) (Opts usage git-add-options)))
-      ((null? gitdir) (%no-repo))
+      ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-add-options)))
+      ((null? gitdir) (git-no-repo))
       ((and (null? specs) (not (Opts on? o "-A")))
         (list (lit out) "Nothing specified, nothing added.\nhint: Maybe you wanted to say 'git add .'?\n" 0))
       ((not (null? refused)) (%ignored-refusal refused))
@@ -230,7 +214,7 @@
                                     (not (List any? (fn (_ t) (or (str=? t s) (Str8 starts? (Str8 append s "/") t))) tracked))))
                              specs)))
               (if (not (null? missing))
-                (%fatal (Str8 append "pathspec '" missing "' did not match any files"))
+                (git-fatal (Str8 append "pathspec '" missing "' did not match any files"))
                 (let ((all? (or (Opts on? o "-A") (List any? (fn (_ s) (str=? s ".")) specs))))
                   (let ((named
                           (if all?
@@ -251,7 +235,7 @@
                     (let ((paths (List flat-map
                                    (fn (_ p)
                                      (if (Str8 ends? "/" p)
-                                       (%files-under (Str8 append wd "/" (%strip-slash p)) p ignored?)
+                                       (%files-under (Str8 append wd "/" (git-strip-slash p)) p ignored?)
                                        (list p)))
                                    ((fn (self ps acc) (if (null? ps) (List reverse acc)
                                                         (self (rest ps) (if (List any? (fn (_ a) (str=? a (first ps))) acc) acc (pair (first ps) acc)))))
@@ -474,10 +458,10 @@
        entries ()))
     (match
       ((Opts help? git-commit-options ops) (list (lit out) (Opts usage git-commit-options) 0))
-      ((not (null? (Opts unknown o))) (%unknown-option (Opts unknown o) (Opts usage git-commit-options)))
-      ((null? gitdir) (%no-repo))
+      ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-commit-options)))
+      ((null? gitdir) (git-no-repo))
       ((not (null? unmerged)) (%unmerged-refusal unmerged))
-      ((null? msg) (%fatal "no message given: this git takes -m <message>"))
+      ((null? msg) (git-fatal "no message given: this git takes -m <message>"))
       ((null? (%signature gitdir "COMMITTER")) %identity-unknown)
       (#t
         (let ((parent (git-commit-of gitdir "HEAD"))
