@@ -35,8 +35,10 @@ the kernel and x are installed (x-os).
   parent, an annotated tag then what it tags, a tree's entries, a blob's
   text; git's placeholders for --format (%H %h %T %t %P %p %s %b %B %an
   %ae %ad %cn %ce %cd %n %%).  A merge's combined diff is not drawn
-- `ls-files [--stage]` and `status [-s | --porcelain]` from the index,
-  the untracked paths as `.gitignore` leaves them
+- `ls-files [-c] [-s] [-o] [-i] [--exclude-standard]` and
+  `status [-s | --porcelain] [--ignored[=traditional|matching|no]]` from
+  the index, the untracked paths as `.gitignore` leaves them and, when
+  asked, the ignored ones
 - `add [-A] <pathspec>...`: the blobs written, the index written (version 2)
 - `commit -m <message> [-q] [--no-edit]`: the trees from the index, the
   commit with the identity and time git takes -- `GIT_AUTHOR_*` and

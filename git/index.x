@@ -18,7 +18,7 @@
 (import x/sys/opts Opts)
 (import x/sys/file File)
 (import git/objects git-object-read git-tree-entries git-hash git-read-file)
-(import git/commands git-no-repo git-unknown-option)
+(import git/commands git-fatal git-no-repo git-unknown-option)
 (import git/refs git-ref-read git-tree-of git-rev-parse)
 (import git/ignore git-ignorer)
 
@@ -127,49 +127,57 @@
           (if (eq? (File type full) (lit dir)) (self full) #t)))
       (File list-dir dir))))
 
-; Does a directory hold a file anywhere beneath it that is not ignored?
-(def %has-shown-file?
-  (fn (self dir prefix ignored?)
-    (List any?
-      (fn (_ name)
-        (let ((full (Str8 append dir "/" name)) (path (Str8 append prefix name)))
-          (if (eq? (File type full) (lit dir))
-            (if (ignored? path #t) #f (self full (Str8 append path "/") ignored?))
-            (not (ignored? path #f)))))
-      (File list-dir dir))))
+(def %sorted (fn (_ paths) (List sort (fn (_ a b) (Str8 <? a b)) paths)))
 
-; What the working directory holds that the index does not know: files
-; by path, and a directory with nothing tracked under it once, as
-; "DIR/", as git shows it -- when it holds a file at all; .git is
-; skipped, and so is what .gitignore says to (ignored? a path and whether
-; it is a directory, from git/ignore).
-(def %untracked
-  (fn (_ wd tracked ignored?)
+; What the working directory holds that the index does not know, as
+; status shows it: (UNTRACKED . IGNORED), each sorted.  A file by its
+; path; a directory with nothing tracked under it once, as "DIR/", when
+; it holds a file at all -- untracked when one of them is not ignored,
+; else ignored, as an ignored directory is.  .git is skipped; ignored? is
+; a path and whether it is a directory, from git/ignore.  mode is what
+; --ignored asks for: (lit no), the ignored left out; (lit traditional),
+; as above; (lit matching), a directory ignored only because all it
+; holds is ignored given as the paths inside it.
+(def %walk
+  (fn (_ wd tracked ignored? mode)
     (def tracked-under?
       (fn (_ dir) (List any? (fn (_ t) (Str8 starts? (Str8 append dir "/") t)) tracked)))
     (def tracked? (fn (_ path) (List any? (fn (_ t) (str=? t path)) tracked)))
-    ((fn (self dir prefix)
-       (List flat-map
-         (fn (_ name)
-           (let ((full (Str8 append dir "/" name)) (path (Str8 append prefix name)))
-             (match
-               ((str=? name ".git") ())
-               ((eq? (File type full) (lit dir))
-                 (match
-                   ((tracked-under? path) (self full (Str8 append path "/")))
-                   ((ignored? path #t) ())
-                   ((%has-shown-file? full (Str8 append path "/") ignored?) (list (Str8 append path "/")))
-                   (#t ())))
-               ((tracked? path) ())
-               ((ignored? path #f) ())
-               (#t (list path)))))
-         (List sort (fn (_ a b) (Str8 <? a b)) (File list-dir dir))))
-     wd "")))
+    (def show? (not (eq? mode (lit no))))
+    (def both (fn (_ a b) (pair (List append (first a) (first b)) (List append (rest a) (rest b)))))
+    (def r
+      ((fn (self dir prefix)
+         (List fold
+           (fn (_ acc name)
+             (let ((full (Str8 append dir "/" name)) (path (Str8 append prefix name)))
+               (match
+                 ((str=? name ".git") acc)
+                 ((eq? (File type full) (lit dir))
+                   (match
+                     ((tracked-under? path) (both acc (self full (Str8 append path "/"))))
+                     ((ignored? path #t)
+                       (if (and show? (%has-file? full)) (both acc (pair () (list (Str8 append path "/")))) acc))
+                     (#t
+                       (let ((in (self full (Str8 append path "/"))))
+                         (match
+                           ((not (null? (first in))) (both acc (pair (list (Str8 append path "/")) (rest in))))
+                           ((null? (rest in)) acc)
+                           ((eq? mode (lit matching)) (both acc in))
+                           (#t (both acc (pair () (list (Str8 append path "/"))))))))))
+                 ((tracked? path) acc)
+                 ((ignored? path #f) (if show? (both acc (pair () (list path))) acc))
+                 (#t (both acc (pair (list path) ()))))))
+           (pair () ()) (File list-dir dir)))
+       wd ""))
+    (pair (%sorted (first r)) (%sorted (rest r)))))
+
+(def %untracked (fn (_ wd tracked ignored?) (first (%walk wd tracked ignored? (lit no)))))
 
 ; --- status ---
 
-; The three lists status prints: staged ((CODE . PATH) ...) against HEAD,
-; unstaged against the working directory, and the untracked paths.
+; The lists status prints: staged ((CODE . PATH) ...) against HEAD,
+; unstaged against the working directory, the untracked paths, the
+; unmerged, and the ignored -- () unless an --ignored mode is given.
 ; The paths a merge left in conflict, as (CODE . PATH), CODE the two
 ; letters status gives them from the stages there: 1 the base, 2 ours, 3
 ; theirs.
@@ -199,7 +207,8 @@
       paths)))
 
 (def git-status-lists
-  (fn (_ wd gitdir)
+  (fn (_ wd gitdir . ignored-mode)
+    (def mode (if (null? ignored-mode) (lit no) (first ignored-mode)))
     (def all (git-index-read gitdir))
     (def unmerged (%unmerged all))
     ; a path in conflict is shown as unmerged and nowhere else
@@ -227,10 +236,12 @@
                 (if (str=? (git-hash "blob" (first f) 0 (rest f)) (first (rest (rest e)))) ()
                   (list (pair "M" (first e))))))))
         index))
+    (def others (%walk wd (List map (fn (_ e) (first e)) all) (git-ignorer wd gitdir) mode))
     (list (List sort (fn (_ a b) (Str8 <? (rest a) (rest b))) staged)
           (List sort (fn (_ a b) (Str8 <? (rest a) (rest b))) unstaged)
-          (%untracked wd (List map (fn (_ e) (first e)) all) (git-ignorer wd gitdir))
-          unmerged)))
+          (first others)
+          unmerged
+          (rest others))))
 
 (def %branch-line
   (fn (_ gitdir)
@@ -244,7 +255,7 @@
     (match ((str=? code "A") "new file:   ") ((str=? code "D") "deleted:    ") (#t "modified:   "))))
 
 ; status --porcelain: `XY PATH`, X the staged code, Y the unstaged, then
-; `?? PATH` for the untracked.
+; `?? PATH` for the untracked and `!! PATH` for the ignored.
 (def %porcelain
   (fn (_ lists)
     (def staged (first lists))
@@ -265,7 +276,11 @@
               (if (null? u) (Str8 append (code-of staged p) (code-of unstaged p) " " p "\n")
                 (Str8 append (first u) " " p "\n"))))
           paths)
-        (List map (fn (_ p) (Str8 append "?? " p "\n")) (first (rest (rest lists))))))))
+        (List map (fn (_ p) (Str8 append "?? " p "\n")) (first (rest (rest lists))))
+        (List map (fn (_ p) (Str8 append "!! " p "\n")) (%ignored-of lists))))))
+
+; The ignored paths of status's lists, () when they were not asked for.
+(def %ignored-of (fn (_ lists) (List ref 4 lists)))
 
 ; status as git lays it out, hints and all -- also what commit prints when
 ; there is nothing to commit.
@@ -318,6 +333,11 @@
         (Str8 append "Untracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n"
           (Str8 join "" (List map (fn (_ p) (Str8 append "\t" p "\n")) untracked))
           "\n"))
+      (let ((ignored (%ignored-of lists)))
+        (if (null? ignored) ""
+          (Str8 append "Ignored files:\n  (use \"git add -f <file>...\" to include in what will be committed)\n"
+            (Str8 join "" (List map (fn (_ p) (Str8 append "\t" p "\n")) ignored))
+            "\n")))
       (match
         ((not (null? staged)) "")
         ((or (not (null? unstaged)) (not (null? unmerged))) "no changes added to commit (use \"git add\" and/or \"git commit -a\")\n")
@@ -325,45 +345,100 @@
         (#t "nothing to commit, working tree clean\n")))))
 
 (def git-status-options
-  (Opts declare "git status" "[-s | --porcelain]" ()
+  (Opts declare "git status" "[-s | --porcelain] [--ignored[=<mode>]]" ()
     (list
-      (Opts flag "-s" "--short" "--porcelain" "A line a path: two status letters, then the path"))))
+      (Opts flag "-s" "--short" "--porcelain" "A line a path: two status letters, then the path")
+      (Opts flag "--ignored" "Show the ignored files too: traditional, matching or no"))))
+
+; --ignored, --ignored=MODE, the last given winning: the mode named, or
+; () when MODE is none of git's.
+(def %ignored-mode
+  (fn (_ ops)
+    (List fold
+      (fn (_ m w)
+        (match
+          ((str=? w "--ignored") (lit traditional))
+          ((Str8 starts? "--ignored=" w)
+            (let ((v (Str8 sub 10 (%sub (Str8 length w) 10) w)))
+              (match ((str=? v "traditional") (lit traditional)) ((str=? v "matching") (lit matching))
+                     ((str=? v "no") (lit no)) (#t (pair (lit bad) v)))))
+          (#t m)))
+      (lit no) ops)))
 
 (def git-status
   (fn (_ wd gitdir ops)
-    (def o (Opts parse git-status-options ops))
+    (def mode (%ignored-mode ops))
+    (def o (Opts parse git-status-options (List filter (fn (_ w) (not (Str8 starts? "--ignored" w))) ops)))
     (match
       ((Opts help? git-status-options ops) (list (lit out) (Opts usage git-status-options) 0))
       ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-status-options)))
       ((null? gitdir) (git-no-repo))
+      ((pair? mode) (git-fatal (Str8 append "Invalid ignored mode '" (rest mode) "'")))
       (#t
-        (let ((lists (git-status-lists wd gitdir)))
+        (let ((lists (git-status-lists wd gitdir mode)))
           (list (lit out) (if (Opts on? o "-s") (%porcelain lists) (%long-status gitdir lists)) 0))))))
 
 ; --- ls-files ---
 
 (def git-ls-files-options
-  (Opts declare "git ls-files" "[-s | --stage]" ()
+  (Opts declare "git ls-files" "[-c | --cached] [-s | --stage] [-o | --others] [-i | --ignored] [--exclude-standard]" ()
     (list
-      (Opts flag "-s" "--stage" "Show the mode, the object name and the stage with each path"))))
+      (Opts flag "-c" "--cached" "The tracked files (the default)")
+      (Opts flag "-s" "--stage" "Show the mode, the object name and the stage with each path")
+      (Opts flag "-o" "--others" "The files the index does not hold")
+      (Opts flag "-i" "--ignored" "Only the ignored files, with -o or -c")
+      (Opts flag "--exclude-standard" "Leave out what .gitignore, info/exclude and core.excludesFile say to"))))
+
+; Every file under the working directory the index does not hold, by
+; path, sorted; .git skipped.
+(def %others
+  (fn (_ wd tracked)
+    (%sorted
+      ((fn (self dir prefix)
+         (List flat-map
+           (fn (_ name)
+             (let ((full (Str8 append dir "/" name)) (path (Str8 append prefix name)))
+               (match
+                 ((str=? name ".git") ())
+                 ((eq? (File type full) (lit dir)) (self full (Str8 append path "/")))
+                 ((List any? (fn (_ t) (str=? t path)) tracked) ())
+                 (#t (list path)))))
+           (File list-dir dir)))
+       wd ""))))
 
 (def git-ls-files
   (fn (_ wd gitdir ops)
     (def o (Opts parse git-ls-files-options ops))
+    (def on? (fn (_ f) (Opts on? o f)))
+    ; the others, then the tracked, as git lists them; with -i only what
+    ; is ignored, without it, under --exclude-standard, only what is not
+    (def show-others? (on? "-o"))
+    (def show-cached? (or (on? "-c") (on? "-s") (not (or show-others? (on? "-i")))))
     (match
       ((Opts help? git-ls-files-options ops) (list (lit out) (Opts usage git-ls-files-options) 0))
       ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-ls-files-options)))
       ((null? gitdir) (git-no-repo))
+      ((and (on? "-i") (not show-others?) (not (on? "-c")) (not (on? "-s")))
+        (git-fatal "ls-files -i must be used with either -o or -c"))
+      ((and (on? "-i") (not (on? "--exclude-standard"))) (git-fatal "ls-files --ignored needs some exclude pattern"))
       (#t
-        (list (lit out)
-          (Str8 join ""
-            (List map
-              (fn (_ e)
-                (if (Opts on? o "-s")
-                  (Str8 append (first (rest e)) " " (first (rest (rest e))) " " (Str8 str (first (rest (rest (rest e))))) "\t" (first e) "\n")
-                  (Str8 append (first e) "\n")))
-              (git-index-read gitdir)))
-          0)))))
+        (let ((index (git-index-read gitdir))
+              (ignored? (if (on? "--exclude-standard") (git-ignorer wd gitdir) (fn (_ path dir?) #f))))
+          (let ((kept? (fn (_ path) (if (on? "-i") (ignored? path #f) (not (ignored? path #f))))))
+            (list (lit out)
+              (Str8 append
+                (if (not show-others?) ""
+                  (Str8 join "" (List map (fn (_ p) (Str8 append p "\n"))
+                                  (List filter kept? (%others wd (List map (fn (_ e) (first e)) index))))))
+                (if (not show-cached?) ""
+                  (Str8 join ""
+                    (List map
+                      (fn (_ e)
+                        (if (on? "-s")
+                          (Str8 append (first (rest e)) " " (first (rest (rest e))) " " (Str8 str (first (rest (rest (rest e))))) "\t" (first e) "\n")
+                          (Str8 append (first e) "\n")))
+                      (if (on? "-i") (List filter (fn (_ e) (ignored? (first e) #f)) index) index)))))
+              0)))))))
 
 ; The untracked paths under wd, given the tracked ones, as status lists
 ; them: .gitignore honoured.
