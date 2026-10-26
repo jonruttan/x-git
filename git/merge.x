@@ -36,6 +36,7 @@
 (import x/sys/opts Opts)
 (import x/sys/file File)
 (import git/objects git-object-write!)
+(import git/commands git-fatal git-no-repo)
 (import git/refs git-rev-parse git-tree-of git-ref-read)
 (import git/index git-status-lists)
 (import git/stage git-read-entries git-index-write! git-write-tree! git-commit-write! git-merge-state-clear!)
@@ -47,8 +48,6 @@
 
 (def %sub (prim-ref 'int '-))
 
-(def %fatal (fn (_ text) (list (lit err) (Str8 append "fatal: " text "\n") 128)))
-(def %no-repo (fn (_) (%fatal "not a git repository (or any of the parent directories): .git")))
 (def %abbrev (fn (_ sha) (Str8 sub 0 7 sha)))
 (def %hints (fn (_ lines) (Str8 join "" (List map (fn (_ l) (Str8 append "hint:" (if (= (Str8 length l) 0) "" " ") l "\n")) lines))))
 
@@ -300,11 +299,11 @@
     (def target (if (or (null? gitdir) (null? target-name)) () (git-rev-parse gitdir target-name)))
     (match
       ((Opts help? git-merge-options ops) (list (lit out) (Opts usage git-merge-options) 0))
-      ((null? gitdir) (%no-repo))
+      ((null? gitdir) (git-no-repo))
       ((Opts on? o "--abort") (%answer (%abort! wd gitdir)))
       ((File exists? (Str8 append gitdir "/MERGE_HEAD"))
-        (%fatal "You have not concluded your merge (MERGE_HEAD exists).\nPlease, commit your changes before you merge."))
-      ((null? target-name) (%fatal "No remote for the current branch."))
+        (git-fatal "You have not concluded your merge (MERGE_HEAD exists).\nPlease, commit your changes before you merge."))
+      ((null? target-name) (git-fatal "No remote for the current branch."))
       ((null? target) (list (lit err) (Str8 append "merge: " target-name " - not something we can merge\n") 1))
       (#t
         (let ((head (git-rev-parse gitdir "HEAD")) (theirs (git-peel gitdir target)))
@@ -361,13 +360,13 @@
     (def named (if (or (null? operands) (null? (rest operands))) () (first (rest operands))))
     (match
       ((Opts help? git-pull-options ops) (list (lit out) (Opts usage git-pull-options) 0))
-      ((null? gitdir) (%no-repo))
+      ((null? gitdir) (git-no-repo))
       ((and (null? named) (or (null? branch) (null? (%upstream gitdir branch)))) (%no-tracking (or branch "<branch>")))
       (#t
         (let ((f (git-fetch wd gitdir (if (null? operands) () (list (first operands))))))
           (if (not (= (first (rest (rest f))) 0)) f
             (let ((fetched (%fetched-for-merge gitdir named)))
-              (if (null? fetched) (%fatal "No remote for the current branch.")
+              (if (null? fetched) (git-fatal "No remote for the current branch.")
                 (let ((head (git-rev-parse gitdir "HEAD")) (target (first fetched)))
                   (let ((r (%fast-forward! wd gitdir head target
                            (match

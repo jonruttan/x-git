@@ -18,6 +18,7 @@
 (import x/sys/opts Opts)
 (import x/sys/file File)
 (import git/objects git-object-read git-tree-entries git-write-file! git-read-file git-hash)
+(import git/commands git-fatal git-no-repo git-unknown-option)
 (import git/refs git-ref-read git-rev-parse git-tree-of git-commit-of git-headers)
 (import git/index git-index-read git-status-lists)
 (import git/stage git-index-write!)
@@ -27,20 +28,7 @@
 (def %at (fn (_ p off) ((prim-ref (lit int) (lit ->ptr)) (%add ((prim-ref (lit ptr) (lit ->int)) p) off))))
 (def %str->ptr (prim-ref (lit str) (lit ->ptr)))
 
-(def %fatal (fn (_ text) (list (lit err) (Str8 append "fatal: " text "\n") 128)))
 (def %error (fn (_ text) (list (lit err) (Str8 append "error: " text "\n") 1)))
-(def %no-repo
-  (fn (_) (%fatal "not a git repository (or any of the parent directories): .git")))
-(def %unknown-option
-  (fn (_ w usage)
-    (def n (Str8 length w))
-    (list (lit err)
-      (Str8 append
-        (if (Str8 starts? "--" w)
-          (Str8 append "error: unknown option `" (Str8 sub 2 (- n 2) w))
-          (Str8 append "error: unknown switch `" (Str8 sub 1 (- n 1) w)))
-        "'\n" usage)
-      129)))
 
 ; --- trees and files ---
 
@@ -174,10 +162,10 @@
     (def branch-sha (if new? () (git-ref-read gitdir (Str8 append "refs/heads/" rev))))
     (match
       ((and new? (not (null? (git-ref-read gitdir (Str8 append "refs/heads/" rev)))))
-        (%fatal (Str8 append "a branch named '" rev "' already exists")))
+        (git-fatal (Str8 append "a branch named '" rev "' already exists")))
       (new?
         (let ((sha (git-commit-of gitdir start)))
-          (if (null? sha) (%fatal (Str8 append "not a valid object name: '" start "'"))
+          (if (null? sha) (git-fatal (Str8 append "not a valid object name: '" start "'"))
             (let ((blocked (%move-to! wd gitdir sha)))
               (if (not (null? blocked)) (%overwritten blocked)
                 (do (git-write-file! (Str8 append gitdir "/refs/heads/" rev) (Str8 append sha "\n") 41)
@@ -229,8 +217,8 @@
     (def operands (Opts operands o))
     (match
       ((Opts help? git-checkout-options ops) (list (lit out) (Opts usage git-checkout-options) 0))
-      ((not (null? (Opts unknown o))) (%unknown-option (Opts unknown o) (Opts usage git-checkout-options)))
-      ((null? gitdir) (%no-repo))
+      ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-checkout-options)))
+      ((null? gitdir) (git-no-repo))
       (dashes? (%restore! wd gitdir operands))
       ((not (null? (Opts value o "-b" ())))
         (%switch! wd gitdir (Opts value o "-b" ()) #t (if (null? operands) "HEAD" (first operands))))
@@ -252,13 +240,13 @@
     (def operands (Opts operands o))
     (match
       ((Opts help? git-switch-options ops) (list (lit out) (Opts usage git-switch-options) 0))
-      ((not (null? (Opts unknown o))) (%unknown-option (Opts unknown o) (Opts usage git-switch-options)))
-      ((null? gitdir) (%no-repo))
+      ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-switch-options)))
+      ((null? gitdir) (git-no-repo))
       ((not (null? (Opts value o "-c" ())))
         (%switch! wd gitdir (Opts value o "-c" ()) #t (if (null? operands) "HEAD" (first operands))))
       ((null? operands) (list (lit err) (Opts usage git-switch-options) 129))
       ((null? (git-ref-read gitdir (Str8 append "refs/heads/" (first operands))))
-        (%fatal (Str8 append "invalid reference: " (first operands))))
+        (git-fatal (Str8 append "invalid reference: " (first operands))))
       (#t (%switch! wd gitdir (first operands) #f ())))))
 
 (def git-restore-options
@@ -269,8 +257,8 @@
     (def o (Opts parse git-restore-options ops))
     (match
       ((Opts help? git-restore-options ops) (list (lit out) (Opts usage git-restore-options) 0))
-      ((not (null? (Opts unknown o))) (%unknown-option (Opts unknown o) (Opts usage git-restore-options)))
-      ((null? gitdir) (%no-repo))
+      ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-restore-options)))
+      ((null? gitdir) (git-no-repo))
       ((null? (Opts operands o)) (list (lit err) "fatal: you must specify path(s) to restore\n" 128))
       (#t (%restore! wd gitdir (Opts operands o))))))
 

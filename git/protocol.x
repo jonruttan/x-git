@@ -15,7 +15,8 @@
 
 (module git/protocol)
 
-(import git/wire wire-open wire-close! wire-pkt wire-line wire-split wire-send! wire-send-bytes! wire-flush! wire-send-raw!)
+(import git/wire wire-open wire-close! wire-pkt wire-pkt-length wire-line wire-split wire-send! wire-send-bytes!
+  wire-send-split! wire-flush! wire-send-raw!)
 (import git/packs git-bytes-make git-bytes-put! git-bytes-region git-bytes-count)
 (import git/config git-config-value)
 (import git/http http-connect http-refusal http-forget!)
@@ -301,7 +302,6 @@
 (def %make-str (prim-ref (lit str) (lit make)))
 (def %pset! (prim-ref (lit ptr) (lit set!)))
 (def %mem-copy (prim-ref (lit mem) (lit copy)))
-(def %str-byte-len (prim-ref (lit str) (lit byte-len)))
 
 ; k bytes from start of region r as a string of its own.
 (def %text-of
@@ -310,14 +310,6 @@
     (if (= k 0) (%pset! (%str->ptr s) 0 0 1) (%mem-copy (%str->ptr s) (%at (%str->ptr r) start) k))
     s))
 
-(def %hex-value
-  (fn (_ c)
-    (match
-      ((and (>= c 48) (<= c 57)) (%sub c 48))
-      ((and (>= c 97) (<= c 102)) (%sub c 87))
-      ((and (>= c 65) (<= c 70)) (%sub c 55))
-      (#t (%fail "a pkt-line length that is not hex")))))
-
 ; The pkt-lines in n bytes of region r, as text with newlines dropped,
 ; up to a flush or the end.
 (def %packets-in
@@ -325,29 +317,12 @@
     (def p (%str->ptr r))
     ((fn (self i acc)
        (if (> (%add i 4) n) (List reverse acc)
-         (let ((len (| (<< (%hex-value (%byte p i)) 12)
-                       (| (<< (%hex-value (%byte p (%add i 1))) 8)
-                          (| (<< (%hex-value (%byte p (%add i 2))) 4) (%hex-value (%byte p (%add i 3))))))))
+         (let ((len (wire-pkt-length p i)))
            (if (or (< len 4) (> (%add i len) n)) (List reverse acc)
              (let ((k (%sub len 4)))
                (let ((k2 (if (and (> k 0) (= (%byte p (%add i (%add 3 k))) 10)) (%sub k 1) k)))
                  (self (%add i len) (pair (%text-of r (%add i 4) k2) acc))))))))
      0 ())))
-
-; A line of two texts with a NUL between them sent as one packet: the
-; first command and the capabilities after it.
-(def %send-split!
-  (fn (_ w before after)
-    (def bn (%str-byte-len before))
-    (def an (%str-byte-len after))
-    (def n (%add (%add bn an) 2))
-    (def r (%make-str n))
-    (def p (%str->ptr r))
-    (%mem-copy p (%str->ptr before) bn)
-    (%pset! p bn 0 1)
-    (%mem-copy (%at p (%add bn 1)) (%str->ptr after) an)
-    (%pset! p (%sub n 1) 10 1)
-    (wire-send-bytes! w r n)))
 
 (def %command-line
   (fn (_ c) (Str8 append (first c) " " (first (rest c)) " " (first (rest (rest c))))))
@@ -359,7 +334,7 @@
 ; (NAME . ()) when it was updated or (NAME . REASON) when not.
 (def proto-push!
   (fn (_ w commands pack)
-    (%send-split! w (%command-line (first commands)) %push-caps)
+    (wire-send-split! w (%command-line (first commands)) %push-caps)
     (List for-each (fn (_ c) (wire-send! w (%command-line c))) (rest commands))
     (wire-flush! w)
     (unless (null? pack) (wire-send-raw! w (first pack) (rest pack)))

@@ -21,6 +21,7 @@
 (import x/sys/file File)
 (import x/type/vector Vector)
 (import git/objects git-object-read git-object-text git-read-file git-hash)
+(import git/commands git-fatal git-no-repo git-unknown-option)
 (import git/refs git-tree-of git-rev-parse)
 (import git/index git-index-read git-tree-files)
 (import git/renames git-find-renames git-rename-name git-max-score)
@@ -30,20 +31,6 @@
 (def %mul (prim-ref 'int '*))
 (def %cvt (prim-ref (lit convert) (lit to)))
 (def %string-type (Type named STRING))
-
-(def %fatal (fn (_ text) (list (lit err) (Str8 append "fatal: " text "\n") 128)))
-(def %no-repo
-  (fn (_) (%fatal "not a git repository (or any of the parent directories): .git")))
-(def %unknown-option
-  (fn (_ w usage)
-    (def n (Str8 length w))
-    (list (lit err)
-      (Str8 append
-        (if (Str8 starts? "--" w)
-          (Str8 append "error: unknown option `" (Str8 sub 2 (- n 2) w))
-          (Str8 append "error: unknown switch `" (Str8 sub 1 (- n 1) w)))
-        "'\n" usage)
-      129)))
 
 ; --- lines ---
 
@@ -431,14 +418,14 @@
     (def operands (Opts operands o))
     (match
       ((Opts help? git-diff-options ops) (list (lit out) (Opts usage git-diff-options) 0))
-      ((not (null? (Opts unknown o))) (%unknown-option (Opts unknown o) (Opts usage git-diff-options)))
-      ((null? gitdir) (%no-repo))
+      ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-diff-options)))
+      ((null? gitdir) (git-no-repo))
       (#t
         ; the revisions among the operands: those that resolve; the rest are paths
         (let ((revs (List filter (fn (_ a) (not (null? (git-rev-parse gitdir a)))) operands))
               (paths (List filter (fn (_ a) (null? (git-rev-parse gitdir a))) operands)))
           (let ((bad (List find (fn (_ r) (null? (git-tree-of gitdir r))) revs)))
-            (if (not (null? bad)) (%fatal (Str8 append "bad revision '" bad "'"))
+            (if (not (null? bad)) (git-fatal (Str8 append "bad revision '" bad "'"))
               (let ((sides
                       (match
                         ((= (List length revs) 2)

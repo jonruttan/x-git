@@ -177,6 +177,13 @@
       ((and (>= c 65) (<= c 70)) (%sub c 55))
       (#t (%fail "a pkt-line length that is not hex")))))
 
+; The length a pkt-line's four hex digits at i of pointer p give.
+(def wire-pkt-length
+  (fn (_ p i)
+    (| (<< (%hex-value (%byte p i)) 12)
+       (| (<< (%hex-value (%byte p (%add i 1))) 8)
+          (| (<< (%hex-value (%byte p (%add i 2))) 4) (%hex-value (%byte p (%add i 3))))))))
+
 ; The next packet: (REGION . N) its bytes, flush for 0000, delim for 0001,
 ; or () when the child's output ended.
 (def wire-pkt
@@ -184,9 +191,7 @@
     (def h (%take! w 4))
     (if (null? h) ()
       (let ((p (%str->ptr h)))
-        (let ((len (| (<< (%hex-value (%byte p 0)) 12)
-                      (| (<< (%hex-value (%byte p 1)) 8)
-                         (| (<< (%hex-value (%byte p 2)) 4) (%hex-value (%byte p 3)))))))
+        (let ((len (wire-pkt-length p 0)))
           (match
             ((= len 0) (lit flush))
             ((= len 1) (lit delim))
@@ -257,6 +262,21 @@
     (def s (Str8 append text "\n"))
     (wire-send-bytes! w s (%str-byte-len s))))
 
+; Two texts with a NUL between them sent as one packet, a newline after:
+; a command or ref line and the capabilities after it.
+(def wire-send-split!
+  (fn (_ w before after)
+    (def bn (%str-byte-len before))
+    (def an (%str-byte-len after))
+    (def n (%add (%add bn an) 2))
+    (def r (%make-str n))
+    (def p (%str->ptr r))
+    (%mem-copy p (%str->ptr before) bn)
+    (%pset! p bn 0 1)
+    (%mem-copy (%at p (%add bn 1)) (%str->ptr after) an)
+    (%pset! p (%sub n 1) 10 1)
+    (wire-send-bytes! w r n)))
+
 (def wire-flush!
   (fn (_ w) (%out! w "0000" 0 4)))
 
@@ -265,4 +285,4 @@
   (fn (_ w r n) (%out! w r 0 n)))
 
 (provide git/wire wire-open wire-of-fds wire-of-driver wire-close! wire-close-in! wire-pkt wire-line wire-split wire-raw
-  wire-send! wire-send-bytes! wire-flush! wire-send-raw!)
+  wire-pkt-length wire-send! wire-send-bytes! wire-send-split! wire-flush! wire-send-raw!)

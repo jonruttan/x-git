@@ -20,17 +20,18 @@
 (import git/refs git-rev-parse git-rev-path-missing)
 
 (def %add (prim-ref 'int '+))
+(def %sub (prim-ref 'int '-))
 (def %make-str (prim-ref (lit str) (lit make)))
 (def %str->ptr (prim-ref (lit str) (lit ->ptr)))
 (def %ptr->int (prim-ref (lit ptr) (lit ->int)))
 (def %int->ptr (prim-ref (lit int) (lit ->ptr)))
 (def %mem-copy (prim-ref (lit mem) (lit copy)))
 
-(def %fatal (fn (_ text) (list (lit err) (Str8 append "fatal: " text "\n") 128)))
+(def git-fatal (fn (_ text) (list (lit err) (Str8 append "fatal: " text "\n") 128)))
 
 ; git's refusal of an option it does not know: a long one is an "option",
 ; a short one a "switch", each named without its dashes, then the usage.
-(def %unknown-option
+(def git-unknown-option
   (fn (_ w usage)
     (def n (Str8 length w))
     (list (lit err)
@@ -40,8 +41,12 @@
           (Str8 append "error: unknown switch `" (Str8 sub 1 (- n 1) w)))
         "'\n" usage)
       129)))
-(def %no-repo
-  (fn (_) (%fatal "not a git repository (or any of the parent directories): .git")))
+(def git-no-repo
+  (fn (_) (git-fatal "not a git repository (or any of the parent directories): .git")))
+
+; A path less one trailing slash; "/" stays as it is.
+(def git-strip-slash
+  (fn (_ s) (if (and (> (Str8 length s) 1) (Str8 ends? "/" s)) (Str8 sub 0 (%sub (Str8 length s) 1) s) s)))
 
 ; --- cat-file ---
 
@@ -67,13 +72,13 @@
     (def operands (Opts operands o))
     (match
       ((Opts help? git-cat-file-options ops) (list (lit out) (%cat-file-usage) 0))
-      ((not (null? (Opts unknown o))) (%unknown-option (Opts unknown o) (%cat-file-usage)))
+      ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (%cat-file-usage)))
       ((and (null? mode) (null? operands)) (list (lit err) (%cat-file-usage) 129))
       ((and (null? mode) (null? (rest operands)))
         (list (lit err) (Str8 append "fatal: only two arguments allowed in <type> <object> mode, not 1\n\n" (%cat-file-usage)) 129))
       ((null? operands)
         (list (lit err) (Str8 append "fatal: <object> required with '" mode "'\n\n" (%cat-file-usage)) 129))
-      ((null? gitdir) (%no-repo))
+      ((null? gitdir) (git-no-repo))
       (#t
         (let ((name (if (null? mode) (first (rest operands)) (first operands))))
           (let ((sha (git-rev-parse gitdir name)))
@@ -81,9 +86,9 @@
               ((and (null? sha) (not (null? mode)) (str=? mode "-e") (= (Str8 length name) 40)) (list (lit out) "" 1))
               ((and (null? sha) (not (null? (git-rev-path-missing gitdir name))))
                 (let ((i (Str8 index-of ":" name)))
-                  (%fatal (Str8 append "path '" (Str8 sub (+ i 1) (- (Str8 length name) (+ i 1)) name)
+                  (git-fatal (Str8 append "path '" (Str8 sub (+ i 1) (- (Str8 length name) (+ i 1)) name)
                                        "' does not exist in '" (Str8 sub 0 i name) "'"))))
-              ((null? sha) (%fatal (Str8 append "Not a valid object name " name)))
+              ((null? sha) (git-fatal (Str8 append "Not a valid object name " name)))
               (#t
                 (let ((obj (git-object-read gitdir sha)))
                   (let ((type (first obj)) (size (first (rest obj)))
@@ -92,7 +97,7 @@
                       ((null? mode)
                         (if (str=? (first operands) type)
                           (list (lit out) (pair (%body r start size) size) 0)
-                          (%fatal (Str8 append "git cat-file " name ": bad file"))))
+                          (git-fatal (Str8 append "git cat-file " name ": bad file"))))
                       ((str=? mode "-e") (list (lit out) "" 0))
                       ((str=? mode "-t") (list (lit out) (Str8 append type "\n") 0))
                       ((str=? mode "-s") (list (lit out) (Str8 append (Str8 str size) "\n") 0))
@@ -156,14 +161,14 @@
         (if write? (git-object-write! gitdir type r 0 n) (git-hash type r 0 n))))
     (match
       ((Opts help? git-hash-object-options ops) (list (lit out) (Opts usage git-hash-object-options) 0))
-      ((not (null? (Opts unknown o))) (%unknown-option (Opts unknown o) (Opts usage git-hash-object-options)))
-      ((and write? (null? gitdir)) (%no-repo))
+      ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-hash-object-options)))
+      ((and write? (null? gitdir)) (git-no-repo))
       (#t
         (let go ((fs files) (lines (if (Opts on? o "--stdin") (let ((in (%stdin))) (list (Str8 append (name-of (first in) (rest in)) "\n"))) ())))
           (match
             ((null? fs) (list (lit out) (Str8 join "" (List reverse lines)) 0))
             ((not (File exists? (%in-wd wd (first fs))))
-              (%fatal (Str8 append "could not open '" (first fs) "' for reading: No such file or directory")))
+              (git-fatal (Str8 append "could not open '" (first fs) "' for reading: No such file or directory")))
             (#t
               (let ((f (git-read-file (%in-wd wd (first fs)))))
                 (go (rest fs) (pair (Str8 append (name-of (first f) (rest f)) "\n") lines))))))))))
@@ -193,8 +198,8 @@
     (def o (Opts parse git-rev-parse-options ops))
     (match
       ((Opts help? git-rev-parse-options ops) (list (lit out) (Opts usage git-rev-parse-options) 0))
-      ((not (null? (Opts unknown o))) (%unknown-option (Opts unknown o) (Opts usage git-rev-parse-options)))
-      ((null? gitdir) (%no-repo))
+      ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-rev-parse-options)))
+      ((null? gitdir) (git-no-repo))
       (#t
         (let go ((revs (Opts operands o)) (lines ()))
           (if (null? revs) (list (lit out) (Str8 join "" (List reverse lines)) 0)
@@ -203,4 +208,4 @@
                 (go (rest revs) (pair (Str8 append sha "\n") lines))))))))))
 
 (provide git/commands git-cat-file git-cat-file-options git-hash-object git-hash-object-options
-  git-rev-parse-command git-rev-parse-options)
+  git-rev-parse-command git-rev-parse-options git-fatal git-unknown-option git-no-repo git-strip-slash)

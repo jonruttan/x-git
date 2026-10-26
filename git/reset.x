@@ -19,7 +19,8 @@
 
 (import x/sys/opts Opts)
 (import x/sys/file File)
-(import git/objects git-object-read git-object-text)
+(import git/objects git-subject)
+(import git/commands git-fatal git-no-repo)
 (import git/refs git-rev-parse git-commit-of git-tree-of)
 (import git/index git-status-lists)
 (import git/stage git-read-entries git-index-write! git-merge-state-clear!)
@@ -30,8 +31,6 @@
 (def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
 
-(def %fatal (fn (_ text) (list (lit err) (Str8 append "fatal: " text "\n") 128)))
-(def %no-repo (fn (_) (%fatal "not a git repository (or any of the parent directories): .git")))
 (def %member? (fn (_ s l) (List any? (fn (_ x) (str=? x s)) l)))
 
 (def %ambiguous
@@ -56,13 +55,6 @@
 (def %files (fn (_ gitdir commit) (git-tree-flat gitdir (git-tree-of gitdir commit) "")))
 
 (def %mode-number (fn (_ text) (%str->number text 8)))
-
-; A commit's subject: its message's first line.
-(def %subject
-  (fn (_ gitdir sha)
-    (def text (git-object-text (git-object-read gitdir sha)))
-    (def i (Str8 index-of "\n\n" text))
-    (if (null? i) "" (first (Str8 split "\n" (Str8 sub (%add i 2) (%sub (Str8 length text) (%add i 2)) text))))))
 
 ; Does a path fall under a pathspec: the path itself, or a directory
 ; holding it?
@@ -130,7 +122,7 @@
       ((not (null? (Opts unknown o)))
         (list (lit err) (Str8 append "error: unknown option `" (Str8 sub 2 (%sub (Str8 length (Opts unknown o)) 2) (Opts unknown o)) "'\n"
                           (Opts usage git-reset-options)) 129))
-      ((null? gitdir) (%no-repo))
+      ((null? gitdir) (git-no-repo))
       (#t
         ; the commit and the paths: after a "--", the one operand before it
         ; is the commit; without one, the first operand is when it names
@@ -147,13 +139,13 @@
                   (#t (list "HEAD" operands)))))
           (let ((rev (first plan)) (paths (first (rest plan))))
             (match
-              ((eq? rev (lit bad-tree)) (%fatal (Str8 append "Failed to resolve '" (first (rest plan)) "' as a valid tree.")))
+              ((eq? rev (lit bad-tree)) (git-fatal (Str8 append "Failed to resolve '" (first (rest plan)) "' as a valid tree.")))
               ; a word that is no commit must be a path that is there
               ((and (null? cut) (not (null? paths))
                     (List find (fn (_ p) (not (File exists? (Str8 append wd "/" p)))) paths))
                 (%ambiguous (List find (fn (_ p) (not (File exists? (Str8 append wd "/" p)))) paths)))
-              ((and (not (null? paths)) (str=? mode "hard")) (%fatal "Cannot do hard reset with paths."))
-              ((and (not (null? paths)) (str=? mode "soft")) (%fatal "Cannot do soft reset with paths."))
+              ((and (not (null? paths)) (str=? mode "hard")) (git-fatal "Cannot do hard reset with paths."))
+              ((and (not (null? paths)) (str=? mode "soft")) (git-fatal "Cannot do soft reset with paths."))
               ((null? (git-commit-of gitdir rev)) (%ambiguous rev))
               ; paths: their entries set from the commit, HEAD where it is
               ((not (null? paths))
@@ -164,7 +156,7 @@
                             (warned (if (Opts on? o "--mixed") "warning: --mixed with paths is deprecated; use 'git reset -- <paths>' instead.\n" "")))
                         (if (= (Str8 length warned) 0) (list (lit out) said 0) (list (lit err) warned 0 said))))))
               ((and (str=? mode "soft") (File exists? (Str8 append gitdir "/MERGE_HEAD")))
-                (%fatal "Cannot do a soft reset in the middle of a merge."))
+                (git-fatal "Cannot do a soft reset in the middle of a merge."))
               (#t
                 (let ((sha (git-commit-of gitdir rev)))
                   (match
@@ -173,7 +165,7 @@
                       (do (%hard! wd gitdir sha)
                           (%move-head! gitdir sha)
                           (git-merge-state-clear! gitdir)
-                          (list (lit out) (if quiet? "" (Str8 append "HEAD is now at " (Str8 sub 0 7 sha) " " (%subject gitdir sha) "\n")) 0)))
+                          (list (lit out) (if quiet? "" (Str8 append "HEAD is now at " (Str8 sub 0 7 sha) " " (git-subject gitdir sha) "\n")) 0)))
                     (#t
                       (do (git-index-write! gitdir (%entries-for (git-read-entries gitdir) (%files gitdir sha)))
                           (%move-head! gitdir sha)

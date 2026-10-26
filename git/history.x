@@ -15,30 +15,13 @@
 
 (import x/sys/opts Opts)
 (import x/sys/date Date)
-(import git/objects git-object-read git-tree-entries git-object-text)
+(import git/objects git-object-read git-tree-entries git-object-text git-mode-type)
+(import git/commands git-fatal git-no-repo git-unknown-option)
 (import git/refs git-tree-of git-commit-of git-headers git-rev-parse git-rev-path-missing)
 (import git/diff git-tree-patch)
 
 (def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
-
-(def %fatal (fn (_ text) (list (lit err) (Str8 append "fatal: " text "\n") 128)))
-(def %no-repo
-  (fn (_) (%fatal "not a git repository (or any of the parent directories): .git")))
-(def %unknown-option
-  (fn (_ w usage)
-    (def n (Str8 length w))
-    (list (lit err)
-      (Str8 append
-        (if (Str8 starts? "--" w)
-          (Str8 append "error: unknown option `" (Str8 sub 2 (- n 2) w))
-          (Str8 append "error: unknown switch `" (Str8 sub 1 (- n 1) w)))
-        "'\n" usage)
-      129)))
-
-(def %mode-type
-  (fn (_ mode)
-    (match ((str=? mode "40000") "tree") ((str=? mode "160000") "commit") (#t "blob"))))
 
 ; --- ls-tree ---
 
@@ -55,7 +38,7 @@
 ; a tab, the path; with --name-only the path alone.
 (def %entry-line
   (fn (_ gitdir e path long? names?)
-    (def type (%mode-type (first e)))
+    (def type (git-mode-type (first e)))
     (def sha (first (rest (rest e))))
     (if names? (Str8 append path "\n")
       (Str8 append (Str8 pad-left 6 #\0 (first e)) " " type " " sha
@@ -116,12 +99,12 @@
     (def operands (Opts operands o))
     (match
       ((Opts help? git-ls-tree-options ops) (list (lit out) (Opts usage git-ls-tree-options) 0))
-      ((not (null? (Opts unknown o))) (%unknown-option (Opts unknown o) (Opts usage git-ls-tree-options)))
+      ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-ls-tree-options)))
       ((null? operands) (list (lit err) (Opts usage git-ls-tree-options) 129))
-      ((null? gitdir) (%no-repo))
+      ((null? gitdir) (git-no-repo))
       (#t
         (let ((tree (git-tree-of gitdir (first operands))))
-          (if (null? tree) (%fatal (Str8 append "Not a valid object name " (first operands)))
+          (if (null? tree) (git-fatal (Str8 append "Not a valid object name " (first operands)))
             (let ((recurse? (Opts on? o "-r")) (trees? (Opts on? o "-t"))
                   (long? (Opts on? o "-l")) (names? (Opts on? o "--name-only")))
               (list (lit out)
@@ -247,8 +230,8 @@
     (def limit (let ((v (Opts value o "-n" ()))) (if (null? v) () (%str->number v 10))))
     (match
       ((Opts help? git-log-options ops) (list (lit out) (Opts usage git-log-options) 0))
-      ((not (null? (Opts unknown o))) (%unknown-option (Opts unknown o) (Opts usage git-log-options)))
-      ((null? gitdir) (%no-repo))
+      ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-log-options)))
+      ((null? gitdir) (git-no-repo))
       (#t
         (let ((rev (if (null? operands) "HEAD" (first operands))))
           (let ((sha (git-commit-of gitdir rev)))
@@ -410,8 +393,8 @@
     (def pretty (%pretty o))
     (match
       ((Opts help? git-show-options ops) (list (lit out) (Opts usage git-show-options) 0))
-      ((not (null? (Opts unknown o))) (%unknown-option (Opts unknown o) (Opts usage git-show-options)))
-      ((null? gitdir) (%no-repo))
+      ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-show-options)))
+      ((null? gitdir) (git-no-repo))
       (#t
         ; each name resolved once, all before anything is shown
         (let ((shas (List map (fn (_ n) (git-rev-parse gitdir n)) names)))
@@ -419,7 +402,7 @@
           (if (not (null? bad))
             (let ((base (git-rev-path-missing gitdir bad)))
               (if (not (null? base))
-                (%fatal (Str8 append "path '" (Str8 sub (%add (Str8 length base) 1) (%sub (Str8 length bad) (%add (Str8 length base) 1)) bad)
+                (git-fatal (Str8 append "path '" (Str8 sub (%add (Str8 length base) 1) (%sub (Str8 length bad) (%add (Str8 length base) 1)) bad)
                           "' does not exist in '" base "'"))
                 (list (lit err)
                   (Str8 join "\n"

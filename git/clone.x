@@ -20,6 +20,7 @@
 (import x/sys/opts Opts)
 (import x/sys/file File)
 (import git/objects git-dir git-write-file! git-object-read)
+(import git/commands git-fatal git-unknown-option git-strip-slash)
 (import git/refs git-ref-read)
 (import git/repo git-init-layout! git-refs-under)
 (import git/checkout git-checkout-tree!)
@@ -30,26 +31,11 @@
 (def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
 
-(def %fatal (fn (_ text) (list (lit err) (Str8 append "fatal: " text "\n") 128)))
-(def %unknown-option
-  (fn (_ w usage)
-    (def n (Str8 length w))
-    (list (lit err)
-      (Str8 append
-        (if (Str8 starts? "--" w)
-          (Str8 append "error: unknown option `" (Str8 sub 2 (- n 2) w))
-          (Str8 append "error: unknown switch `" (Str8 sub 1 (- n 1) w)))
-        "'\n" usage)
-      129)))
-
-(def %strip-slash
-  (fn (_ s) (if (and (> (Str8 length s) 1) (Str8 ends? "/" s)) (Str8 sub 0 (%sub (Str8 length s) 1) s) s)))
-
 ; The name clone gives a directory when none is given: the path's last
 ; component, less a .git ending.
 (def %default-name
   (fn (_ path)
-    (def p (%strip-slash path))
+    (def p (git-strip-slash path))
     (def i (Str8 last-index-of "/" p))
     (def base (if (null? i) p (Str8 sub (%add i 1) (%sub (Str8 length p) (%add i 1)) p)))
     (if (Str8 ends? ".git" base) (Str8 sub 0 (%sub (Str8 length base) 4) base) base)))
@@ -142,7 +128,7 @@
     (def operands (Opts operands o))
     (match
       ((Opts help? git-clone-options ops) (list (lit out) (Opts usage git-clone-options) 0))
-      ((not (null? (Opts unknown o))) (%unknown-option (Opts unknown o) (Opts usage git-clone-options)))
+      ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-clone-options)))
       ((null? operands) (list (lit err) (Opts usage git-clone-options) 129))
       (#t
         (let ((src-arg (first operands)))
@@ -154,10 +140,10 @@
             (let ((sgit (%source-gitdir src))
                   (dest (if (Str8 starts? "/" name) name (Str8 append wd "/" name))))
               (match
-                ((and (null? sgit) (not (proto-url? src-arg))) (%fatal (Str8 append "repository '" src-arg "' does not exist")))
+                ((and (null? sgit) (not (proto-url? src-arg))) (git-fatal (Str8 append "repository '" src-arg "' does not exist")))
                 ((and (File exists? dest)
                       (or (not (eq? (File type dest) (lit dir))) (not (null? (File list-dir dest)))))
-                  (%fatal (Str8 append "destination path '" name "' already exists and is not an empty directory.")))
+                  (git-fatal (Str8 append "destination path '" name "' already exists and is not an empty directory.")))
                 ((proto-url? src-arg) (%clone-wire! src-arg name dest))
                 (#t
                   (let ((head (Str8 trim (File read-all (Str8 append sgit "/HEAD")))))
