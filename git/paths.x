@@ -1,6 +1,6 @@
 ; # x-git -- git on x-lang
 ;
-; ## git/paths.x -- rm and mv
+; ## git/paths.x -- rm, mv, check-ignore and clean
 ;
 ; @author [Jon Ruttan](jonruttan@gmail.com)
 ; @copyright 2026 Jon Ruttan
@@ -14,7 +14,11 @@
 ; <source>... <destination> renames a file or a directory, or moves
 ; several into a directory, the index following.  check-ignore [-q] [-v
 ; [-n]] [--no-index] <pathname>... names the paths .gitignore ignores,
-; with -v the pattern that decides, its file and line.  The words are
+; with -v the pattern that decides, its file and line.  clean [-d] [-f]
+; [-n] [-q] [-e <pattern>] [-x | -X] [<pathspec>...] removes the untracked
+; files (with -x the ignored too, with -X only those), with -d the
+; untracked directories, a repository inside this one only with -f twice;
+; nothing without -f or -n while clean.requireForce holds.  The words are
 ; git's.
 
 (module git/paths)
@@ -26,7 +30,8 @@
 (import git/index git-tree-files)
 (import git/refs git-tree-of)
 (import git/stage git-index-write! git-read-entries)
-(import git/ignore git-ignore-matcher git-ignore-rule-negated? git-ignore-rule-source git-ignore-rule-line
+(import git/config git-config-value)
+(import git/ignore git-ignorer git-ignore-matcher git-ignore-rule-negated? git-ignore-rule-source git-ignore-rule-line
   git-ignore-rule-text)
 
 (def %add (prim-ref 'int '+))
@@ -309,4 +314,98 @@
                 (Str8 join "" (List map (fn (_ f) (%ignore-line (first f) (rest f) (on? "-v") (on? "-n"))) found)))
               (if (List any? (fn (_ f) (not (null? (rest f)))) found) 0 1))))))))
 
-(provide git/paths git-rm git-rm-options git-mv git-mv-options git-check-ignore git-check-ignore-options)
+; --- clean ---
+
+(def git-clean-options
+  (Opts declare "git clean" "[-d] [-f] [-n] [-q] [-e <pattern>] [-x | -X] [--] [<pathspec>...]" ()
+    (list
+      (Opts flag "-q" "--quiet" "Do not print the names of what is removed")
+      (Opts flag "-n" "--dry-run" "Say what would be removed, and remove nothing")
+      (Opts flag "-f" "--force" "Remove; twice, a repository inside this one too")
+      (Opts flag "-d" "Remove untracked directories whole")
+      (Opts arg "-e" "--exclude" "<pattern>" "Leave what <pattern> matches, as .gitignore would")
+      (Opts flag "-x" "Remove the ignored files too")
+      (Opts flag "-X" "Remove only the ignored files"))))
+
+; What clean takes, sorted as git sorts it: files by path, and with dirs?
+; a directory as "DIR/" when everything in it goes -- under only-ignored?
+; when it holds something to go at all.  A file goes when it is
+; untracked and wanted? (whether it is ignored) says so; a directory with
+; nothing tracked in it is looked into only with dirs?; one that is a
+; repository of its own (it holds .git) only with nested?.  in-scope? and
+; above? say whether a path is under a pathspec, or a directory a
+; pathspec is under.
+(def %clean-list
+  (fn (_ wd tracked ignored? wanted? dirs? only-ignored? nested? in-scope? above?)
+    (def tracked? (fn (_ path) (List any? (fn (_ t) (str=? t path)) tracked)))
+    (def tracked-under? (fn (_ path) (List any? (fn (_ t) (Str8 starts? (Str8 append path "/") t)) tracked)))
+    ; (ITEMS . WHOLE?), WHOLE? when all of the directory goes
+    (def scan
+      (fn (self dir prefix)
+        (List fold
+          (fn (_ acc name)
+            (let ((full (Str8 append dir "/" name)) (path (Str8 append prefix name)))
+              (let ((partly (fn (_ items) (pair (List append (first acc) items) #f))))
+                (match
+                  ((str=? name ".git") (partly ()))
+                  ((not (or (in-scope? path) (above? path))) (partly ()))
+                  ((not (%dir? full))
+                    (if (and (not (tracked? path)) (in-scope? path) (wanted? (ignored? path #f)))
+                      (pair (List append (first acc) (list path)) (rest acc))
+                      (partly ())))
+                  ((tracked-under? path) (partly (first (self full (Str8 append path "/")))))
+                  ((not dirs?) (partly ()))
+                  ((File exists? (Str8 append full "/.git"))
+                    (if (and nested? (in-scope? path)) (pair (List append (first acc) (list (Str8 append path "/"))) (rest acc)) (partly ())))
+                  (#t
+                    (let ((in (self full (Str8 append path "/"))))
+                      (if (and (rest in) (in-scope? path) (or (not only-ignored?) (not (null? (first in)))))
+                        (pair (List append (first acc) (list (Str8 append path "/"))) (rest acc))
+                        (partly (first in)))))))))
+          (pair () #t) (File list-dir dir))))
+    (List sort (fn (_ a b) (Str8 <? a b)) (first (scan wd "")))))
+
+(def git-clean
+  (fn (_ wd gitdir ops)
+    (def o (Opts parse git-clean-options ops))
+    (def on? (fn (_ f) (Opts on? o f)))
+    (def forced (List length (List filter (fn (_ f) (str=? f "-f")) (rest (Assoc entry (lit on) o)))))
+    (def specs (List map (fn (_ s) (git-strip-slash s)) (Opts operands o)))
+    (def in-scope?
+      (fn (_ path) (or (null? specs) (List any? (fn (_ s) (or (str=? s ".") (str=? s path) (Str8 starts? (Str8 append s "/") path))) specs))))
+    (def above? (fn (_ path) (List any? (fn (_ s) (Str8 starts? (Str8 append path "/") s)) specs)))
+    (def require-force
+      (if (null? gitdir) #t
+        (let ((v (git-config-value gitdir "clean.requireForce")))
+          (if (null? v) #t (not (List any? (fn (_ w) (Str8 ci=? v w)) (list "false" "no" "off" "0")))))))
+    (match
+      ((Opts help? git-clean-options ops) (list (lit out) (Opts usage git-clean-options) 0))
+      ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-clean-options)))
+      ((null? gitdir) (git-no-repo))
+      ((and (on? "-x") (on? "-X")) (git-fatal "options '-x' and '-X' cannot be used together"))
+      ((and require-force (= forced 0) (not (on? "-n")))
+        (git-fatal "clean.requireForce is true and -f not given: refusing to clean"))
+      (#t
+        (let ((ignored? (git-ignorer wd gitdir (Opts values o "-e")))
+              (wanted? (%wanted (on? "-x") (on? "-X"))))
+          (let ((gone (%clean-list wd (List map (fn (_ e) (first e)) (git-read-entries gitdir))
+                        ignored? wanted? (on? "-d") (on? "-X") (> forced 1) in-scope? above?)))
+            (do (unless (on? "-n")
+                  (List for-each
+                    (fn (_ p)
+                      (def full (Str8 append wd "/" (git-strip-slash p)))
+                      (if (Str8 ends? "/" p) (%remove-tree! full) (File unlink full)))
+                    gone))
+                (list (lit out)
+                  (if (on? "-q") ""
+                    (Str8 join "" (List map (fn (_ p) (Str8 append (if (on? "-n") "Would remove " "Removing ") p "\n")) gone)))
+                  0))))))))
+
+; Which files clean takes, by whether each is ignored: -x every one, -X
+; only the ignored, otherwise only the rest.
+(def %wanted
+  (fn (_ all? only-ignored?)
+    (match (all? (fn (_ ig) #t)) (only-ignored? (fn (_ ig) ig)) (#t (fn (_ ig) (not ig))))))
+
+(provide git/paths git-rm git-rm-options git-mv git-mv-options git-check-ignore git-check-ignore-options
+  git-clean git-clean-options)

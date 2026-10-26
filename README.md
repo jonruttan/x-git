@@ -129,6 +129,11 @@ the kernel and x are installed (x-os).
   `~/.config/git/ignore`) as gitignore(5) reads them, and
   `check-ignore [-q] [-v [-n]] [--no-index] <pathname>...`, which says
   what they ignore and, with -v, which pattern decides
+- `clean [-d] [-f] [-n] [-q] [-e <pattern>] [-x | -X] [<pathspec>...]`:
+  the untracked files removed (with -x the ignored too, with -X only
+  they), with -d the untracked directories, a repository inside this one
+  only with -f twice; refused without -f or -n while
+  `clean.requireForce` holds
 - an object named in full, by a unique hex prefix of four digits or more,
   or by a revision: `HEAD`, a branch or tag (loose or in `packed-refs`,
   looked up as gitrevisions(7) does), with `~N`, `^N`, `^{tree}`,

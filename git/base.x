@@ -16,7 +16,7 @@
   git-ref-read git-rev-parse git-cat-file git-hash-object git-rev-parse-command
   git-ls-tree git-log git-show git-index-read git-status-lists git-status git-ls-files
   git-add git-commit git-diff git-edit-script git-hunks git-init git-branch git-tag
-  git-checkout git-switch git-restore git-clone git-fetch git-push git-ls-remote git-rm git-mv git-check-ignore
+  git-checkout git-switch git-restore git-clone git-fetch git-push git-ls-remote git-rm git-mv git-check-ignore git-clean
   git-upload-pack git-receive-pack git-merge git-pull git-config git-config-value git-reset git-revert)
 
 (def git-version "0.1.0")
@@ -34,7 +34,7 @@
 (import git/remote git-fetch git-push git-ls-remote)
 (import git/serve git-upload-pack git-receive-pack)
 (import git/merge git-merge git-pull)
-(import git/paths git-rm git-mv git-check-ignore)
+(import git/paths git-rm git-mv git-check-ignore git-clean)
 (import git/config git-config git-config-value)
 (import git/reset git-reset)
 (import git/revert git-revert)
