@@ -14,7 +14,8 @@
 ; <source>... <destination> renames a file or a directory, or moves
 ; several into a directory, the index following.  check-ignore [-q] [-v
 ; [-n]] [--no-index] <pathname>... names the paths .gitignore ignores,
-; with -v the pattern that decides, its file and line.  clean [-d] [-f]
+; with -v the pattern that decides, its file and line; with --stdin [-z]
+; it reads the paths, a line or a NUL-ended field each.  clean [-d] [-f]
 ; [-n] [-q] [-e <pattern>] [-x | -X] [<pathspec>...] removes the untracked
 ; files (with -x the ignored too, with -X only those), with -d the
 ; untracked directories, a repository inside this one only with -f twice;
@@ -26,7 +27,8 @@
 (import x/sys/opts Opts)
 (import x/sys/file File)
 (import git/objects git-hash git-read-file)
-(import git/commands git-fatal git-no-repo git-unknown-option git-strip-slash)
+(import git/commands git-fatal git-no-repo git-unknown-option git-strip-slash git-stdin git-records
+  git-nul-joined git-quote-path git-unquote-path)
 (import git/index git-tree-files)
 (import git/refs git-tree-of)
 (import git/stage git-index-write! git-read-entries)
@@ -269,19 +271,29 @@
       (Opts flag "-q" "--quiet" "Print nothing; the status says whether the path is ignored")
       (Opts flag "-v" "--verbose" "Name the pattern that decides each path")
       (Opts flag "-n" "--non-matching" "With -v, list the paths no pattern matches too")
-      (Opts flag "--no-index" "Ask about tracked paths too"))))
+      (Opts flag "--no-index" "Ask about tracked paths too")
+      (Opts flag "--stdin" "Read the pathnames from standard input, one a line")
+      (Opts flag "-z" "With --stdin, a NUL ends each pathname read and each field written"))))
 
 ; What check-ignore prints for a path and the rule that decided it, ()
-; when none did: a line, or nothing.
-(def %ignore-line
-  (fn (_ path rule verbose? all?)
+; when none did: a line, its file and path quoted as git quotes them, or
+; with z? its fields, each to be ended by a NUL; nothing, "" or (), when
+; there is nothing to say.
+(def %ignore-out
+  (fn (_ path rule verbose? all? z?)
+    (def fields
+      (match
+        ((not verbose?) (if (null? rule) () (list path)))
+        ((not (null? rule))
+          (list (git-ignore-rule-source rule) (Str8 str (git-ignore-rule-line rule)) (git-ignore-rule-text rule) path))
+        (all? (list "" "" "" path))
+        (#t ())))
     (match
-      ((not verbose?) (if (null? rule) "" (Str8 append path "\n")))
-      ((not (null? rule))
-        (Str8 append (git-ignore-rule-source rule) ":" (Str8 str (git-ignore-rule-line rule)) ":"
-          (git-ignore-rule-text rule) "\t" path "\n"))
-      (all? (Str8 append "::\t" path "\n"))
-      (#t ""))))
+      (z? fields)
+      ((null? fields) "")
+      ((null? (rest fields)) (Str8 append (git-quote-path path) "\n"))
+      (#t (Str8 append (git-quote-path (first fields)) ":" (List ref 1 fields) ":" (List ref 2 fields) "\t"
+            (git-quote-path path) "\n")))))
 
 (def git-check-ignore
   (fn (_ wd gitdir ops)
@@ -292,27 +304,48 @@
       ((Opts help? git-check-ignore-options ops) (list (lit out) (Opts usage git-check-ignore-options) 0))
       ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-check-ignore-options)))
       ((null? gitdir) (git-no-repo))
-      ((null? paths) (git-fatal "no path specified"))
+      ((and (on? "--stdin") (not (null? paths))) (git-fatal "cannot specify pathnames with --stdin"))
+      ((and (on? "-z") (not (on? "--stdin"))) (git-fatal "-z only makes sense with --stdin"))
+      ((and (null? paths) (not (on? "--stdin"))) (git-fatal "no path specified"))
       ((and (on? "-q") (> (List length paths) 1)) (git-fatal "--quiet is only valid with a single pathname"))
       ((and (on? "-q") (on? "-v")) (git-fatal "cannot have both --quiet and --verbose"))
       ((and (on? "-n") (not (on? "-v"))) (git-fatal "--non-matching is only valid with --verbose"))
       (#t
         (let ((rule-of (git-ignore-matcher wd gitdir))
-              (index (if (on? "--no-index") () (git-read-entries gitdir))))
+              (index (if (on? "--no-index") () (git-read-entries gitdir)))
+              (z? (on? "-z")))
           ; a tracked path, or a directory with one in it, is no question
           ; of ignoring; a negation decides only what -v says
-          (let ((found (List map
-                         (fn (_ p)
-                           (def s (git-strip-slash p))
-                           (pair p
-                             (if (not (null? (%entries-under index s))) ()
-                               (let ((r (rule-of s (%dir? (Str8 append wd "/" s)))))
-                                 (if (and (not (null? r)) (git-ignore-rule-negated? r) (not (on? "-v"))) () r)))))
-                         paths)))
-            (list (lit out)
-              (if (on? "-q") ""
-                (Str8 join "" (List map (fn (_ f) (%ignore-line (first f) (rest f) (on? "-v") (on? "-n"))) found)))
-              (if (List any? (fn (_ f) (not (null? (rest f)))) found) 0 1))))))))
+          (def decide
+            (fn (_ p)
+              (def s (git-strip-slash p))
+              (if (not (null? (%entries-under index s))) ()
+                (let ((r (rule-of s (%dir? (Str8 append wd "/" s)))))
+                  (if (and (not (null? r)) (git-ignore-rule-negated? r) (not (on? "-v"))) () r)))))
+          (def said
+            (fn (_ found)
+              (def outs (List map (fn (_ f) (%ignore-out (first f) (rest f) (on? "-v") (on? "-n") z?)) found))
+              (match ((on? "-q") "") (z? (git-nul-joined (List flat-map (fn (_ x) x) outs))) (#t (Str8 join "" outs)))))
+          (def status (fn (_ found) (if (List any? (fn (_ f) (not (null? (rest f)))) found) 0 1)))
+          (if (not (on? "--stdin"))
+            (let ((found (List map (fn (_ p) (pair p (decide p))) paths)))
+              (list (lit out) (said found) (status found)))
+            ; a line at a time; one in quotes unquoted outside -z; a bad one
+            ; refused, what came before it said
+            (let ((in (git-stdin)))
+              ((fn (self recs found)
+                 (def refuse
+                   (fn (_ why)
+                     (def before (if z? "" (said (List reverse found))))
+                     (if (= (Str8 length before) 0) (git-fatal why) (List append (git-fatal why) (list before)))))
+                 (if (null? recs) (let ((all (List reverse found))) (list (lit out) (said all) (status all)))
+                   (let ((p (if (and (not z?) (Str8 starts? "\"" (first recs))) (git-unquote-path (first recs)) (first recs))))
+                     (match
+                       ((null? p) (refuse "line is badly quoted"))
+                       ((= (Str8 length p) 0)
+                         (refuse "empty string is not a valid pathspec. please use . instead if you meant to match all paths"))
+                       (#t (self (rest recs) (pair (pair p (decide p)) found)))))))
+               (git-records (first in) (rest in) (if z? 0 10)) ()))))))))
 
 ; --- clean ---
 

@@ -127,8 +127,9 @@ the kernel and x are installed (x-os).
 - `rm [-r] [--cached] [-f] <pathspec>...`, `mv <source>... <destination>`;
   `.gitignore`, `.git/info/exclude` and `core.excludesFile` (or
   `~/.config/git/ignore`) as gitignore(5) reads them, and
-  `check-ignore [-q] [-v [-n]] [--no-index] <pathname>...`, which says
-  what they ignore and, with -v, which pattern decides
+  `check-ignore [-q] [-v [-n]] [--no-index] <pathname>...` or
+  `--stdin [-z]`, which says what they ignore and, with -v, which pattern
+  decides, its paths quoted as git quotes them
 - `clean [-d] [-f] [-n] [-q] [-e <pattern>] [-x | -X] [<pathspec>...]`:
   the untracked files removed (with -x the ignored too, with -X only
   they), with -d the untracked directories, a repository inside this one
