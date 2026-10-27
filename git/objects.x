@@ -24,6 +24,7 @@
 (import x/codec/deflate Deflate)
 (import x/codec/hex Hex)
 (import git/packs git-pack-read git-pack-prefix git-pack-has?)
+(import git/quote git-quote-path)
 
 (def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
@@ -240,7 +241,7 @@
       (List map
         (fn (_ e)
           (Str8 append (Str8 pad-left 6 #\0 (first e)) " " (git-mode-type (first e)) " "
-                       (first (rest (rest e))) "\t" (first (rest e)) "\n"))
+                       (first (rest (rest e))) "\t" (git-quote-path (first (rest e))) "\n"))
         (git-tree-entries (list "tree" size r start))))))
 
 ; An object's body as a string: for commits and tags, which are text.

@@ -19,6 +19,7 @@
 (import git/commands git-fatal git-no-repo git-unknown-option)
 (import git/refs git-tree-of git-commit-of git-headers git-rev-parse git-rev-path-missing)
 (import git/diff git-tree-patch)
+(import git/quote git-quote-path)
 
 (def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
@@ -40,7 +41,7 @@
   (fn (_ gitdir e path long? names?)
     (def type (git-mode-type (first e)))
     (def sha (first (rest (rest e))))
-    (if names? (Str8 append path "\n")
+    (if names? (Str8 append (git-quote-path path) "\n")
       (Str8 append (Str8 pad-left 6 #\0 (first e)) " " type " " sha
         (if long?
           (Str8 append " "
@@ -49,7 +50,7 @@
                 (let ((o (git-object-read gitdir sha))) (if (null? o) "-" (Str8 str (first (rest o)))))
                 "-")))
           "")
-        "\t" path "\n"))))
+        "\t" (git-quote-path path) "\n"))))
 
 ; The lines for a tree, its entries at prefix; a tree entry recursed into
 ; with -r, and listed too with -t.
