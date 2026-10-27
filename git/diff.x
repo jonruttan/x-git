@@ -25,6 +25,7 @@
 (import git/refs git-tree-of git-rev-parse)
 (import git/index git-index-read git-tree-files)
 (import git/renames git-find-renames git-rename-name git-max-score)
+(import git/quote git-quote-path)
 
 (def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
@@ -185,11 +186,15 @@
 (def %side-text (fn (_ side) (first (rest (rest side)))))
 
 ; One file's diff as git prints it: the header, the modes and index line,
-; then the hunks.
+; then the hunks.  a/PATH and b/PATH are quoted whole when the path needs
+; it, and on the ---/+++ lines a tab follows a name with a space in it.
 (def %file-diff
   (fn (_ path old new)
     (def short (fn (_ sha) (Str8 sub 0 7 sha)))
-    (def header (Str8 append "diff --git a/" path " b/" path "\n"))
+    (def a-name (git-quote-path (Str8 append "a/" path)))
+    (def b-name (git-quote-path (Str8 append "b/" path)))
+    (def tab (if (null? (Str8 index-of " " path)) "" "\t"))
+    (def header (Str8 append "diff --git " a-name " " b-name "\n"))
     (def modes
       (match
         ((null? old) (Str8 append "new file mode " (first (rest new)) "\n"
@@ -203,11 +208,11 @@
     (def a-text (if (null? old) "" (%side-text old)))
     (def b-text (if (null? new) "" (%side-text new)))
     (if (or (%binary? a-text) (%binary? b-text))
-      (Str8 append header modes "Binary files " (if (null? old) "/dev/null" (Str8 append "a/" path))
-                   " and " (if (null? new) "/dev/null" (Str8 append "b/" path)) " differ\n")
+      (Str8 append header modes "Binary files " (if (null? old) "/dev/null" a-name)
+                   " and " (if (null? new) "/dev/null" b-name) " differ\n")
       (Str8 append header modes
-        "--- " (if (null? old) "/dev/null" (Str8 append "a/" path)) "\n"
-        "+++ " (if (null? new) "/dev/null" (Str8 append "b/" path)) "\n"
+        "--- " (if (null? old) "/dev/null" (Str8 append a-name tab)) "\n"
+        "+++ " (if (null? new) "/dev/null" (Str8 append b-name tab)) "\n"
         (git-hunks a-text b-text)))))
 
 ; --- the sides ---
@@ -292,7 +297,8 @@
           (if (> del 0) (Str8 append ", " (%plural del "deletion(-)" "deletions(-)")) "")))
       "\n")))
 
-; Each change's counts: ((PATH INS DEL) ...).
+; Each change's counts: ((LABEL INS DEL) ...), LABEL the path quoted, or a
+; rename's name, a fourth element.
 (def %change-counts
   (fn (_ changes)
     (List map
@@ -301,7 +307,7 @@
           (let ((la (first (%lines (if (null? old) "" (%side-text old)))))
                 (lb (first (%lines (if (null? new) "" (%side-text new))))))
             (let ((k (%counts (git-edit-script la lb))))
-              (list (first c) (first k) (rest k))))))
+              (list (if (null? (rest (rest (rest c)))) (git-quote-path (first c)) (List ref 3 c)) (first k) (rest k))))))
       changes)))
 
 ; --stat: a row a file -- the path padded to the widest, the count of
@@ -343,8 +349,8 @@
         (List map
           (fn (_ c)
             (match
-              ((null? (first (rest c))) (Str8 append " create mode " (mode-of (first c)) " " (first c) "\n"))
-              ((null? (first (rest (rest c)))) (Str8 append " delete mode 100644 " (first c) "\n"))
+              ((null? (first (rest c))) (Str8 append " create mode " (mode-of (first c)) " " (git-quote-path (first c)) "\n"))
+              ((null? (first (rest (rest c)))) (Str8 append " delete mode 100644 " (git-quote-path (first c)) "\n"))
               (#t "")))
           changes)))))
 
@@ -374,8 +380,8 @@
             (fn (_ c)
               (list (first c) c
                 (match
-                  ((null? (first (rest c))) (Str8 append " create mode " (first (rest (first (rest (rest c))))) " " (first c) "\n"))
-                  ((null? (first (rest (rest c)))) (Str8 append " delete mode " (first (rest (first (rest c)))) " " (first c) "\n"))
+                  ((null? (first (rest c))) (Str8 append " create mode " (first (rest (first (rest (rest c))))) " " (git-quote-path (first c)) "\n"))
+                  ((null? (first (rest (rest c)))) (Str8 append " delete mode " (first (rest (first (rest c)))) " " (git-quote-path (first c)) "\n"))
                   (#t ""))))
             (List filter (fn (_ c) (not (renamed-path? (first c)))) plain))
           (List flat-map
@@ -384,7 +390,7 @@
                 (let ((name (git-rename-name src dst))
                       (old (%with-text "" gitdir old-side src #f))
                       (new (%with-text "" gitdir new-side dst #f)))
-                  (list (list dst (list name old new)
+                  (list (list dst (list dst old new name)
                           (Str8 append " rename " name " (" (Str8 str (%int-div (%mul score 100) git-max-score)) "%)\n"))))))
             renames))))
     (if (null? rows) ""

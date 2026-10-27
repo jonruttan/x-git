@@ -21,6 +21,7 @@
 (module git/renames)
 
 (import git/objects git-object-read)
+(import git/quote git-quote-path)
 
 (def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
@@ -140,8 +141,14 @@
 
 ; A rename as git prints it in a diffstat (pprint_rename): the part both
 ; names share up to a / and from one written once, the rest as
-; {OLD => NEW}.
+; {OLD => NEW}; when either needs quoting, each whole, quoted as it needs.
 (def git-rename-name
+  (fn (_ a b)
+    (if (or (not (str=? (git-quote-path a) a)) (not (str=? (git-quote-path b) b)))
+      (Str8 append (git-quote-path a) " => " (git-quote-path b))
+      (%rename-name a b))))
+
+(def %rename-name
   (fn (_ a b)
     (def la (Str8 length a))
     (def lb (Str8 length b))

@@ -27,8 +27,8 @@
 (import x/sys/opts Opts)
 (import x/sys/file File)
 (import git/objects git-hash git-read-file)
-(import git/commands git-fatal git-no-repo git-unknown-option git-strip-slash git-stdin git-records
-  git-nul-joined git-quote-path git-unquote-path)
+(import git/commands git-fatal git-no-repo git-unknown-option git-strip-slash git-stdin git-records git-nul-joined)
+(import git/quote git-quote-path git-unquote-path)
 (import git/index git-tree-files)
 (import git/refs git-tree-of)
 (import git/stage git-index-write! git-read-entries)
@@ -431,7 +431,7 @@
                     gone))
                 (list (lit out)
                   (if (on? "-q") ""
-                    (Str8 join "" (List map (fn (_ p) (Str8 append (if (on? "-n") "Would remove " "Removing ") p "\n")) gone)))
+                    (Str8 join "" (List map (fn (_ p) (Str8 append (if (on? "-n") "Would remove " "Removing ") (git-quote-path p) "\n")) gone)))
                   0))))))))
 
 ; Which files clean takes, by whether each is ignored: -x every one, -X

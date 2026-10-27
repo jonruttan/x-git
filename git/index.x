@@ -21,6 +21,7 @@
 (import git/commands git-fatal git-no-repo git-unknown-option)
 (import git/refs git-ref-read git-tree-of git-rev-parse)
 (import git/ignore git-ignorer)
+(import git/quote git-quote-path git-quote-path-sp)
 
 (def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
@@ -273,11 +274,11 @@
         (List map
           (fn (_ p)
             (let ((u (List find (fn (_ c) (str=? (rest c) p)) unmerged)))
-              (if (null? u) (Str8 append (code-of staged p) (code-of unstaged p) " " p "\n")
-                (Str8 append (first u) " " p "\n"))))
+              (if (null? u) (Str8 append (code-of staged p) (code-of unstaged p) " " (git-quote-path-sp p) "\n")
+                (Str8 append (first u) " " (git-quote-path-sp p) "\n"))))
           paths)
-        (List map (fn (_ p) (Str8 append "?? " p "\n")) (first (rest (rest lists))))
-        (List map (fn (_ p) (Str8 append "!! " p "\n")) (%ignored-of lists))))))
+        (List map (fn (_ p) (Str8 append "?? " (git-quote-path-sp p) "\n")) (first (rest (rest lists))))
+        (List map (fn (_ p) (Str8 append "!! " (git-quote-path-sp p) "\n")) (%ignored-of lists))))))
 
 ; The ignored paths of status's lists, () when they were not asked for.
 (def %ignored-of (fn (_ lists) (List ref 4 lists)))
@@ -306,8 +307,8 @@
       (fn (_ title hints items)
         (if (null? items) ""
           (Str8 append title "\n"
-            (Str8 join "" (List map (fn (_ h) (Str8 append "  (use \"" h "\")\n")) hints))
-            (Str8 join "" (List map (fn (_ c) (Str8 append "\t" (%code-word (first c)) (rest c) "\n")) items))
+            (Str8 join "" (List map (fn (_ h) (Str8 append "  (use \"" (first h) "\" " (rest h) ")\n")) hints))
+            (Str8 join "" (List map (fn (_ c) (Str8 append "\t" (%code-word (first c)) (git-quote-path (rest c)) "\n")) items))
             "\n"))))
     (Str8 append
       (%branch-line gitdir)
@@ -317,26 +318,26 @@
           "You have unmerged paths.\n  (fix conflicts and run \"git commit\")\n  (use \"git merge --abort\" to abort the merge)\n\n")
         (#t "All conflicts fixed but you are still merging.\n  (use \"git commit\" to conclude merge)\n\n"))
       ; during a merge, what is staged carries no hint to unstage it
-      (section "Changes to be committed:" (if merging? () (list "git restore --staged <file>... to unstage")) staged)
+      (section "Changes to be committed:" (if merging? () (list (pair "git restore --staged <file>..." "to unstage"))) staged)
       (if (null? unmerged) ""
         (Str8 append "Unmerged paths:\n"
           (if (List all? (fn (_ u) (or (str=? (first u) "UU") (str=? (first u) "AA"))) unmerged)
             "  (use \"git add <file>...\" to mark resolution)\n"
             "  (use \"git add/rm <file>...\" as appropriate to mark resolution)\n")
-          (Str8 join "" (List map (fn (_ u) (Str8 append "\t" (%unmerged-word (first u)) (rest u) "\n")) unmerged))
+          (Str8 join "" (List map (fn (_ u) (Str8 append "\t" (%unmerged-word (first u)) (git-quote-path (rest u)) "\n")) unmerged))
           "\n"))
       (section "Changes not staged for commit:"
-        (list "git add <file>... to update what will be committed"
-              "git restore <file>... to discard changes in working directory")
+        (list (pair "git add <file>..." "to update what will be committed")
+              (pair "git restore <file>..." "to discard changes in working directory"))
         unstaged)
       (if (null? untracked) ""
         (Str8 append "Untracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n"
-          (Str8 join "" (List map (fn (_ p) (Str8 append "\t" p "\n")) untracked))
+          (Str8 join "" (List map (fn (_ p) (Str8 append "\t" (git-quote-path p) "\n")) untracked))
           "\n"))
       (let ((ignored (%ignored-of lists)))
         (if (null? ignored) ""
           (Str8 append "Ignored files:\n  (use \"git add -f <file>...\" to include in what will be committed)\n"
-            (Str8 join "" (List map (fn (_ p) (Str8 append "\t" p "\n")) ignored))
+            (Str8 join "" (List map (fn (_ p) (Str8 append "\t" (git-quote-path p) "\n")) ignored))
             "\n")))
       (match
         ((not (null? staged)) "")
@@ -428,15 +429,15 @@
             (list (lit out)
               (Str8 append
                 (if (not show-others?) ""
-                  (Str8 join "" (List map (fn (_ p) (Str8 append p "\n"))
+                  (Str8 join "" (List map (fn (_ p) (Str8 append (git-quote-path p) "\n"))
                                   (List filter kept? (%others wd (List map (fn (_ e) (first e)) index))))))
                 (if (not show-cached?) ""
                   (Str8 join ""
                     (List map
                       (fn (_ e)
                         (if (on? "-s")
-                          (Str8 append (first (rest e)) " " (first (rest (rest e))) " " (Str8 str (first (rest (rest (rest e))))) "\t" (first e) "\n")
-                          (Str8 append (first e) "\n")))
+                          (Str8 append (first (rest e)) " " (first (rest (rest e))) " " (Str8 str (first (rest (rest (rest e))))) "\t" (git-quote-path (first e)) "\n")
+                          (Str8 append (git-quote-path (first e)) "\n")))
                       (if (on? "-i") (List filter (fn (_ e) (ignored? (first e) #f)) index) index)))))
               0)))))))
 
