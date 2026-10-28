@@ -90,3 +90,77 @@ fixture is fresh for this file and its state is cumulative.
 ```
 ---
     #t
+
+## as git's xdiff makes it
+
+### a change slid where the indent heuristic scores it best
+
+Two `}` lines in a row: the new one could be shown before or after the
+old.  Without the heuristic git shows it after; with it, before, the
+line above being indented more.
+
+```git
+(display (git-hunks "f()\n\tx;\n}\n\ty;\n" "f()\n\tx;\n}\n}\n\ty;\n"))
+```
+---
+```output
+@@ -1,4 +1,5 @@
+ f()
+ 	x;
++}
+ }
+ 	y;
+```
+
+### a hunk headed by the line that starts its function
+
+```git
+(display (git-hunks "int main(void)\n{\n  one;\n  two;\n  three;\n  four;\n  five;\n  six;\n}\n"
+                    "int main(void)\n{\n  one;\n  two;\n  three;\n  four;\n  five;\n  SIX;\n}\n"))
+```
+---
+```output
+@@ -5,5 +5,5 @@ int main(void)
+   three;
+   four;
+   five;
+-  six;
++  SIX;
+ }
+```
+
+### lines alike many times over, moved, added and dropped, as git shows them
+
+```git
+(def %df (git-fixture))
+(def %put (fn (_ name text) (File write-all (Str8 append %df "/" name) text)))
+(%put "x1" "a\nb\nc\na\nb\nc\na\nb\nc\n")
+(%put "x2" "}\n{\n\treturn 0;\n}\n\n{\n\treturn 0;\n}\n")
+(%put "x3" "b\nc\nline 2\nc\n\treturn 0;\n}\n\treturn 0;\nline 1\n    ")
+(%put "x4" "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n")
+(git-oracle "add" "x1" "x2" "x3" "x4")
+(%put "x1" "c\nb\na\nb\nc\na\nc\nb\n")
+(%put "x2" "{\n\treturn 0;\n}\n\n{\n\treturn 1;\n}\n\n}\n")
+(%put "x3" "b\nc\nline 2\nc\n\treturn 0;\n}\n}\n\treturn 0;\nline 1\n    \n")
+(%put "x4" "one\nTWO\nthree\nfour\nfive\nsix\nseven\neight\nnine\nTEN\neleven\n")
+(write (list (equal? (git-text "diff" "x1" "x2" "x3" "x4") (git-oracle "diff" "x1" "x2" "x3" "x4"))
+             (equal? (git-text "diff" "--stat" "x1" "x2" "x3" "x4") (git-oracle "diff" "--stat" "x1" "x2" "x3" "x4"))))
+```
+---
+    (#t #t)
+
+### --stat fitted to the columns, a long path cut and the bars scaled
+
+```git
+(def %df (git-fixture))
+(def %long "a-rather-long-directory-name/another-rather-long-directory-name/file-with-a-long-name.txt")
+(File mkdir (Str8 append %df "/a-rather-long-directory-name"))
+(File mkdir (Str8 append %df "/a-rather-long-directory-name/another-rather-long-directory-name"))
+(def %count (fn (self i n acc) (if (> i n) acc (self (+ i 1) n (Str8 append acc (Str8 str i) "\n")))))
+(File write-all (Str8 append %df "/" %long) (%count 1 150 ""))
+(git-oracle "add" %long)
+(File write-all (Str8 append %df "/" %long) (%count 41 300 ""))
+(write (equal? (git-text "diff" "--stat" %long) (git-oracle "diff" "--stat" %long)))
+```
+---
+    #t
