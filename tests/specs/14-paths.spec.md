@@ -98,11 +98,24 @@ command line in both and answers (SAME-OUTPUT? X-GIT-OUTPUT SAME-STATUS?).
              (%pt-twin (Str8 append %pt-base " && printf u > u.txt") "mv" "u.txt" "v.txt")
              (%pt-twin %pt-base "mv" "sub" "sub/deep")
              (%pt-twin %pt-base "mv" "f.txt" "k.txt" "sub/g")
-             (%pt-twin %pt-base "mv" "f.txt" "nodir/f.txt")
              (%pt-twin %pt-base "mv" "-k" "nosuch" "x")))
 ```
 ---
-    ((#t (128 . "fatal: bad source, source=nosuch, destination=x\n") #t #t) (#t (128 . "fatal: not under version control, source=u.txt, destination=v.txt\n") #t #t) (#t (128 . "fatal: can not move directory into itself, source=sub, destination=sub/deep/sub\n") #t #t) (#t (128 . "fatal: destination 'sub/g' is not a directory\n") #t #t) (#t (128 . "fatal: renaming 'f.txt' failed: No such file or directory\n") #t #t) (#t (0 . "") #t #t))
+    ((#t (128 . "fatal: bad source, source=nosuch, destination=x\n") #t #t) (#t (128 . "fatal: not under version control, source=u.txt, destination=v.txt\n") #t #t) (#t (128 . "fatal: can not move directory into itself, source=sub, destination=sub/deep/sub\n") #t #t) (#t (128 . "fatal: destination 'sub/g' is not a directory\n") #t #t) (#t (0 . "") #t #t))
+
+### a destination whose directory is missing, or a file: refused as git 2.56 refuses it
+
+git before 2.56 tried the rename and reported its failure, so these are
+not compared with the oracle, whose version varies by runner.
+
+```git
+(def %pt-d (%pt-make %pt-base))
+(write (list (git-text-in %pt-d "mv" "f.txt" "nodir/f.txt")
+             (git-text-in %pt-d "mv" "f.txt" "k.txt/f.txt")
+             (File exists? (Str8 append %pt-d "/f.txt"))))
+```
+---
+    ((128 . "fatal: destination directory does not exist, source=f.txt, destination=nodir/f.txt\n") (128 . "fatal: destination is not a directory, source=f.txt, destination=k.txt/f.txt\n") #t)
 
 ## .gitignore
 

@@ -171,8 +171,11 @@
         (git-fatal (Str8 append "can not move directory into itself, source=" src ", destination=" dst)))
       ((and (File exists? full-dst) (not force?))
         (git-fatal (Str8 append "destination exists, source=" src ", destination=" dst)))
+      ; git 2.56 looks at the destination's directory before renaming.
       ((not (File exists? (Str8 append wd "/" (%parent dst))))
-        (git-fatal (Str8 append "renaming '" src "' failed: No such file or directory")))
+        (git-fatal (Str8 append "destination directory does not exist, source=" src ", destination=" dst)))
+      ((not (%dir? (Str8 append wd "/" (%parent dst))))
+        (git-fatal (Str8 append "destination is not a directory, source=" src ", destination=" dst)))
       (#t
         (List map
           (fn (_ e)
