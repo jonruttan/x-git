@@ -34,6 +34,7 @@
 (import git/diff git-commit-summary)
 (import git/history git-ident-date)
 (import git/config git-config-value)
+(import git/reflog git-ref-log!)
 
 (def %sub (prim-ref 'int '-))
 
@@ -103,6 +104,8 @@
     (if (null? branch)
       (File write-all (Str8 append gitdir "/HEAD") (Str8 append sha "\n"))
       (git-write-ref! gitdir (Str8 append "refs/heads/" branch) sha))
+    (git-ref-log! gitdir (if (null? branch) "HEAD" (Str8 append "refs/heads/" branch)) head sha
+      (Str8 append (or (Sys getenv "GIT_REFLOG_ACTION") "revert") ": " (first (Str8 split "\n" message))))
     (def author (rest (List find (fn (_ kv) (str=? (first kv) "author")) (git-headers gitdir sha))))
     (list (lit out)
       (Str8 append said "[" (if (null? branch) "detached HEAD" branch) " " (Str8 sub 0 7 sha) "] " (first (Str8 split "\n" message)) "\n"

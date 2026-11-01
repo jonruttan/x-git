@@ -137,14 +137,25 @@ the kernel and x are installed (x-os).
   they), with -d the untracked directories, a repository inside this one
   only with -f twice; refused without -f or -n while
   `clean.requireForce` holds
+- the reflog: each move of a ref appended to `.git/logs` as git appends
+  it -- by commit, branch, checkout and switch, reset, merge and pull,
+  revert, clone, fetch, push and receive-pack, in git's words, HEAD's
+  log beside its branch's, the refs `core.logAllRefUpdates` says (by
+  default HEAD, branches and remote-tracking refs, none in a bare
+  repository), a deleted branch's log gone with it.  `reflog [show] [-n
+  <number>] [<ref>...]` and `reflog exists <ref>` read it back
 - an object named in full, by a unique hex prefix of four digits or more,
-  or by a revision: `HEAD`, a branch or tag (loose or in `packed-refs`,
-  looked up as gitrevisions(7) does), with `~N`, `^N`, `^{tree}`,
-  `^{commit}`, `^{}` and `:PATH`
+  or by a revision: `HEAD` or `@`, a branch or tag (loose or in
+  `packed-refs`, looked up as gitrevisions(7) does), with `~N`, `^N`,
+  `^{tree}`, `^{commit}`, `^{}`, `@{N}` (an earlier value from the
+  reflog, `@{N}` alone the current branch's), and `:PATH`; `@{-N}` the
+  branch checked out N switches ago, as `checkout -` and `switch -` take
+  it
 - the repository found from the working directory or any parent
 - an unknown command or option, refused as git refuses it
 
-Not served yet: reflogs (`@{N}`), `:/text`, and every other command.
+Not served yet: reflog dates (`@{yesterday}`), `@{upstream}`, `:/text`,
+and every other command.
 
 ## Install and test
 
@@ -172,10 +183,12 @@ DIR holds this tree as `git` and x-ssh as `ssh`.
     git/packs.x       packed objects: the index, entries, deltas
     git/delta.x       deltas made, as git's diff-delta makes them
     git/refs.x        refs, loose and packed; revision names to objects
+    git/reflog.x      the reflog: moves appended, entries read
     git/commands.x    cat-file, hash-object, rev-parse
-    git/history.x     ls-tree, log, show
+    git/history.x     ls-tree, log, show, reflog
     git/index.x       the index read; ls-files, status
     git/stage.x       the index written; add, commit
+    git/ident.x       who and when, for commits and the reflog
     git/config.x      configuration read and written; config
     git/diff.x        lines compared: diff, and the summary commit prints
     git/repo.x        init, branch, tag

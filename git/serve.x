@@ -30,6 +30,7 @@
 (import git/clone git-source-gitdir)
 (import git/objects git-object-read git-object-text)
 (import git/refs git-ref-read)
+(import git/reflog git-reflog-append! git-reflog-delete!)
 (import git/repo git-refs-under git-unpack-ref!)
 (import git/packs git-pack-bytes git-pack-index! git-pack-scan git-pack-count
   git-bytes-make git-bytes-put! git-bytes-region git-bytes-count)
@@ -253,11 +254,13 @@
                 "deletion of the current branch prohibited")
           (do (let ((path (Str8 append g "/" name))) (when (File exists? path) (File unlink path)))
               (git-unpack-ref! g name)
+              (git-reflog-delete! g name)
               (pair "" ()))))
       ((not (git-has-object? g new)) (pair "" "missing necessary objects"))
       ((and (not bare?) (not (null? head-ref)) (str=? name head-ref))
         (pair (git-deny-current (Str8 sub 11 (%sub (Str8 length name) 11) name)) "branch is currently checked out"))
-      (#t (do (git-write-ref! g name new) (pair "" ()))))))
+      (#t (let ((old (git-ref-read g name)))
+            (do (git-write-ref! g name new) (git-reflog-append! g name old new "push") (pair "" ())))))))
 
 ; The report as pkt-lines, flush and all, in one region: (REGION . N).
 (def %report-bytes

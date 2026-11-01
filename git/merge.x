@@ -35,6 +35,7 @@
 
 (import x/sys/opts Opts)
 (import x/sys/file File)
+(import x/sys/posix Sys)
 (import git/objects git-object-write!)
 (import git/commands git-fatal git-no-repo)
 (import git/refs git-rev-parse git-tree-of git-ref-read)
@@ -43,7 +44,8 @@
 (import git/config git-config-value)
 (import git/checkout git-checkout-tree! git-write-blob! git-remove-file! git-entry-of)
 (import git/diff git-tree-diffstat)
-(import git/remote git-fetch git-ancestor? git-peel git-write-ref! git-current-branch)
+(import git/remote git-fetch-as git-ancestor? git-peel git-write-ref! git-current-branch)
+(import git/reflog git-ref-log!)
 (import git/threeway git-merge-base-files git-merge-trees git-tree-flat)
 
 (def %sub (prim-ref 'int '-))
@@ -78,11 +80,20 @@
       (Str8 append "refs/remotes/" remote "/"
         (if (Str8 starts? "refs/heads/" merge) (Str8 sub 11 (%sub (Str8 length merge) 11) merge) merge)))))
 
+; HEAD's branch, or HEAD when detached, moved from one commit to another
+; and the move logged.
+(def %head-to!
+  (fn (_ gitdir branch from to msg)
+    (if (null? branch)
+      (File write-all (Str8 append gitdir "/HEAD") (Str8 append to "\n"))
+      (git-write-ref! gitdir (Str8 append "refs/heads/" branch) to))
+    (git-ref-log! gitdir (if (null? branch) "HEAD" (Str8 append "refs/heads/" branch)) from to msg)))
+
 ; HEAD moved to commit `to` from `from`: (ERR OUT STATUS).  diverged
 ; answers the same when `to` is not ahead of HEAD: the refusal, or the
-; merge.
+; merge.  action begins the reflog's message: "merge NAME", "pull ARGS".
 (def %fast-forward!
-  (fn (_ wd gitdir from to diverged)
+  (fn (_ wd gitdir from to diverged action)
     (def updating (Str8 append "Updating " (%abbrev from) ".." (%abbrev to) "\n"))
     (match
       ((git-ancestor? gitdir to from) (list "" "Already up to date.\n" 0))
@@ -96,9 +107,7 @@
                   updating 1)
             (let ((branch (git-current-branch gitdir)))
               (do (File write-all (Str8 append gitdir "/ORIG_HEAD") (Str8 append from "\n"))
-                  (if (null? branch)
-                    (File write-all (Str8 append gitdir "/HEAD") (Str8 append to "\n"))
-                    (git-write-ref! gitdir (Str8 append "refs/heads/" branch) to))
+                  (%head-to! gitdir branch from to (Str8 append action ": Fast-forward"))
                   (list "" (Str8 append updating "Fast-forward\n"
                              (git-tree-diffstat gitdir (git-tree-of gitdir from) (git-tree-of gitdir to)))
                         0)))))))))
@@ -138,7 +147,7 @@
 ; MERGE_HEAD left to conclude it: (ERR OUT STATUS).  name2 is what the
 ; conflict markers call theirs.
 (def %merge-three!
-  (fn (_ wd gitdir head theirs message name2)
+  (fn (_ wd gitdir head theirs message name2 action)
     (def write-blob (fn (_ text) (git-object-write! gitdir "blob" text 0 (%str-byte-len text))))
     (def base-files (git-merge-base-files gitdir head theirs write-blob))
     (if (eq? base-files #f) (list "fatal: refusing to merge unrelated histories\n" "" 128)
@@ -148,7 +157,7 @@
                   (Str8 join "" (List map (fn (_ p) (Str8 append "\t" p "\n")) (rest placed)))
                   "Please commit your changes or stash them before you merge.\nAborting\nMerge with strategy ort failed.\n")
                 "" 2)
-          (%conclude-merge! gitdir head theirs placed message))))))
+          (%conclude-merge! gitdir head theirs placed message action))))))
 
 ; HEAD's files and theirs merged from base's into the working directory
 ; and index, as merge and revert merge them: (placed RESULTS MESSAGES
@@ -224,7 +233,7 @@
 ; A merge placed: a merge commit made, or the conflicts left with
 ; MERGE_HEAD -- left too when the merge stopped with none.
 (def %conclude-merge!
-  (fn (_ gitdir head theirs placed message)
+  (fn (_ gitdir head theirs placed message action)
     (def results (first (rest placed)))
     (def conflicted (first (rest (rest (rest placed)))))
     (def stopped? (first (rest (rest (rest (rest placed))))))
@@ -241,9 +250,7 @@
         (let ((sha (git-commit-write! gitdir tree (list head theirs) message)))
           (if (null? sha) (list "fatal: unable to auto-detect email address\n" said 128)
             (let ((branch (git-current-branch gitdir)))
-              (do (if (null? branch)
-                    (File write-all (Str8 append gitdir "/HEAD") (Str8 append sha "\n"))
-                    (git-write-ref! gitdir (Str8 append "refs/heads/" branch) sha))
+              (do (%head-to! gitdir branch head sha (Str8 append action ": Merge made by the 'ort' strategy."))
                   (list "" (Str8 append said "Merge made by the 'ort' strategy.\n"
                              (git-tree-diffstat gitdir (git-tree-of gitdir head) tree))
                         0)))))))))
@@ -297,6 +304,7 @@
         (if (or (null? gitdir) (null? branch)) () (%upstream gitdir branch))
         (first operands)))
     (def target (if (or (null? gitdir) (null? target-name)) () (git-rev-parse gitdir target-name)))
+    (def action (or (Sys getenv "GIT_REFLOG_ACTION") (Str8 append "merge " (or target-name ""))))
     (match
       ((Opts help? git-merge-options ops) (list (lit out) (Opts usage git-merge-options) 0))
       ((null? gitdir) (git-no-repo))
@@ -310,7 +318,7 @@
           (%answer (%fast-forward! wd gitdir head theirs
                      (if (Opts on? o "--ff-only")
                        (%refusal (Str8 append %diverging "fatal: Not possible to fast-forward, aborting.\n"))
-                       (fn (_) (%merge-three! wd gitdir head theirs (%merge-message gitdir target-name branch) target-name))))))))))
+                       (fn (_) (%merge-three! wd gitdir head theirs (%merge-message gitdir target-name branch) target-name action))) action)))))))
 
 ; --- pull ---
 
@@ -358,12 +366,13 @@
     (def operands (Opts operands o))
     (def branch (if (null? gitdir) () (git-current-branch gitdir)))
     (def named (if (or (null? operands) (null? (rest operands))) () (first (rest operands))))
+    (def action (Str8 join " " (pair "pull" ops)))
     (match
       ((Opts help? git-pull-options ops) (list (lit out) (Opts usage git-pull-options) 0))
       ((null? gitdir) (git-no-repo))
       ((and (null? named) (or (null? branch) (null? (%upstream gitdir branch)))) (%no-tracking (or branch "<branch>")))
       (#t
-        (let ((f (git-fetch wd gitdir (if (null? operands) () (list (first operands))))))
+        (let ((f (git-fetch-as wd gitdir (if (null? operands) () (list (first operands))) action)))
           (if (not (= (first (rest (rest f))) 0)) f
             (let ((fetched (%fetched-for-merge gitdir named)))
               (if (null? fetched) (git-fatal "No remote for the current branch.")
@@ -374,8 +383,9 @@
                                (%refusal (Str8 append %diverging "fatal: Not possible to fast-forward, aborting.\n")))
                              ; told to merge, here or in the config
                              ((or (Opts on? o "--no-rebase") (str=? (or (git-config-value gitdir "pull.rebase") "") "false"))
-                               (fn (_) (%merge-three! wd gitdir head target (%pull-message (rest fetched) branch) target)))
-                             (#t (%refusal (Str8 append %pull-diverging "fatal: Need to specify how to reconcile divergent branches.\n")))))))
+                               (fn (_) (%merge-three! wd gitdir head target (%pull-message (rest fetched) branch) target action)))
+                             (#t (%refusal (Str8 append %pull-diverging "fatal: Need to specify how to reconcile divergent branches.\n"))))
+                           action)))
                   (let ((err (Str8 append (first (rest f)) (first r))))
                     (if (= (Str8 length err) 0) (list (lit out) (first (rest r)) (first (rest (rest r))))
                       (list (lit err) err (first (rest (rest r))) (first (rest r)))))))))))))))

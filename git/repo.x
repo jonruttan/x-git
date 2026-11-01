@@ -19,6 +19,7 @@
 (import git/commands git-fatal git-no-repo git-unknown-option)
 (import git/refs git-ref-read git-rev-parse git-commit-of)
 (import git/config git-config-value)
+(import git/reflog git-reflog-append! git-reflog-delete!)
 
 (def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
@@ -145,6 +146,7 @@
                 (#t
                   (do (when (File exists? (Str8 append gitdir "/" full)) (File unlink (Str8 append gitdir "/" full)))
                       (%unpack-ref! gitdir full)
+                      (git-reflog-delete! gitdir full)
                       (list (lit out)
                         (if (str=? kind "branch")
                           (Str8 append "Deleted branch " name " (was " (Str8 sub 0 7 sha) ").\n")
@@ -170,6 +172,10 @@
                 (git-fatal (Str8 append "not a valid object name: '" start "'")))
               (#t
                 (do (git-write-file! (Str8 append gitdir "/" prefix name) (Str8 append sha "\n") 41)
+                    (when (str=? kind "branch")
+                      (git-reflog-append! gitdir (Str8 append prefix name) () sha
+                        ; with no start point, git names the branch HEAD is on
+                        (Str8 append "branch: Created from " (if (and (null? (rest operands)) (not (null? current))) current start))))
                     (list (lit out) "" 0))))))))))
 
 (def git-branch-options
