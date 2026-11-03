@@ -15,9 +15,12 @@
 
 (import x/sys/opts Opts)
 (import x/sys/date Date)
+(import x/sys/file File)
 (import git/objects git-object-read git-tree-entries git-object-text git-mode-type)
 (import git/commands git-fatal git-no-repo git-unknown-option)
-(import git/refs git-tree-of git-commit-of git-headers git-rev-parse git-rev-path-missing)
+(import git/refs git-tree-of git-commit-of git-headers git-rev-parse git-rev-path-missing git-rev-log-short git-log-ref
+  git-previous-branch)
+(import git/reflog git-reflog-entries)
 (import git/diff git-tree-patch)
 (import git/quote git-quote-path)
 
@@ -237,6 +240,8 @@
         (let ((rev (if (null? operands) "HEAD" (first operands))))
           (let ((sha (git-commit-of gitdir rev)))
             (match
+              ((and (null? sha) (not (null? (git-rev-log-short gitdir rev))))
+                (git-fatal (git-rev-log-short gitdir rev)))
               ((null? sha)
                 (list (lit err)
                   (Str8 join "\n"
@@ -402,16 +407,19 @@
         (let ((bad (let ((b (List find (fn (_ p) (null? (rest p))) (List map pair names shas)))) (if (null? b) () (first b)))))
           (if (not (null? bad))
             (let ((base (git-rev-path-missing gitdir bad)))
-              (if (not (null? base))
-                (git-fatal (Str8 append "path '" (Str8 sub (%add (Str8 length base) 1) (%sub (Str8 length bad) (%add (Str8 length base) 1)) bad)
-                          "' does not exist in '" base "'"))
-                (list (lit err)
-                  (Str8 join "\n"
-                    (list (Str8 append "fatal: ambiguous argument '" bad "': unknown revision or path not in the working tree.")
-                          "Use '--' to separate paths from revisions, like this:"
-                          "'git <command> [<revision>...] -- [<file>...]'"
-                          ""))
-                  128)))
+              (match
+                ((not (null? (git-rev-log-short gitdir bad))) (git-fatal (git-rev-log-short gitdir bad)))
+                ((not (null? base))
+                  (git-fatal (Str8 append "path '" (Str8 sub (%add (Str8 length base) 1) (%sub (Str8 length bad) (%add (Str8 length base) 1)) bad)
+                            "' does not exist in '" base "'")))
+                (#t
+                  (list (lit err)
+                    (Str8 join "\n"
+                      (list (Str8 append "fatal: ambiguous argument '" bad "': unknown revision or path not in the working tree.")
+                            "Use '--' to separate paths from revisions, like this:"
+                            "'git <command> [<revision>...] -- [<file>...]'"
+                            ""))
+                    128))))
             ; each object in turn; a commit after a commit set apart, by a
             ; blank line when shown in full, as log sets them, by a newline
             ; under format:, which ends none of its own
@@ -434,4 +442,65 @@
                        (#t (self (rest ns) (pair (git-object-text (git-object-read gitdir sha)) acc) #f)))))))
              (List map pair names shas) () #f))))))))
 
-(provide git/history git-ls-tree git-ls-tree-options git-log git-log-options git-show git-show-options git-ident-date)
+; --- reflog ---
+
+(def git-reflog-options
+  (Opts declare "git reflog" "[show] [-n <number>] [<ref>...] | exists <ref>" ()
+    (list (Opts arg "-n" "--max-count" "<number>" "Show at most <number> entries"))))
+
+; One ref's log as `git reflog show` prints it, newest first, a line an
+; entry: the commit it moved to, NAME@{N}, and the message.
+(def %reflog-lines
+  (fn (_ gitdir name ref)
+    (def entries (git-reflog-entries gitdir ref))
+    ((fn (self es i acc)
+       (if (null? es) (List reverse acc)
+         (let ((e (first es)))
+           (self (rest es) (%add i 1)
+             (pair (Str8 append (Str8 sub 0 7 (first (rest e))) " " name "@{" (Str8 str i) "}: " (first (rest (rest (rest e)))) "\n") acc)))))
+     entries 0 ())))
+
+(def git-reflog
+  (fn (_ wd gitdir ops)
+    (def o (Opts parse git-reflog-options ops))
+    (def operands (Opts operands o))
+    (def sub (if (and (not (null? operands)) (or (str=? (first operands) "show") (str=? (first operands) "exists"))) (first operands) "show"))
+    (def names (if (and (not (null? operands)) (str=? (first operands) sub)) (rest operands) operands))
+    (def limit (let ((v (Opts value o "-n" ()))) (if (null? v) () (%str->number v 10))))
+    ; the lines gathered, the first -n of them
+    (def shown
+      (fn (_ acc)
+        (def lines (List reverse acc))
+        (Str8 join "" (if (or (null? limit) (> limit (List length lines))) lines (List take limit lines)))))
+    ; @{-N} stands for the branch it names
+    (def named (fn (_ n) (if (Str8 starts? "@{-" n) (or (git-previous-branch gitdir n) n) n)))
+    (match
+      ((Opts help? git-reflog-options ops) (list (lit out) (Opts usage git-reflog-options) 0))
+      ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-reflog-options)))
+      ((null? gitdir) (git-no-repo))
+      ; exists takes the ref's full name
+      ((str=? sub "exists")
+        (if (or (null? names) (not (null? (rest names)))) (list (lit err) (Opts usage git-reflog-options) 129)
+          (list (lit out) "" (if (File exists? (Str8 append gitdir "/logs/" (first names))) 0 1))))
+      (#t
+        ((fn (self ns acc)
+           (if (null? ns) (list (lit out) (shown acc) 0)
+             (let ((name (named (first ns))))
+             (let ((ref (git-log-ref gitdir name)))
+               (match
+                 ((not (null? ref)) (self (rest ns) (List append (List reverse (%reflog-lines gitdir name ref)) acc)))
+                 ; a name that resolves but has no log shows nothing
+                 ((not (null? (git-rev-parse gitdir name))) (self (rest ns) acc))
+                 (#t
+                   (list (lit err)
+                     (Str8 join "\n"
+                       (list (Str8 append "fatal: ambiguous argument '" (first ns) "': unknown revision or path not in the working tree.")
+                             "Use '--' to separate paths from revisions, like this:"
+                             "'git <command> [<revision>...] -- [<file>...]'"
+                             ""))
+                     128
+                     "")))))))
+         (if (null? names) (list "HEAD") names) ())))))
+
+(provide git/history git-ls-tree git-ls-tree-options git-log git-log-options git-show git-show-options git-ident-date
+  git-reflog git-reflog-options)

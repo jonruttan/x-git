@@ -22,7 +22,7 @@
 (import x/sys/posix Sys)
 (import git/objects git-dir)
 (import git/commands git-cat-file git-hash-object git-rev-parse-command)
-(import git/history git-ls-tree git-log git-show)
+(import git/history git-ls-tree git-log git-show git-reflog)
 (import git/index git-status git-ls-files)
 (import git/stage git-add git-commit)
 (import git/diff git-diff)
@@ -83,7 +83,8 @@
         (pair "clean" git-clean)
         (pair "config" git-config)
         (pair "reset" git-reset)
-        (pair "revert" git-revert)))
+        (pair "revert" git-revert)
+        (pair "reflog" git-reflog)))
 
 ; The command a name runs, or ().
 (def %command

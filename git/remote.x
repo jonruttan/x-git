@@ -28,6 +28,7 @@
 
 (import x/sys/opts Opts)
 (import x/sys/file File)
+(import x/sys/posix Sys)
 (import git/objects git-object-read git-object-text git-tree-entries)
 (import git/commands git-fatal)
 (import git/packs git-pack-has? git-pack-write! git-pack-bytes git-pack-index!)
@@ -37,6 +38,7 @@
 (import git/clone git-source-gitdir)
 (import git/protocol proto-url? proto-connect proto-advertise proto-fetch! proto-push! proto-remote-lines proto-cannot-read proto-unreadable)
 (import git/wire wire-close! wire-flush!)
+(import git/reflog git-reflog-append! git-reflog-delete!)
 (import x/type/vector Vector)
 
 (def %add (prim-ref 'int '+))
@@ -294,7 +296,7 @@
 ; One branch of the remote fetched: (LINE-PARTS SHA BRANCH), the
 ; line () when the ref did not move.
 (def %fetch-branch!
-  (fn (_ gitdir new remote b)
+  (fn (_ gitdir new remote b action)
     (def tracking (Str8 append "refs/remotes/" remote "/" b))
     (def old (git-ref-read gitdir tracking))
     (def line
@@ -304,18 +306,22 @@
         ((%ancestor? gitdir old new)
           (list " " (Str8 append (%abbrev old) ".." (%abbrev new)) b (Str8 append remote "/" b) ()))
         (#t (list "+" (Str8 append (%abbrev old) "..." (%abbrev new)) b (Str8 append remote "/" b) "forced update"))))
-    (if (null? line) () (%write-ref! gitdir tracking new))
+    (unless (null? line)
+      (do (%write-ref! gitdir tracking new)
+          (git-reflog-append! gitdir tracking old new
+            (Str8 append action ": " (match ((null? old) "storing head") ((null? (List last line)) "fast-forward") (#t "forced-update"))))))
     (list line new b)))
 
 ; A tag of the remote taken when it is new here and points into what this
 ; repository now has: (LINE-PARTS SHA TAG), or ().
 (def %fetch-tag!
-  (fn (_ gitdir src name sha)
+  (fn (_ gitdir src name sha action)
     (def t (Str8 sub 10 (%sub (Str8 length name) 10) name))
     (def target (or (%lookup name (first (rest src))) sha))
     (if (and (null? (git-ref-read gitdir name)) (%has? gitdir target))
       (do (unless (%has? gitdir sha) ((first (rest (rest src))) (list sha)))
           (%write-ref! gitdir name sha)
+          (git-reflog-append! gitdir name () sha (Str8 append action ": storing tag"))
           (list (list "*" "[new tag]" t t ()) sha t))
       ())))
 
@@ -328,8 +334,8 @@
       (Str8 sub 0 (%sub n 4) url)
       (Str8 sub 0 n url))))
 
-(def git-fetch
-  (fn (_ wd gitdir ops)
+(def %fetch
+  (fn (_ wd gitdir ops action)
     (def o (Opts parse git-fetch-options ops))
     (def remote (if (null? (Opts operands o)) "origin" (first (Opts operands o))))
     (def url (if (null? gitdir) () (git-config-value gitdir (Str8 append "remote." remote ".url"))))
@@ -361,10 +367,10 @@
           ; every branch's objects in one pack, then the refs
           (bring! (List map (fn (_ b) (%lookup (Str8 append "refs/heads/" b) refs)) branches))
           (def fetched
-            (List map (fn (_ b) (%fetch-branch! gitdir (%lookup (Str8 append "refs/heads/" b) refs) remote b)) branches))
+            (List map (fn (_ b) (%fetch-branch! gitdir (%lookup (Str8 append "refs/heads/" b) refs) remote b action)) branches))
           (def tags
             (List filter (fn (_ l) (not (null? l)))
-              (List map (fn (_ e) (%fetch-tag! gitdir src (first e) (rest e)))
+              (List map (fn (_ e) (%fetch-tag! gitdir src (first e) (rest e) action))
                 (List sort (fn (_ a b) (Str8 <? (first a) (first b)))
                   (List filter (fn (_ e) (Str8 starts? "refs/tags/" (first e))) refs)))))
           (def lines (List append (List filter (fn (_ l) (not (null? l))) (List map first fetched)) (List map first tags)))
@@ -394,6 +400,14 @@
                                         (first (rest (rest (rest l)))) (first (rest (rest (rest (rest l)))))))
                     lines))))
             0))))))
+
+; fetch, its tracking refs' moves logged as "fetch ARGS: ...", or as
+; GIT_REFLOG_ACTION says; git-fetch-as for pull, which names its own.
+(def git-fetch
+  (fn (_ wd gitdir ops)
+    (%fetch wd gitdir ops (or (Sys getenv "GIT_REFLOG_ACTION") (Str8 join " " (pair "fetch" ops))))))
+
+(def git-fetch-as (fn (_ wd gitdir ops action) (%fetch wd gitdir ops action)))
 
 ; --- ls-remote ---
 
@@ -535,7 +549,8 @@
   (fn (_ gitdir name)
     (def path (Str8 append gitdir "/" name))
     (when (File exists? path) (File unlink path))
-    (git-unpack-ref! gitdir name)))
+    (git-unpack-ref! gitdir name)
+    (git-reflog-delete! gitdir name)))
 
 ; A repository on a path: its refs read from its files, the objects it
 ; lacks written as a pack, the refs written or deleted -- unless it is
@@ -560,7 +575,8 @@
                       (list (proto-remote-lines (%deny-delete-current name)) name "deletion of the current branch prohibited"))
                     ((str=? new %ZERO) (do (%delete-ref! dgit name) (list "" name)))
                     (current? (list (proto-remote-lines (%deny-current checked-out)) name "branch is currently checked out"))
-                    (#t (do (%write-ref! dgit name new) (list "" name)))))
+                    (#t (let ((old (git-ref-read dgit name)))
+                          (do (%write-ref! dgit name new) (git-reflog-append! dgit name old new "push") (list "" name))))))
                 updates))
             (pair (Str8 join "" (List map first done)) (List map (fn (_ d) (pair (first (rest d)) (if (null? (rest (rest d))) () (first (rest (rest d)))))) done)))
           (fn (_) ()))))
@@ -810,7 +826,8 @@
           (when (Str8 starts? "refs/heads/" dst)
             (let ((tracking (Str8 append "refs/remotes/" remote "/" (%short dst))))
               (if (str=? (first (rest (rest (rest (rest j))))) %ZERO) (%delete-ref! gitdir tracking)
-                (%write-ref! gitdir tracking (first (rest (rest (rest (rest j))))))))))
+                (let ((old (git-ref-read gitdir tracking)) (new (first (rest (rest (rest (rest j)))))))
+                  (do (%write-ref! gitdir tracking new) (git-reflog-append! gitdir tracking old new "update by push")))))))
         moved))
     (def tracked
       (if (or (not upstream?) (null? remote)) ""
@@ -917,6 +934,6 @@
 (def git-deny-current (fn (_ dst) (%deny-current dst)))
 (def git-ancestor? (fn (_ gitdir a b) (%ancestor? gitdir a b)))
 
-(provide git/remote git-fetch git-fetch-options git-push git-push-options git-ls-remote git-ls-remote-options
+(provide git/remote git-fetch git-fetch-as git-fetch-options git-push git-push-options git-ls-remote git-ls-remote-options
   git-advertised git-objects-to-send git-has-object? git-peel git-write-ref! git-current-branch git-deny-current
   git-ancestor?)

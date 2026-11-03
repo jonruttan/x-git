@@ -19,9 +19,10 @@
 (import x/sys/file File)
 (import git/objects git-object-read git-tree-entries git-write-file! git-read-file git-hash)
 (import git/commands git-fatal git-no-repo git-unknown-option)
-(import git/refs git-ref-read git-rev-parse git-tree-of git-commit-of git-headers)
+(import git/refs git-ref-read git-rev-parse git-tree-of git-commit-of git-headers git-previous-branch)
 (import git/index git-index-read git-status-lists)
 (import git/stage git-index-write!)
+(import git/reflog git-reflog-append!)
 
 (def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
@@ -159,6 +160,9 @@
     (def current
       (let ((h (Str8 trim (File read-all (Str8 append gitdir "/HEAD")))))
         (if (Str8 starts? "ref: refs/heads/" h) (Str8 sub 16 (%sub (Str8 length h) 16) h) ())))
+    (def old (git-rev-parse gitdir "HEAD"))
+    ; HEAD's log: from the branch it named, or the commit it was at
+    (def moved! (fn (_ new) (git-reflog-append! gitdir "HEAD" old new (Str8 append "checkout: moving from " (or current old) " to " rev))))
     (def branch-sha (if new? () (git-ref-read gitdir (Str8 append "refs/heads/" rev))))
     (match
       ((and new? (not (null? (git-ref-read gitdir (Str8 append "refs/heads/" rev)))))
@@ -169,14 +173,17 @@
             (let ((blocked (%move-to! wd gitdir sha)))
               (if (not (null? blocked)) (%overwritten blocked)
                 (do (git-write-file! (Str8 append gitdir "/refs/heads/" rev) (Str8 append sha "\n") 41)
+                    (git-reflog-append! gitdir (Str8 append "refs/heads/" rev) () sha (Str8 append "branch: Created from " start))
                     (File write-all (Str8 append gitdir "/HEAD") (Str8 append "ref: refs/heads/" rev "\n"))
+                    (moved! sha)
                     (list (lit err) (Str8 append "Switched to a new branch '" rev "'\n") 0)))))))
       ((and (not (null? current)) (str=? current rev))
-        (list (lit err) (Str8 append "Already on '" rev "'\n") 0))
+        (do (moved! old) (list (lit err) (Str8 append "Already on '" rev "'\n") 0)))
       ((not (null? branch-sha))
         (let ((blocked (%move-to! wd gitdir branch-sha)))
           (if (not (null? blocked)) (%overwritten blocked)
             (do (File write-all (Str8 append gitdir "/HEAD") (Str8 append "ref: refs/heads/" rev "\n"))
+                (moved! branch-sha)
                 (list (lit err) (Str8 append "Switched to branch '" rev "'\n") 0)))))
       (#t
         (let ((sha (git-commit-of gitdir rev)))
@@ -185,6 +192,7 @@
             (let ((blocked (%move-to! wd gitdir sha)))
               (if (not (null? blocked)) (%overwritten blocked)
                 (do (File write-all (Str8 append gitdir "/HEAD") (Str8 append sha "\n"))
+                    (moved! sha)
                     (list (lit err) (%detached-note rev gitdir sha) 0))))))))))
 
 ; Paths put back from the index; one the index lacks stops it all.
@@ -203,6 +211,14 @@
 
 ; --- the commands ---
 
+; - and @{-N}: the branch checked out that many switches ago, or else
+; when there was none.
+(def %prior
+  (fn (_ gitdir a else)
+    (def spec (if (str=? a "-") "@{-1}" a))
+    (if (or (null? gitdir) (not (Str8 starts? "@{-" spec))) a
+      (or (git-previous-branch gitdir spec) else))))
+
 (def git-checkout-options
   (Opts declare "git checkout" "[-b <new-branch>] <branch> | <commit>\n   or: git checkout -- <path>..." ()
     (list
@@ -214,7 +230,7 @@
     ; which the operands carry, so it is looked for in ops as given
     (def dashes? (List any? (fn (_ a) (str=? a "--")) ops))
     (def o (Opts parse git-checkout-options ops))
-    (def operands (Opts operands o))
+    (def operands (List map (fn (_ a) (%prior gitdir a a)) (Opts operands o)))
     (match
       ((Opts help? git-checkout-options ops) (list (lit out) (Opts usage git-checkout-options) 0))
       ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-checkout-options)))
@@ -237,7 +253,7 @@
 (def git-switch
   (fn (_ wd gitdir ops)
     (def o (Opts parse git-switch-options ops))
-    (def operands (Opts operands o))
+    (def operands (List map (fn (_ a) (%prior gitdir a (if (str=? a "-") "@{-1}" a))) (Opts operands o)))
     (match
       ((Opts help? git-switch-options ops) (list (lit out) (Opts usage git-switch-options) 0))
       ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-switch-options)))

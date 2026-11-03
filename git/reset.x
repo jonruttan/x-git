@@ -27,6 +27,7 @@
 (import git/checkout git-write-blob! git-remove-file! git-entry-of)
 (import git/remote git-write-ref! git-current-branch)
 (import git/threeway git-tree-flat)
+(import git/reflog git-ref-log!)
 
 (def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
@@ -87,13 +88,14 @@
 ; HEAD moved to sha: its branch, or HEAD itself when detached; ORIG_HEAD
 ; left at where it was.
 (def %move-head!
-  (fn (_ gitdir sha)
+  (fn (_ gitdir sha rev)
     (def old (git-rev-parse gitdir "HEAD"))
     (unless (null? old) (File write-all (Str8 append gitdir "/ORIG_HEAD") (Str8 append old "\n")))
     (def branch (git-current-branch gitdir))
     (if (null? branch)
       (File write-all (Str8 append gitdir "/HEAD") (Str8 append sha "\n"))
-      (git-write-ref! gitdir (Str8 append "refs/heads/" branch) sha))))
+      (git-write-ref! gitdir (Str8 append "refs/heads/" branch) sha))
+    (git-ref-log! gitdir (if (null? branch) "HEAD" (Str8 append "refs/heads/" branch)) old sha (Str8 append "reset: moving to " rev))))
 
 ; The index and the working directory set to a commit's files: what is
 ; tracked now and the commit lacks taken out, the rest written.
@@ -160,15 +162,15 @@
               (#t
                 (let ((sha (git-commit-of gitdir rev)))
                   (match
-                    ((str=? mode "soft") (do (%move-head! gitdir sha) (list (lit out) "" 0)))
+                    ((str=? mode "soft") (do (%move-head! gitdir sha rev) (list (lit out) "" 0)))
                     ((str=? mode "hard")
                       (do (%hard! wd gitdir sha)
-                          (%move-head! gitdir sha)
+                          (%move-head! gitdir sha rev)
                           (git-merge-state-clear! gitdir)
                           (list (lit out) (if quiet? "" (Str8 append "HEAD is now at " (Str8 sub 0 7 sha) " " (git-subject gitdir sha) "\n")) 0)))
                     (#t
                       (do (git-index-write! gitdir (%entries-for (git-read-entries gitdir) (%files gitdir sha)))
-                          (%move-head! gitdir sha)
+                          (%move-head! gitdir sha rev)
                           (git-merge-state-clear! gitdir)
                           (list (lit out) (if quiet? "" (%unstaged wd gitdir)) 0))))))))))))))
 

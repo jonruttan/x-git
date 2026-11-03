@@ -27,6 +27,7 @@
 (import git/packs git-pack-index!)
 (import git/protocol proto-url? proto-url-path proto-connect proto-advertise proto-cap proto-fetch! proto-unreadable)
 (import git/wire wire-close!)
+(import git/reflog git-ref-log! git-reflog-append!)
 
 (def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
@@ -67,6 +68,14 @@
   (fn (_ name alist)
     (def hit (List find (fn (_ e) (str=? (first e) name)) alist))
     (if (null? hit) () (rest hit))))
+
+; The clone's first entries in the logs: the local branch (and HEAD, which
+; names it) and the remote's HEAD, each from nothing to sha.
+(def %clone-logged!
+  (fn (_ g branch sha from)
+    (def msg (Str8 append "clone: from " from))
+    (git-ref-log! g (Str8 append "refs/heads/" branch) () sha msg)
+    (git-reflog-append! g "refs/remotes/origin/HEAD" () sha msg)))
 
 ; The repository's layout and refs from what a service advertised, and
 ; its objects from the pack the service sends: every branch and tag
@@ -111,7 +120,8 @@
                 (File write-all (Str8 append g "/refs/remotes/origin/HEAD") (Str8 append "ref: refs/remotes/origin/" branch "\n"))
                 (let ((sha (%lookup (Str8 append "refs/heads/" branch) refs)))
                   (do (unless (null? sha)
-                        (git-write-file! (Str8 append g "/refs/heads/" branch) (Str8 append sha "\n") 41))
+                        (do (git-write-file! (Str8 append g "/refs/heads/" branch) (Str8 append sha "\n") 41)
+                            (%clone-logged! g branch sha url)))
                       (File write-all (Str8 append g "/config")
                         (Str8 append (File read-all (Str8 append g "/config"))
                           "[remote \"origin\"]\n\turl = " url "\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n"
@@ -167,7 +177,8 @@
                             ; the local branch for the source's HEAD branch
                             (let ((sha (git-ref-read sgit (Str8 append "refs/heads/" branch))))
                               (do (unless (null? sha)
-                                    (git-write-file! (Str8 append g "/refs/heads/" branch) (Str8 append sha "\n") 41))
+                                    (do (git-write-file! (Str8 append g "/refs/heads/" branch) (Str8 append sha "\n") 41)
+                                        (%clone-logged! g branch sha src)))
                                   (File write-all (Str8 append g "/config")
                                     (Str8 append (File read-all (Str8 append g "/config"))
                                       "[remote \"origin\"]\n\turl = " src "\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n"
