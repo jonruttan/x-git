@@ -148,14 +148,17 @@ the kernel and x are installed (x-os).
   or by a revision: `HEAD` or `@`, a branch or tag (loose or in
   `packed-refs`, looked up as gitrevisions(7) does), with `~N`, `^N`,
   `^{tree}`, `^{commit}`, `^{}`, `@{N}` (an earlier value from the
-  reflog, `@{N}` alone the current branch's), and `:PATH`; `@{-N}` the
-  branch checked out N switches ago, as `checkout -` and `switch -` take
-  it
+  reflog, `@{N}` alone the current branch's), `@{DATE}` (the value then,
+  the date read as git's approxidate reads its common forms), `@{u}` and
+  `@{upstream}` (the branch's upstream, through the remote's fetch
+  refspecs), `^{/TEXT}` and `:/TEXT` (the newest commit whose message
+  matches, from the revision or from every ref), and `:PATH`; `@{-N}`
+  the branch checked out N switches ago, as `checkout -` and `switch -`
+  take it
 - the repository found from the working directory or any parent
 - an unknown command or option, refused as git refuses it
 
-Not served yet: reflog dates (`@{yesterday}`), `@{upstream}`, `:/text`,
-and every other command.
+Not served yet: every other command.
 
 ## Install and test
 
@@ -189,6 +192,7 @@ DIR holds this tree as `git` and x-ssh as `ssh`.
     git/index.x       the index read; ls-files, status
     git/stage.x       the index written; add, commit
     git/ident.x       who and when, for commits and the reflog
+    git/when.x        dates read as approxidate reads them, and written
     git/config.x      configuration read and written; config
     git/diff.x        lines compared: diff, and the summary commit prints
     git/repo.x        init, branch, tag

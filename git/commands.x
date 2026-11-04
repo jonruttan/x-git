@@ -17,7 +17,7 @@
 (import x/sys/file File)
 (import x/sys/posix Sys)
 (import git/objects git-hash git-object-write! git-object-read git-tree-pretty git-read-file)
-(import git/refs git-rev-parse git-rev-path-missing git-rev-log-short)
+(import git/refs git-rev-parse git-rev-path-missing git-rev-trouble)
 
 (def %add (prim-ref 'int '+))
 (def %sub (prim-ref 'int '-))
@@ -247,7 +247,7 @@
           (if (null? revs) (list (lit out) (Str8 join "" (List reverse lines)) 0)
             (let ((sha (git-rev-parse gitdir (first revs))))
               (if (null? sha)
-                (let ((short (git-rev-log-short gitdir (first revs))))
+                (let ((short (git-rev-trouble gitdir (first revs))))
                   (if (null? short) (%ambiguous (first revs) (Str8 join "" (List reverse lines)))
                     (list (lit err) (Str8 append "fatal: " short "\n") 128 (Str8 join "" (List reverse lines)))))
                 (go (rest revs) (pair (Str8 append sha "\n") lines))))))))))

@@ -21,6 +21,7 @@
 (import x/sys/file File)
 (import x/sys/posix Sys)
 (import git/objects git-dir)
+(import git/refs git-rev-warnings!)
 (import git/commands git-cat-file git-hash-object git-rev-parse-command)
 (import git/history git-ls-tree git-log git-show git-reflog)
 (import git/index git-status git-ls-files)
@@ -108,6 +109,31 @@
       ((null? (%command (first cmd))) (list (lit unknown-command) (first cmd)))
       (#t (list (lit run) (Opts value o "-C" ()) (first cmd) (rest cmd) (Opts values o "-c"))))))
 
+; A command run in its directory, -c's settings in GIT_CONFIG_PARAMETERS
+; for it and for what it runs, as git passes them on; as they were after.
+(def %run-command
+  (fn (_ dir cmd args settings)
+    (def wd (if (null? dir) (Sys getcwd) dir))
+    (if (null? settings) ((%command cmd) wd (git-dir wd) args)
+      (let ((was (Sys getenv "GIT_CONFIG_PARAMETERS")))
+        (do (Sys setenv "GIT_CONFIG_PARAMETERS"
+              (Str8 append (if (or (null? was) (= (Str8 length was) 0)) "" (Str8 append was " ")) (git-config-parameters settings)))
+            (let ((r ((%command cmd) wd (git-dir wd) args)))
+              (do (if (null? was) (Sys unsetenv "GIT_CONFIG_PARAMETERS") (Sys setenv "GIT_CONFIG_PARAMETERS" was))
+                  r)))))))
+
+; A result with the warnings its revisions raised said first, on
+; standard error, as git says them before what it prints.
+(def %warned
+  (fn (_ r)
+    (def w (git-rev-warnings!))
+    (def text (first (rest r)))
+    (def s (if (pair? text) (Str8 sub 0 (rest text) (first text)) text))
+    (match
+      ((= (Str8 length w) 0) r)
+      ((eq? (first r) (lit out)) (list (lit err) w (first (rest (rest r))) s))
+      (#t (pair (lit err) (pair (Str8 append w s) (rest (rest r))))))))
+
 ; A plan done: (STREAM TEXT STATUS).
 (def git-run
   (fn (_ plan)
@@ -122,21 +148,11 @@
         (list (lit err)
           (Str8 append "git: '" (first (rest plan)) "' is not a git command. See 'git --help'.\n")
           1))
+      ; warnings left from before are not this command's
       (#t
-        (let ((dir (first (rest plan)))
-              (cmd (first (rest (rest plan))))
-              (args (first (rest (rest (rest plan)))))
-              (settings (first (rest (rest (rest (rest plan)))))))
-          (let ((wd (if (null? dir) (Sys getcwd) dir)))
-            ; -c's settings in GIT_CONFIG_PARAMETERS for the command, and
-            ; for what it runs, as git passes them on; as they were after
-            (if (null? settings) ((%command cmd) wd (git-dir wd) args)
-              (let ((was (Sys getenv "GIT_CONFIG_PARAMETERS")))
-                (do (Sys setenv "GIT_CONFIG_PARAMETERS"
-                      (Str8 append (if (or (null? was) (= (Str8 length was) 0)) "" (Str8 append was " ")) (git-config-parameters settings)))
-                    (let ((r ((%command cmd) wd (git-dir wd) args)))
-                      (do (if (null? was) (Sys unsetenv "GIT_CONFIG_PARAMETERS") (Sys setenv "GIT_CONFIG_PARAMETERS" was))
-                          r)))))))))))
+        (do (git-rev-warnings!)
+            (%warned (%run-command (first (rest plan)) (first (rest (rest plan)))
+                       (first (rest (rest (rest plan)))) (first (rest (rest (rest (rest plan))))))))))))
 
 ; The bytes of a TEXT: a string's, or a region's count.
 (def %text-count

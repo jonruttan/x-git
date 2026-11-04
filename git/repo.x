@@ -17,7 +17,7 @@
 (import x/sys/posix Sys)
 (import git/objects git-write-file!)
 (import git/commands git-fatal git-no-repo git-unknown-option)
-(import git/refs git-ref-read git-rev-parse git-commit-of)
+(import git/refs git-ref-read git-ref-names git-rev-parse git-commit-of)
 (import git/config git-config-value)
 (import git/reflog git-reflog-append! git-reflog-delete!)
 
@@ -71,34 +71,8 @@
 
 ; --- branch and tag ---
 
-; The refs under a prefix (refs/heads/, refs/tags/), by name, loose and
-; packed together, each once, sorted.
-(def %refs-under
-  (fn (_ gitdir prefix)
-    (def dir (Str8 append gitdir "/" prefix))
-    (def loose
-      (if (File exists? dir)
-        ((fn (self d p)
-           (List flat-map
-             (fn (_ name)
-               (let ((full (Str8 append d "/" name)))
-                 (if (eq? (File type full) (lit dir)) (self full (Str8 append p name "/")) (list (Str8 append p name)))))
-             (File list-dir d)))
-         dir "")
-        ()))
-    (def packed-path (Str8 append gitdir "/packed-refs"))
-    (def packed
-      (if (not (File exists? packed-path)) ()
-        (List flat-map
-          (fn (_ l)
-            (if (and (> (Str8 length l) 41) (not (Str8 starts? "#" l)) (not (Str8 starts? "^" l))
-                     (Str8 starts? prefix (Str8 sub 41 (%sub (Str8 length l) 41) l)))
-              (list (Str8 sub (%add 41 (Str8 length prefix)) (%sub (Str8 length l) (%add 41 (Str8 length prefix))) l))
-              ()))
-          (Str8 split "\n" (File read-all packed-path)))))
-    (List sort (fn (_ a b) (Str8 <? a b))
-      ((fn (self ns acc) (if (null? ns) acc (self (rest ns) (if (List any? (fn (_ a) (str=? a (first ns))) acc) acc (pair (first ns) acc)))))
-       (List append loose packed) ()))))
+; The refs under a prefix, by name, as git/refs lists them.
+(def %refs-under (fn (_ gitdir prefix) (git-ref-names gitdir prefix)))
 
 ; A packed ref's line taken out of packed-refs, its peeled line too.
 (def %unpack-ref!
