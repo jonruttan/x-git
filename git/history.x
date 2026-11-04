@@ -18,7 +18,7 @@
 (import x/sys/file File)
 (import git/objects git-object-read git-tree-entries git-object-text git-mode-type)
 (import git/commands git-fatal git-no-repo git-unknown-option)
-(import git/refs git-tree-of git-commit-of git-headers git-rev-parse git-rev-path-missing git-rev-log-short git-log-ref
+(import git/refs git-tree-of git-commit-of git-headers git-rev-parse git-rev-path-missing git-rev-trouble git-log-ref
   git-previous-branch)
 (import git/reflog git-reflog-entries)
 (import git/diff git-tree-patch)
@@ -240,8 +240,8 @@
         (let ((rev (if (null? operands) "HEAD" (first operands))))
           (let ((sha (git-commit-of gitdir rev)))
             (match
-              ((and (null? sha) (not (null? (git-rev-log-short gitdir rev))))
-                (git-fatal (git-rev-log-short gitdir rev)))
+              ((and (null? sha) (not (null? (git-rev-trouble gitdir rev))))
+                (git-fatal (git-rev-trouble gitdir rev)))
               ((null? sha)
                 (list (lit err)
                   (Str8 join "\n"
@@ -408,7 +408,7 @@
           (if (not (null? bad))
             (let ((base (git-rev-path-missing gitdir bad)))
               (match
-                ((not (null? (git-rev-log-short gitdir bad))) (git-fatal (git-rev-log-short gitdir bad)))
+                ((not (null? (git-rev-trouble gitdir bad))) (git-fatal (git-rev-trouble gitdir bad)))
                 ((not (null? base))
                   (git-fatal (Str8 append "path '" (Str8 sub (%add (Str8 length base) 1) (%sub (Str8 length bad) (%add (Str8 length base) 1)) bad)
                             "' does not exist in '" base "'")))
