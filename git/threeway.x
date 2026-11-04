@@ -37,8 +37,7 @@
 (import git/diff git-edit-script)
 (import git/renames git-find-renames)
 
-(def %add (prim-ref 'int '+))
-(def %sub (prim-ref 'int '-))
+(import x/core/doors int+ int- ptr-ref str->ptr ptr->int int->ptr)
 
 (def %member? (fn (_ s l) (List any? (fn (_ x) (str=? x s)) l)))
 
@@ -55,7 +54,7 @@
                 (let ((c (List find (fn (_ l) (Str8 starts? "committer " l)) header)))
                   (if (null? c) 0
                     (let ((parts (Str8 split " " c)))
-                      (%str->number (List ref (%sub (List length parts) 2) parts) 10))))))))))
+                      (%str->number (List ref (int- (List length parts) 2) parts) 10))))))))))
 
 ; Every commit a commit reaches through its parents, itself among them.
 (def %ancestors
@@ -102,7 +101,7 @@
     (if (null? bases) #f
       ((fn (fold merged seen more)
          (if (null? more) merged
-           (let ((inner (self gitdir seen (first more) (%add depth 1) write-blob)))
+           (let ((inner (self gitdir seen (first more) (int+ depth 1) write-blob)))
              (fold (%virtual-merge (if (eq? inner #f) () inner) merged (%commit-files gitdir (first more)) depth gitdir write-blob)
                    (pair (first more) seen) (rest more)))))
        (%commit-files gitdir (first bases)) (list (first bases)) (rest bases)))))
@@ -110,7 +109,7 @@
 (def %virtual-merge
   (fn (_ base ours theirs depth gitdir write-blob)
     (def r (git-merge-trees base ours theirs "Temporary merge branch 1" "Temporary merge branch 2" "true"
-             (%add 7 (* 2 depth)) gitdir write-blob))
+             (int+ 7 (* 2 depth)) gitdir write-blob))
     (List flat-map
       (fn (_ x)
         (match
@@ -145,12 +144,12 @@
     ((fn (self ops i j acc)
        (match
          ((null? ops) (List reverse acc))
-         ((eq? (first (first ops)) (lit keep)) (self (rest ops) (%add i 1) (%add j 1) acc))
+         ((eq? (first (first ops)) (lit keep)) (self (rest ops) (int+ i 1) (int+ j 1) acc))
          (#t
            ((fn (run os di dj)
               (if (and (not (null? os)) (not (eq? (first (first os)) (lit keep))))
-                (if (eq? (first (first os)) (lit del)) (run (rest os) (%add di 1) dj) (run (rest os) di (%add dj 1)))
-                (self os (%add i di) (%add j dj) (pair (list i di j dj) acc))))
+                (if (eq? (first (first os)) (lit del)) (run (rest os) (int+ di 1) dj) (run (rest os) di (int+ dj 1)))
+                (self os (int+ i di) (int+ j dj) (pair (list i di j dj) acc))))
             ops 0 0))))
      script 0 0 ())))
 
@@ -179,11 +178,11 @@
 (def %append-merge
   (fn (_ acc mode i0 chg0 i1 chg1 i2 chg2)
     (def m (if (null? acc) () (first acc)))
-    (if (and (not (null? m)) (or (<= i1 (%add (%m m 3) (%m m 4))) (<= i2 (%add (%m m 5) (%m m 6)))))
+    (if (and (not (null? m)) (or (<= i1 (int+ (%m m 3) (%m m 4))) (<= i2 (int+ (%m m 5) (%m m 6)))))
       (do (unless (= mode (%m m 0)) (%m! m 0 0))
-          (%m! m 2 (%sub (%add i0 chg0) (%m m 1)))
-          (%m! m 4 (%sub (%add i1 chg1) (%m m 3)))
-          (%m! m 6 (%sub (%add i2 chg2) (%m m 5)))
+          (%m! m 2 (int- (int+ i0 chg0) (%m m 1)))
+          (%m! m 4 (int- (int+ i1 chg1) (%m m 3)))
+          (%m! m 6 (int- (int+ i2 chg2) (%m m 5)))
           acc)
       (pair (%m-make mode i0 chg0 i1 chg1 i2 chg2) acc))))
 
@@ -191,7 +190,7 @@
 (def %same-lines?
   (fn (self a i b j n)
     (if (= n 0) #t
-      (if (str=? (Vector ref i a) (Vector ref j b)) (self a (%add i 1) b (%add j 1) (%sub n 1)) #f))))
+      (if (str=? (Vector ref i a) (Vector ref j b)) (self a (int+ i 1) b (int+ j 1) (int- n 1)) #f))))
 
 ; The records of two sides' hunks against the base, in order:
 ; xdl_do_merge's walk.
@@ -203,39 +202,39 @@
          ((null? h2s)
            (let ((h (first h1s)))
              (self (rest h1s) h2s
-               (%append-merge acc 1 (%h-i1 h) (%h-chg1 h) (%h-i2 h) (%h-chg2 h) (%add (%h-i1 h) (%sub ntheirs nbase)) (%h-chg1 h)))))
+               (%append-merge acc 1 (%h-i1 h) (%h-chg1 h) (%h-i2 h) (%h-chg2 h) (int+ (%h-i1 h) (int- ntheirs nbase)) (%h-chg1 h)))))
          ((null? h1s)
            (let ((h (first h2s)))
              (self h1s (rest h2s)
-               (%append-merge acc 2 (%h-i1 h) (%h-chg1 h) (%add (%h-i1 h) (%sub nours nbase)) (%h-chg1 h) (%h-i2 h) (%h-chg2 h)))))
+               (%append-merge acc 2 (%h-i1 h) (%h-chg1 h) (int+ (%h-i1 h) (int- nours nbase)) (%h-chg1 h) (%h-i2 h) (%h-chg2 h)))))
          (#t
            (let ((x1 (first h1s)) (x2 (first h2s)))
              (match
-               ((< (%add (%h-i1 x1) (%h-chg1 x1)) (%h-i1 x2))
+               ((< (int+ (%h-i1 x1) (%h-chg1 x1)) (%h-i1 x2))
                  (self (rest h1s) h2s
                    (%append-merge acc 1 (%h-i1 x1) (%h-chg1 x1) (%h-i2 x1) (%h-chg2 x1)
-                     (%add (%sub (%h-i2 x2) (%h-i1 x2)) (%h-i1 x1)) (%h-chg1 x1))))
-               ((< (%add (%h-i1 x2) (%h-chg1 x2)) (%h-i1 x1))
+                     (int+ (int- (%h-i2 x2) (%h-i1 x2)) (%h-i1 x1)) (%h-chg1 x1))))
+               ((< (int+ (%h-i1 x2) (%h-chg1 x2)) (%h-i1 x1))
                  (self h1s (rest h2s)
-                   (%append-merge acc 2 (%h-i1 x2) (%h-chg1 x2) (%add (%sub (%h-i2 x1) (%h-i1 x1)) (%h-i1 x2)) (%h-chg1 x2)
+                   (%append-merge acc 2 (%h-i1 x2) (%h-chg1 x2) (int+ (int- (%h-i2 x1) (%h-i1 x1)) (%h-i1 x2)) (%h-chg1 x2)
                      (%h-i2 x2) (%h-chg2 x2))))
                (#t
                  (let ((acc2
                          (if (and (= (%h-i1 x1) (%h-i1 x2)) (= (%h-chg1 x1) (%h-chg1 x2)) (= (%h-chg2 x1) (%h-chg2 x2))
                                   (%same-lines? ours (%h-i2 x1) theirs (%h-i2 x2) (%h-chg2 x1)))
                            acc
-                           (let ((off (%sub (%h-i1 x1) (%h-i1 x2))))
-                             (let ((ffo (%add off (%sub (%h-chg1 x1) (%h-chg1 x2))))
-                                   (i0 (if (> off 0) (%sub (%h-i1 x1) off) (%h-i1 x1)))
-                                   (i1 (if (> off 0) (%sub (%h-i2 x1) off) (%h-i2 x1)))
-                                   (i2 (if (> off 0) (%h-i2 x2) (%add (%h-i2 x2) off))))
-                               (let ((chg0 (%sub (%add (%h-i1 x1) (%h-chg1 x1)) i0))
-                                     (chg1 (%sub (%add (%h-i2 x1) (%h-chg2 x1)) i1))
-                                     (chg2 (%sub (%add (%h-i2 x2) (%h-chg2 x2)) i2)))
+                           (let ((off (int- (%h-i1 x1) (%h-i1 x2))))
+                             (let ((ffo (int+ off (int- (%h-chg1 x1) (%h-chg1 x2))))
+                                   (i0 (if (> off 0) (int- (%h-i1 x1) off) (%h-i1 x1)))
+                                   (i1 (if (> off 0) (int- (%h-i2 x1) off) (%h-i2 x1)))
+                                   (i2 (if (> off 0) (%h-i2 x2) (int+ (%h-i2 x2) off))))
+                               (let ((chg0 (int- (int+ (%h-i1 x1) (%h-chg1 x1)) i0))
+                                     (chg1 (int- (int+ (%h-i2 x1) (%h-chg2 x1)) i1))
+                                     (chg2 (int- (int+ (%h-i2 x2) (%h-chg2 x2)) i2)))
                                  (if (< ffo 0)
-                                   (%append-merge acc 0 i0 (%sub chg0 ffo) i1 (%sub chg1 ffo) i2 chg2)
-                                   (%append-merge acc 0 i0 chg0 i1 chg1 i2 (%add chg2 ffo)))))))))
-                   (let ((e1 (%add (%h-i1 x1) (%h-chg1 x1))) (e2 (%add (%h-i1 x2) (%h-chg1 x2))))
+                                   (%append-merge acc 0 i0 (int- chg0 ffo) i1 (int- chg1 ffo) i2 chg2)
+                                   (%append-merge acc 0 i0 chg0 i1 chg1 i2 (int+ chg2 ffo)))))))))
+                   (let ((e1 (int+ (%h-i1 x1) (%h-chg1 x1))) (e2 (int+ (%h-i1 x2) (%h-chg1 x2))))
                      (self (if (>= e2 e1) (rest h1s) h1s) (if (>= e1 e2) (rest h2s) h2s) acc2)))))))))
      h1s h2s ())))
 
@@ -247,12 +246,12 @@
     (List flat-map
       (fn (_ m)
         (if (or (not (= (%m m 0) 0)) (= (%m m 4) 0) (= (%m m 6) 0)) (list m)
-          (let ((a (List map (fn (_ k) (Vector ref (%add (%m m 3) k) ours)) (List range 0 (%m m 4))))
-                (b (List map (fn (_ k) (Vector ref (%add (%m m 5) k) theirs)) (List range 0 (%m m 6)))))
+          (let ((a (List map (fn (_ k) (Vector ref (int+ (%m m 3) k) ours)) (List range 0 (%m m 4))))
+                (b (List map (fn (_ k) (Vector ref (int+ (%m m 5) k) theirs)) (List range 0 (%m m 6)))))
             (let ((hs (%hunks (git-edit-script a b))))
               (if (null? hs) (do (%m! m 0 4) (list m))
                 (List map
-                  (fn (_ h) (%m-make 0 (%m m 1) (%m m 2) (%add (%h-i1 h) (%m m 3)) (%h-chg1 h) (%add (%h-i2 h) (%m m 5)) (%h-chg2 h)))
+                  (fn (_ h) (%m-make 0 (%m m 1) (%m m 2) (int+ (%h-i1 h) (%m m 3)) (%h-chg1 h) (int+ (%h-i2 h) (%m m 5)) (%h-chg2 h)))
                   hs))))))
       records)))
 
@@ -264,9 +263,9 @@
       ((or (null? records) (null? (rest records))) records)
       (#t
         (let ((m (first records)) (n (first (rest records))))
-          (if (and (= (%m m 0) 0) (= (%m n 0) 0) (<= (%sub (%m n 3) (%add (%m m 3) (%m m 4))) 3))
-            (do (%m! m 4 (%sub (%add (%m n 3) (%m n 4)) (%m m 3)))
-                (%m! m 6 (%sub (%add (%m n 5) (%m n 6)) (%m m 5)))
+          (if (and (= (%m m 0) 0) (= (%m n 0) 0) (<= (int- (%m n 3) (int+ (%m m 3) (%m m 4))) 3))
+            (do (%m! m 4 (int- (int+ (%m n 3) (%m n 4)) (%m m 3)))
+                (%m! m 6 (int- (int+ (%m n 5) (%m n 6)) (%m m 5)))
                 (self (pair m (rest (rest records)))))
             (pair m (self (rest records)))))))))
 
@@ -274,7 +273,7 @@
 ; given one when closed? asks.
 (def %copy
   (fn (_ v i n closed?)
-    (def text (Str8 join "" (List map (fn (_ k) (Vector ref (%add i k) v)) (List range 0 (if (< n 0) 0 n)))))
+    (def text (Str8 join "" (List map (fn (_ k) (Vector ref (int+ i k) v)) (List range 0 (if (< n 0) 0 n)))))
     (if (and closed? (> (Str8 length text) 0) (not (Str8 ends? "\n" text))) (Str8 append text "\n") text)))
 
 ; Three texts merged: (TEXT . CONFLICTS), the conflicts marked between
@@ -295,21 +294,21 @@
           vo vt)))
     ((fn (self ms i acc conflicts)
        (if (null? ms)
-         (pair (Str8 join "" (List reverse (pair (%copy vo i (%sub (List length lo) i) #f) acc))) conflicts)
+         (pair (Str8 join "" (List reverse (pair (%copy vo i (int- (List length lo) i) #f) acc))) conflicts)
          (let ((m (first ms)))
            (match
              ((= (%m m 0) 0)
-               (self (rest ms) (%add (%m m 3) (%m m 4))
-                 (pair (Str8 append (%copy vo i (%sub (%m m 3) i) #f)
+               (self (rest ms) (int+ (%m m 3) (%m m 4))
+                 (pair (Str8 append (%copy vo i (int- (%m m 3) i) #f)
                          open name1 "\n" (%copy vo (%m m 3) (%m m 4) #t)
                          mid (%copy vt (%m m 5) (%m m 6) #t)
                          close name2 "\n")
                        acc)
-                 (%add conflicts 1)))
+                 (int+ conflicts 1)))
              ((= (%m m 0) 4) (self (rest ms) i acc conflicts))
              (#t
-               (self (rest ms) (%add (%m m 3) (%m m 4))
-                 (pair (Str8 append (%copy vo i (%sub (%m m 3) i) #f)
+               (self (rest ms) (int+ (%m m 3) (%m m 4))
+                 (pair (Str8 append (%copy vo i (int- (%m m 3) i) #f)
                          (if (= (& (%m m 0) 1) 0) "" (%copy vo (%m m 3) (%m m 4) #f))
                          (if (= (& (%m m 0) 2) 0) "" (%copy vt (%m m 5) (%m m 6) #f)))
                        acc)
@@ -339,19 +338,15 @@
     (if (null? f) ""
       (let ((o (git-object-read gitdir (first (rest (rest f)))))) (if (null? o) "" (git-object-text o))))))
 
-(def %pref (prim-ref (lit ptr) (lit ref)))
-(def %str->ptr (prim-ref (lit str) (lit ->ptr)))
-(def %ptr->int (prim-ref (lit ptr) (lit ->int)))
-(def %int->ptr (prim-ref (lit int) (lit ->ptr)))
 
 ; Is a file binary, as git judges one: a NUL among its first 8000 bytes.
 (def %binary?
   (fn (_ gitdir f)
     (def o (if (null? f) () (git-object-read gitdir (first (rest (rest f))))))
     (if (null? o) #f
-      (let ((p (%int->ptr (%add (%ptr->int (%str->ptr (first (rest (rest o))))) (first (rest (rest (rest o)))))))
+      (let ((p (int->ptr (int+ (ptr->int (str->ptr (first (rest (rest o))))) (first (rest (rest (rest o)))))))
             (n (if (> (first (rest o)) 8000) 8000 (first (rest o)))))
-        ((fn (self i) (if (>= i n) #f (if (= (& (%pref p i 1) 255) 0) #t (self (%add i 1))))) 0)))))
+        ((fn (self i) (if (>= i n) #f (if (= (& (ptr-ref p i 1) 255) 0) #t (self (int+ i 1))))) 0)))))
 
 ; --- directory renames ---
 ;
@@ -367,7 +362,7 @@
   (fn (_ p) (let ((i (Str8 last-index-of "/" p))) (if (null? i) "" (Str8 sub 0 i p)))))
 
 (def %last-of
-  (fn (_ p) (let ((i (Str8 last-index-of "/" p))) (if (null? i) p (Str8 sub (%add i 1) (%sub (Str8 length p) (%add i 1)) p)))))
+  (fn (_ p) (let ((i (Str8 last-index-of "/" p))) (if (null? i) p (Str8 sub (int+ i 1) (int- (Str8 length p) (int+ i 1)) p)))))
 
 ; Every directory files are under, each once.
 (def %dirs
@@ -404,7 +399,7 @@
                (let ((hit (List find (fn (_ t) (str=? (first t) (first vs))) acc)))
                  (self (rest vs)
                        (if (null? hit) (pair (pair (first vs) 1) acc)
-                         (List map (fn (_ t) (if (str=? (first t) (first vs)) (pair (first t) (%add (rest t) 1)) t)) acc))))))
+                         (List map (fn (_ t) (if (str=? (first t) (first vs)) (pair (first t) (int+ (rest t) 1)) t)) acc))))))
            (List map rest (List filter (fn (_ v) (str=? (first v) d)) votes)) ()))
         (def most (List fold (fn (_ m t) (if (> (rest t) m) (rest t) m)) 0 tally))
         (def top (List filter (fn (_ t) (= (rest t) most)) tally))
@@ -428,7 +423,7 @@
             () dir-renames))
         (if (or (null? hit) (not (null? (%find path base)))) ()
           (if (null? (rest hit)) (list (list path () (first hit)))
-            (let ((tail (Str8 sub (%add (Str8 length (first hit)) 1) (%sub (Str8 length path) (%add (Str8 length (first hit)) 1)) path)))
+            (let ((tail (Str8 sub (int+ (Str8 length (first hit)) 1) (int- (Str8 length path) (int+ (Str8 length (first hit)) 1)) path)))
               (let ((to (if (str=? (rest hit) "") tail (Str8 append (rest hit) "/" tail))))
                 (if (or (not (null? (%find to side))) (not (null? (%find to other)))) ()
                   (list (list path to (first hit)))))))))

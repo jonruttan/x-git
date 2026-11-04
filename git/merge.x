@@ -48,7 +48,7 @@
 (import git/reflog git-ref-log!)
 (import git/threeway git-merge-base-files git-merge-trees git-tree-flat)
 
-(def %sub (prim-ref 'int '-))
+(import x/core/doors int- str-byte-len)
 
 (def %abbrev (fn (_ sha) (Str8 sub 0 7 sha)))
 (def %hints (fn (_ lines) (Str8 join "" (List map (fn (_ l) (Str8 append "hint:" (if (= (Str8 length l) 0) "" " ") l "\n")) lines))))
@@ -78,7 +78,7 @@
     (def merge (git-config-value gitdir (Str8 append "branch." branch ".merge")))
     (if (or (null? remote) (null? merge)) ()
       (Str8 append "refs/remotes/" remote "/"
-        (if (Str8 starts? "refs/heads/" merge) (Str8 sub 11 (%sub (Str8 length merge) 11) merge) merge)))))
+        (if (Str8 starts? "refs/heads/" merge) (Str8 sub 11 (int- (Str8 length merge) 11) merge) merge)))))
 
 ; HEAD's branch, or HEAD when detached, moved from one commit to another
 ; and the move logged.
@@ -116,7 +116,6 @@
 
 (def %refusal (fn (_ text) (fn (_) (list text "" 128))))
 
-(def %str-byte-len (prim-ref (lit str) (lit byte-len)))
 (def %mode-number (fn (_ text) (%str->number text 8)))
 
 ; A merge's message, as git words it for what is merged: a local branch,
@@ -148,7 +147,7 @@
 ; conflict markers call theirs.
 (def %merge-three!
   (fn (_ wd gitdir head theirs message name2 action)
-    (def write-blob (fn (_ text) (git-object-write! gitdir "blob" text 0 (%str-byte-len text))))
+    (def write-blob (fn (_ text) (git-object-write! gitdir "blob" text 0 (str-byte-len text))))
     (def base-files (git-merge-base-files gitdir head theirs write-blob))
     (if (eq? base-files #f) (list "fatal: refusing to merge unrelated histories\n" "" 128)
       (let ((placed (git-merge-place! wd gitdir head base-files (git-tree-flat gitdir (git-tree-of gitdir theirs) "") name2)))
@@ -167,7 +166,7 @@
 ; conflict markers call theirs.
 (def git-merge-place!
   (fn (_ wd gitdir head base-files theirs-files name2)
-    (def write-blob (fn (_ text) (git-object-write! gitdir "blob" text 0 (%str-byte-len text))))
+    (def write-blob (fn (_ text) (git-object-write! gitdir "blob" text 0 (str-byte-len text))))
     (def ours-files (git-tree-flat gitdir (git-tree-of gitdir head) ""))
     (def r (git-merge-trees base-files ours-files theirs-files "HEAD" name2 (%dir-renames-mode gitdir) 7 gitdir write-blob))
     (def results (first r))
@@ -223,7 +222,7 @@
               (let ((stages (first (rest (rest x)))) (work (first (rest (rest (rest x))))))
                 (do (unless (null? work)
                       (let ((mode (first (rest (or (List find (fn (_ s) (= (first s) 2)) stages) (List find (fn (_ s) (= (first s) 3)) stages))))))
-                        (let ((sha (git-object-write! gitdir "blob" work 0 (%str-byte-len work))))
+                        (let ((sha (git-object-write! gitdir "blob" work 0 (str-byte-len work))))
                           (git-write-blob! wd gitdir path sha mode))))
                     (List map (fn (_ s) (list path (%mode-number (first (rest s))) (first (rest (rest s))) 0 0 (first s))) stages))))))
         results))
@@ -348,7 +347,7 @@
       (List find
         (fn (_ l)
           (if (null? branch)
-            (Str8 starts? "\t" (Str8 sub 40 (%sub (Str8 length l) 40) l))
+            (Str8 starts? "\t" (Str8 sub 40 (int- (Str8 length l) 40) l))
             (Str8 includes? (Str8 append "\tbranch '" branch "' of ") l)))
         lines))
     (if (null? hit) () (pair (Str8 sub 0 40 hit) hit))))
@@ -358,7 +357,7 @@
 (def %pull-message
   (fn (_ line branch)
     (def i (Str8 index-of "branch '" line))
-    (Str8 append "Merge " (if (null? i) line (Str8 sub i (%sub (Str8 length line) i) line)) (%into branch))))
+    (Str8 append "Merge " (if (null? i) line (Str8 sub i (int- (Str8 length line) i) line)) (%into branch))))
 
 (def git-pull
   (fn (_ wd gitdir ops)

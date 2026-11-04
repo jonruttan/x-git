@@ -36,7 +36,7 @@
 (import git/config git-config-value)
 (import git/reflog git-ref-log!)
 
-(def %sub (prim-ref 'int '-))
+(import x/core/doors int-)
 
 ; A refusal as the sequencer words one: the error, then "revert failed".
 (def %failed
@@ -56,7 +56,7 @@
   (fn (_ subject sha)
     (Str8 append
       (if (and (Str8 starts? "Revert \"" subject) (Str8 ends? "\"" subject))
-        (Str8 append "Reapply " (Str8 sub 7 (%sub (Str8 length subject) 7) subject))
+        (Str8 append "Reapply " (Str8 sub 7 (int- (Str8 length subject) 7) subject))
         (Str8 append "Revert \"" subject "\""))
       "\n\nThis reverts commit " sha ".\n")))
 

@@ -36,8 +36,7 @@
 (import git/ignore git-ignorer git-ignore-matcher git-ignore-rule-negated? git-ignore-rule-source git-ignore-rule-line
   git-ignore-rule-text)
 
-(def %add (prim-ref 'int '+))
-(def %sub (prim-ref 'int '-))
+(import x/core/doors int+ int-)
 
 ; The index entries (PATH MODE SHA SIZE MTIME ...) under a path: the
 ; entry itself, or every one below it when it names a directory.
@@ -181,7 +180,7 @@
           (fn (_ e)
             (pair (first e)
               (if (str=? (first e) src) dst
-                (Str8 append dst (Str8 sub (Str8 length src) (%sub (Str8 length (first e)) (Str8 length src)) (first e))))))
+                (Str8 append dst (Str8 sub (Str8 length src) (int- (Str8 length (first e)) (Str8 length src)) (first e))))))
           entries)))))
 
 (def %parent
@@ -201,8 +200,8 @@
       (#t
         (do
           (def index (git-read-entries gitdir))
-          (def dst (List ref (%sub (List length operands) 1) operands))
-          (def srcs (List take (%sub (List length operands) 1) operands))
+          (def dst (List ref (int- (List length operands) 1) operands))
+          (def srcs (List take (int- (List length operands) 1) operands))
           (def into-dir? (%dir? (Str8 append wd "/" dst)))
           (match
             ((and (not (null? (rest srcs))) (not into-dir?))
@@ -216,7 +215,7 @@
                     (fn (_ s)
                       (pair s (if into-dir?
                                 (do (def i (Str8 last-index-of "/" s))
-                                    (Str8 append dst "/" (if (null? i) s (Str8 sub (%add i 1) (%sub (Str8 length s) (%add i 1)) s))))
+                                    (Str8 append dst "/" (if (null? i) s (Str8 sub (int+ i 1) (int- (Str8 length s) (int+ i 1)) s))))
                                 dst)))
                     srcs))
                 (def plans

@@ -21,8 +21,7 @@
 (import git/objects git-object-read git-resolve git-tree-entries git-object-text)
 (import git/reflog git-reflog-entries)
 
-(def %add (prim-ref 'int '+))
-(def %sub (prim-ref 'int '-))
+(import x/core/doors int+ int-)
 
 ; --- refs ---
 
@@ -49,7 +48,7 @@
                  (self (rest lines) (pair (pair (first e) (pair (rest e) (Str8 sub 1 40 (first lines)))) (rest acc))))))
            (#t
              (self (rest lines)
-               (pair (pair (Str8 sub 41 (%sub (Str8 length (first lines)) 41) (first lines))
+               (pair (pair (Str8 sub 41 (int- (Str8 length (first lines)) 41) (first lines))
                            (Str8 sub 0 40 (first lines)))
                      acc)))))
        (Str8 split "\n" text) ()))))
@@ -61,7 +60,7 @@
     (def loose (%ref-file gitdir name))
     (match
       ((and (not (null? loose)) (Str8 starts? "ref: " loose))
-        (self gitdir (Str8 trim (Str8 sub 5 (%sub (Str8 length loose) 5) loose))))
+        (self gitdir (Str8 trim (Str8 sub 5 (int- (Str8 length loose) 5) loose))))
       ((not (null? loose)) loose)
       (#t
         (let ((hit (List find (fn (_ e) (str=? (first e) name)) (%packed-refs gitdir))))
@@ -99,7 +98,7 @@
              (if (null? i) (self (rest lines) acc)
                (self (rest lines)
                  (pair (pair (Str8 sub 0 i (first lines))
-                             (Str8 sub (%add i 1) (%sub (Str8 length (first lines)) (%add i 1)) (first lines)))
+                             (Str8 sub (int+ i 1) (int- (Str8 length (first lines)) (int+ i 1)) (first lines)))
                        acc))))))
        (Str8 split "\n" (git-object-text o)) ()))))
 
@@ -128,7 +127,7 @@
     (def c (%peel-tags gitdir sha))
     (if (or (null? c) (not (str=? (%type-of gitdir c) "commit"))) ()
       (let ((parents (List filter (fn (_ kv) (str=? (first kv) "parent")) (%headers gitdir c))))
-        (if (> n (List length parents)) () (rest (List ref (%sub n 1) parents)))))))
+        (if (> n (List length parents)) () (rest (List ref (int- n 1) parents)))))))
 
 ; A commit's tree, a tag's through the tag; a tree is itself.
 (def %tree-of
@@ -149,7 +148,7 @@
     (if (or (null? tree) (= (Str8 length path) 0)) tree
       (let ((i (Str8 index-of "/" path)))
         (let ((head (if (null? i) path (Str8 sub 0 i path)))
-              (tail (if (null? i) "" (Str8 sub (%add i 1) (%sub (Str8 length path) (%add i 1)) path))))
+              (tail (if (null? i) "" (Str8 sub (int+ i 1) (int- (Str8 length path) (int+ i 1)) path))))
           (let ((o (git-object-read gitdir tree)))
             (if (or (null? o) (not (str=? (first o) "tree"))) ()
               (let ((e (List find (fn (_ ent) (str=? (first (rest ent)) head)) (git-tree-entries o))))
@@ -166,7 +165,7 @@
       ((fn (self i)
          (if (>= i n) #t
            (let ((c (Char ->int (Str8 ref i s))))
-             (if (and (>= c 48) (<= c 57)) (self (%add i 1)) #f))))
+             (if (and (>= c 48) (<= c 57)) (self (int+ i 1)) #f))))
        0))
     (match
       ((= n 0) 1)
@@ -180,7 +179,7 @@
   (fn (_ gitdir name)
     (def head (%ref-file gitdir "HEAD"))
     (if (= (Str8 length name) 0)
-      (if (and (not (null? head)) (Str8 starts? "ref: " head)) (Str8 trim (Str8 sub 5 (%sub (Str8 length head) 5) head)) "HEAD")
+      (if (and (not (null? head)) (Str8 starts? "ref: " head)) (Str8 trim (Str8 sub 5 (int- (Str8 length head) 5) head)) "HEAD")
       (List find (fn (_ c) (not (null? (git-ref-read gitdir c))))
         (list name (Str8 append "refs/" name) (Str8 append "refs/tags/" name)
               (Str8 append "refs/heads/" name) (Str8 append "refs/remotes/" name))))))
@@ -194,18 +193,18 @@
         (fn (_ e)
           (def m (first (rest (rest (rest e)))))
           (if (not (Str8 starts? "checkout: moving from " m)) ()
-            (let ((tail (Str8 sub 22 (%sub (Str8 length m) 22) m)))
+            (let ((tail (Str8 sub 22 (int- (Str8 length m) 22) m)))
               (let ((to (Str8 index-of " to " tail)))
                 (if (null? to) () (list (Str8 sub 0 to tail)))))))
         (git-reflog-entries gitdir "HEAD")))
-    (if (> n (List length froms)) () (List ref (%sub n 1) froms))))
+    (if (> n (List length froms)) () (List ref (int- n 1) froms))))
 
 ; name@{spec}: the Nth prior value in name's log (@{0} its newest), or
 ; with an empty name and -N, the Nth branch checked out before this one.
 (def %reflog-at
   (fn (_ gitdir name spec)
     (def neg? (Str8 starts? "-" spec))
-    (def digits (if neg? (Str8 sub 1 (%sub (Str8 length spec) 1) spec) spec))
+    (def digits (if neg? (Str8 sub 1 (int- (Str8 length spec) 1) spec) spec))
     (def k (if (= (Str8 length digits) 0) () (%count digits)))
     (match
       ((null? k) ())
@@ -229,7 +228,7 @@
       ((and (Str8 ends? "}" rev) (not (null? (Str8 last-index-of "^{" rev))))
         (let ((i (Str8 last-index-of "^{" rev)))
           (let ((inner (self gitdir (Str8 sub 0 i rev)))
-                (want (Str8 sub (%add i 2) (%sub (%sub n i) 3) rev)))
+                (want (Str8 sub (int+ i 2) (int- (int- n i) 3) rev)))
             (match
               ((null? inner) ())
               ((= (Str8 length want) 0) (%peel-tags gitdir inner))
@@ -245,20 +244,20 @@
       ; REF@{N}, @{N} and @{-N}: from the reflog
       ((and (Str8 ends? "}" rev) (not (null? (Str8 last-index-of "@{" rev))))
         (let ((i (Str8 last-index-of "@{" rev)))
-          (%reflog-at gitdir (Str8 sub 0 i rev) (Str8 sub (%add i 2) (%sub (%sub n i) 3) rev))))
+          (%reflog-at gitdir (Str8 sub 0 i rev) (Str8 sub (int+ i 2) (int- (int- n i) 3) rev))))
       ; @ alone is HEAD
       ((str=? rev "@") (self gitdir "HEAD"))
       ; ~N: N first parents
       ((not (null? (Str8 last-index-of "~" rev)))
         (let ((i (Str8 last-index-of "~" rev)))
-          (let ((cnt (%count (Str8 sub (%add i 1) (%sub n (%add i 1)) rev))))
+          (let ((cnt (%count (Str8 sub (int+ i 1) (int- n (int+ i 1)) rev))))
             (if (null? cnt) ()
-              ((fn (walk sha k) (if (or (null? sha) (= k 0)) sha (walk (%parent gitdir sha 1) (%sub k 1))))
+              ((fn (walk sha k) (if (or (null? sha) (= k 0)) sha (walk (%parent gitdir sha 1) (int- k 1))))
                (self gitdir (Str8 sub 0 i rev)) cnt)))))
       ; ^N: the Nth parent
       ((not (null? (Str8 last-index-of "^" rev)))
         (let ((i (Str8 last-index-of "^" rev)))
-          (let ((cnt (%count (Str8 sub (%add i 1) (%sub n (%add i 1)) rev))))
+          (let ((cnt (%count (Str8 sub (int+ i 1) (int- n (int+ i 1)) rev))))
             (let ((base (if (null? cnt) () (self gitdir (Str8 sub 0 i rev)))))
               (if (null? base) () (%parent gitdir base cnt))))))
       (#t
@@ -272,7 +271,7 @@
     (def i (Str8 index-of ":" rev))
     (if (null? i) (%rev-base gitdir rev)
       (let ((base (%rev-base gitdir (Str8 sub 0 i rev)))
-            (path (Str8 sub (%add i 1) (%sub (Str8 length rev) (%add i 1)) rev)))
+            (path (Str8 sub (int+ i 1) (int- (Str8 length rev) (int+ i 1)) rev)))
         (if (null? base) () (%path-in gitdir (%tree-of gitdir base) path))))))
 
 ; Is the trouble with `REV:PATH` the path, given REV itself resolves?
@@ -289,16 +288,16 @@
 (def git-rev-log-short
   (fn (_ gitdir rev)
     (def at (Str8 index-of "@{" rev))
-    (def close (if (null? at) () (Str8 index-of "}" (Str8 sub at (%sub (Str8 length rev) at) rev))))
+    (def close (if (null? at) () (Str8 index-of "}" (Str8 sub at (int- (Str8 length rev) at) rev))))
     (if (or (null? at) (null? close)) ()
       (let ((name (Str8 sub 0 at rev))
-            (k (let ((d (Str8 sub (%add at 2) (%sub close 2) rev))) (if (= (Str8 length d) 0) () (%count d)))))
+            (k (let ((d (Str8 sub (int+ at 2) (int- close 2) rev))) (if (= (Str8 length d) 0) () (%count d)))))
         (let ((ref (if (null? k) () (%log-ref gitdir name))))
           (let ((have (if (null? ref) 0 (List length (git-reflog-entries gitdir ref)))))
             (if (or (null? ref) (= have 0) (< k have)) ()
               (Str8 append "log for '"
                 (if (> (Str8 length name) 0) name
-                  (if (Str8 starts? "refs/heads/" ref) (Str8 sub 11 (%sub (Str8 length ref) 11) ref) ref))
+                  (if (Str8 starts? "refs/heads/" ref) (Str8 sub 11 (int- (Str8 length ref) 11) ref) ref))
                 "' only has " (Str8 str have) " entries"))))))))
 
 ; A revision's tree: a commit's, a tag's through the tag, a tree itself;
@@ -326,7 +325,7 @@
 ; The branch @{-N} names: the Nth checked out before this one, or ().
 (def git-previous-branch
   (fn (_ gitdir spec)
-    (def k (%count (Str8 sub 3 (%sub (Str8 length spec) 4) spec)))
+    (def k (%count (Str8 sub 3 (int- (Str8 length spec) 4) spec)))
     (if (or (null? k) (not (Str8 ends? "}" spec)) (= k 0)) () (%previous-branch gitdir k))))
 
 (provide git/refs git-ref-read git-rev-parse git-rev-path-missing git-rev-log-short git-log-ref git-previous-branch git-tree-of git-commit-of git-headers)

@@ -24,10 +24,8 @@
 (import git/stage git-index-write!)
 (import git/reflog git-reflog-append!)
 
-(def %add (prim-ref 'int '+))
-(def %sub (prim-ref 'int '-))
-(def %at (fn (_ p off) ((prim-ref (lit int) (lit ->ptr)) (%add ((prim-ref (lit ptr) (lit ->int)) p) off))))
-(def %str->ptr (prim-ref (lit str) (lit ->ptr)))
+(import x/core/doors int+ int- str->ptr)
+(def %at (fn (_ p off) ((prim-ref (lit int) (lit ->ptr)) (int+ ((prim-ref (lit ptr) (lit ->int)) p) off))))
 
 (def %error (fn (_ text) (list (lit err) (Str8 append "error: " text "\n") 1)))
 
@@ -50,11 +48,11 @@
 (def %mkdir-parents!
   (fn (_ wd path)
     ((fn (self from)
-       (let ((i (Str8 index-of "/" (Str8 sub from (%sub (Str8 length path) from) path))))
+       (let ((i (Str8 index-of "/" (Str8 sub from (int- (Str8 length path) from) path))))
          (unless (null? i)
-           (let ((dir (Str8 append wd "/" (Str8 sub 0 (%add from i) path))))
+           (let ((dir (Str8 append wd "/" (Str8 sub 0 (int+ from i) path))))
              (do (unless (File exists? dir) (File mkdir dir))
-                 (self (%add (%add from i) 1)))))))
+                 (self (int+ (int+ from i) 1)))))))
      0)))
 
 ; A blob written to a path in the working directory, its mode set.
@@ -66,7 +64,7 @@
     (%mkdir-parents! wd path)
     (def body ((prim-ref (lit str) (lit make)) (if (= (first (rest o)) 0) 1 (first (rest o)))))
     (when (> (first (rest o)) 0)
-      ((prim-ref (lit mem) (lit copy)) (%str->ptr body) (%at (%str->ptr (first (rest (rest o)))) (first (rest (rest (rest o))))) (first (rest o))))
+      ((prim-ref (lit mem) (lit copy)) (str->ptr body) (%at (str->ptr (first (rest (rest o)))) (first (rest (rest (rest o))))) (first (rest o))))
     (git-write-file! full body (first (rest o)))
     (File chmod full (if (str=? mode "100755") 493 420))
     ()))
@@ -139,7 +137,7 @@
         (if (null? o) ""
           (let ((text ((eval (lit git-object-text) (module git/objects)) o)))
             (let ((i (Str8 index-of "\n\n" text)))
-              (if (null? i) "" (first (Str8 split "\n" (Str8 sub (%add i 2) (%sub (Str8 length text) (%add i 2)) text)))))))))
+              (if (null? i) "" (first (Str8 split "\n" (Str8 sub (int+ i 2) (int- (Str8 length text) (int+ i 2)) text)))))))))
     (Str8 join "\n"
       (list (Str8 append "Note: switching to '" rev "'.") ""
             "You are in 'detached HEAD' state. You can look around, make experimental"
@@ -159,7 +157,7 @@
   (fn (_ wd gitdir rev new? start)
     (def current
       (let ((h (Str8 trim (File read-all (Str8 append gitdir "/HEAD")))))
-        (if (Str8 starts? "ref: refs/heads/" h) (Str8 sub 16 (%sub (Str8 length h) 16) h) ())))
+        (if (Str8 starts? "ref: refs/heads/" h) (Str8 sub 16 (int- (Str8 length h) 16) h) ())))
     (def old (git-rev-parse gitdir "HEAD"))
     ; HEAD's log: from the branch it named, or the commit it was at
     (def moved! (fn (_ new) (git-reflog-append! gitdir "HEAD" old new (Str8 append "checkout: moving from " (or current old) " to " rev))))

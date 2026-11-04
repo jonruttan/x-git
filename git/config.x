@@ -31,12 +31,9 @@
 (import x/sys/file File)
 (import x/sys/opts Opts)
 
-(def %add (prim-ref (lit int) (lit +)))
-(def %sub (prim-ref (lit int) (lit -)))
-(def %lt (prim-ref (lit int) (lit <)))
-(def %int->char (prim-ref (lit int) (lit ->char)))
+(import x/core/doors int+ int- int< int->char)
 
-(def %in? (fn (_ c lo hi) (if (%lt c lo) #f (not (%lt hi c)))))
+(def %in? (fn (_ c lo hi) (if (int< c lo) #f (not (int< hi c)))))
 (def %blank? (fn (_ c) (or (= c #\space) (= c #\tab) (= c #\return))))
 (def %alpha? (fn (_ c) (or (%in? c #\a #\z) (%in? c #\A #\Z))))
 (def %key-char? (fn (_ c) (or (%alpha? c) (%in? c #\0 #\9) (= c #\-))))
@@ -53,36 +50,36 @@
 (def %parse
   (fn (_ s)
     (def n (Str8 length s))
-    (def ch (fn (_ i) (if (%lt i n) (Str8 ref i s) #\newline)))
-    (def eol (fn (self i) (if (%lt i n) (if (= (Str8 ref i s) #\newline) (%add i 1) (self (%add i 1))) n)))
-    (def skip (fn (self i) (if (and (%lt i n) (%blank? (Str8 ref i s))) (self (%add i 1)) i)))
+    (def ch (fn (_ i) (if (int< i n) (Str8 ref i s) #\newline)))
+    (def eol (fn (self i) (if (int< i n) (if (= (Str8 ref i s) #\newline) (int+ i 1) (self (int+ i 1))) n)))
+    (def skip (fn (self i) (if (and (int< i n) (%blank? (Str8 ref i s))) (self (int+ i 1)) i)))
     (def word-end
       (fn (self i dots?)
-        (if (and (%lt i n) (or (%key-char? (Str8 ref i s)) (and dots? (= (Str8 ref i s) #\.)))) (self (%add i 1) dots?) i)))
+        (if (and (int< i n) (or (%key-char? (Str8 ref i s)) (and dots? (= (Str8 ref i s) #\.)))) (self (int+ i 1) dots?) i)))
     (def line-of
-      (fn (_ i) ((fn (self k count) (if (%lt k i) (self (%add k 1) (if (= (Str8 ref k s) #\newline) (%add count 1) count)) count)) 0 1)))
+      (fn (_ i) ((fn (self k count) (if (int< k i) (self (int+ k 1) (if (= (Str8 ref k s) #\newline) (int+ count 1) count)) count)) 0 1)))
     ; a header from just past its [: (SECTION . NEXT), or ()
     (def header
       (fn (_ i)
         (def e (word-end i #t))
-        (def name (Str8 sub i (%sub e i) s))
+        (def name (Str8 sub i (int- e i) s))
         (match
-          ((= (%sub e i) 0) ())
-          ((= (ch e) #\]) (pair (Str8 downcase name) (%add e 1)))
+          ((= (int- e i) 0) ())
+          ((= (ch e) #\]) (pair (Str8 downcase name) (int+ e 1)))
           ((%blank? (ch e))
             (let ((j (skip e)))
               (if (not (= (ch j) #\")) ()
                 ((fn (self k acc)
                    (let ((c (ch k)))
                      (match
-                       ((not (%lt k n)) ())
+                       ((not (int< k n)) ())
                        ((= c #\newline) ())
-                       ((= c #\") (if (= (ch (%add k 1)) #\])
-                                    (pair (Str8 append (Str8 downcase name) "." (Str8 join "" (List reverse acc))) (%add k 2))
+                       ((= c #\") (if (= (ch (int+ k 1)) #\])
+                                    (pair (Str8 append (Str8 downcase name) "." (Str8 join "" (List reverse acc))) (int+ k 2))
                                     ()))
-                       ((= c #\\) (self (%add k 2) (pair (Str8 sub (%add k 1) 1 s) acc)))
-                       (#t (self (%add k 1) (pair (Str8 sub k 1 s) acc))))))
-                 (%add j 1) ()))))
+                       ((= c #\\) (self (int+ k 2) (pair (Str8 sub (int+ k 1) 1 s) acc)))
+                       (#t (self (int+ k 1) (pair (Str8 sub k 1 s) acc))))))
+                 (int+ j 1) ()))))
           (#t ()))))
     ; a value from i, just past its =: (TEXT . NEXT), or ()
     (def value
@@ -90,32 +87,32 @@
         (def c (ch i))
         (def text (fn (_) (Str8 join "" (List reverse acc))))
         (match
-          ((= c #\newline) (if quote () (pair (text) (if (%lt i n) (%add i 1) n))))
-          ((and (not quote) (%blank? c)) (self (%add i 1) quote (if any (%add space 1) space) acc any))
+          ((= c #\newline) (if quote () (pair (text) (if (int< i n) (int+ i 1) n))))
+          ((and (not quote) (%blank? c)) (self (int+ i 1) quote (if any (int+ space 1) space) acc any))
           ((and (not quote) (or (= c #\;) (= c #\#))) (pair (text) (eol i)))
           (#t
             (let ((acc2 (if (= space 0) acc (pair (Str8 repeat space " ") acc))))
               (match
                 ((= c #\\)
-                  (let ((d (ch (%add i 1))))
+                  (let ((d (ch (int+ i 1))))
                     (match
-                      ((= d #\newline) (self (%add i 2) quote 0 acc2 any))
-                      ((= d #\t) (self (%add i 2) quote 0 (pair "\t" acc2) #t))
-                      ((= d #\n) (self (%add i 2) quote 0 (pair "\n" acc2) #t))
-                      ((= d #\b) (self (%add i 2) quote 0 (pair (Str8 str (%int->char 8)) acc2) #t))
-                      ((or (= d #\") (= d #\\)) (self (%add i 2) quote 0 (pair (Str8 sub (%add i 1) 1 s) acc2) #t))
+                      ((= d #\newline) (self (int+ i 2) quote 0 acc2 any))
+                      ((= d #\t) (self (int+ i 2) quote 0 (pair "\t" acc2) #t))
+                      ((= d #\n) (self (int+ i 2) quote 0 (pair "\n" acc2) #t))
+                      ((= d #\b) (self (int+ i 2) quote 0 (pair (Str8 str (int->char 8)) acc2) #t))
+                      ((or (= d #\") (= d #\\)) (self (int+ i 2) quote 0 (pair (Str8 sub (int+ i 1) 1 s) acc2) #t))
                       (#t ()))))
-                ((= c #\") (self (%add i 1) (not quote) 0 acc2 any))
-                (#t (self (%add i 1) quote 0 (pair (Str8 sub i 1 s) acc2) #t))))))))
+                ((= c #\") (self (int+ i 1) (not quote) 0 acc2 any))
+                (#t (self (int+ i 1) quote 0 (pair (Str8 sub i 1 s) acc2) #t))))))))
     ((fn (self i start section acc)
-       (if (not (%lt i n)) (List reverse acc)
+       (if (not (int< i n)) (List reverse acc)
          (let ((c (Str8 ref i s)))
            (match
-             ((= c #\newline) (self (%add i 1) (%add i 1) section acc))
-             ((%blank? c) (self (%add i 1) start section acc))
+             ((= c #\newline) (self (int+ i 1) (int+ i 1) section acc))
+             ((%blank? c) (self (int+ i 1) start section acc))
              ((or (= c #\#) (= c #\;)) (let ((e (eol i))) (self e e section acc)))
              ((= c #\[)
-               (let ((h (header (%add i 1))))
+               (let ((h (header (int+ i 1))))
                  (if (null? h) (list (list (lit bad) (line-of i)))
                    ; a header ends its line, a comment aside; a name may follow it on the line
                    (let ((j (skip (rest h))))
@@ -124,10 +121,10 @@
                        (self j start (first h) (pair (list (lit sec) (first h) start (rest h)) acc)))))))
              ((and (%alpha? c) (not (null? section)))
                (let ((k (word-end i #f)))
-                 (let ((name (Str8 append section "." (Str8 downcase (Str8 sub i (%sub k i) s)))) (j (skip k)))
+                 (let ((name (Str8 append section "." (Str8 downcase (Str8 sub i (int- k i) s)))) (j (skip k)))
                    (match
                      ((= (ch j) #\=)
-                       (let ((v (value (%add j 1) #f 0 () #f)))
+                       (let ((v (value (int+ j 1) #f 0 () #f)))
                          (if (null? v) (list (list (lit bad) (line-of i)))
                            (self (rest v) (rest v) section (pair (list (lit key) name (first v) start (rest v) section) acc)))))
                      ((or (= (ch j) #\newline) (= (ch j) #\#) (= (ch j) #\;))
@@ -150,15 +147,15 @@
     (def last (Str8 last-index-of "." s))
     (def first-dot (Str8 index-of "." s))
     (def all?
-      (fn (_ t) ((fn (self i) (if (%lt i (Str8 length t)) (if (%key-char? (Str8 ref i t)) (self (%add i 1)) #f) #t)) 0)))
+      (fn (_ t) ((fn (self i) (if (int< i (Str8 length t)) (if (%key-char? (Str8 ref i t)) (self (int+ i 1)) #f) #t)) 0)))
     (match
       ((null? last) (list (lit no-section)))
       ((= first-dot 0) (list (lit no-section)))
-      ((= last (%sub n 1)) (list (lit no-variable)))
+      ((= last (int- n 1)) (list (lit no-variable)))
       (#t
         (let ((section (Str8 sub 0 first-dot s))
-              (key (Str8 sub (%add last 1) (%sub n (%add last 1)) s))
-              (sub (if (= first-dot last) () (Str8 sub (%add first-dot 1) (%sub last (%add first-dot 1)) s))))
+              (key (Str8 sub (int+ last 1) (int- n (int+ last 1)) s))
+              (sub (if (= first-dot last) () (Str8 sub (int+ first-dot 1) (int- last (int+ first-dot 1)) s))))
           (if (or (not (all? section)) (not (all? key)) (not (%alpha? (Str8 ref 0 key)))
                   (and (not (null? sub)) (not (null? (Str8 index-of "\n" sub)))))
             (list (lit invalid))
@@ -211,28 +208,28 @@
     (def word
       (fn (self i acc)
         (match
-          ((not (%lt i n)) (pair (Str8 join "" (List reverse acc)) i))
+          ((not (int< i n)) (pair (Str8 join "" (List reverse acc)) i))
           ((= (Str8 ref i s) #\')
             ((fn (inner k acc2)
                (match
-                 ((not (%lt k n)) (pair (Str8 join "" (List reverse acc2)) k))
-                 ((= (Str8 ref k s) #\') (self (%add k 1) acc2))
-                 (#t (inner (%add k 1) (pair (Str8 sub k 1 s) acc2)))))
-             (%add i 1) acc))
-          ((= (Str8 ref i s) #\\) (self (%add i 2) (pair (Str8 sub (%add i 1) 1 s) acc)))
+                 ((not (int< k n)) (pair (Str8 join "" (List reverse acc2)) k))
+                 ((= (Str8 ref k s) #\') (self (int+ k 1) acc2))
+                 (#t (inner (int+ k 1) (pair (Str8 sub k 1 s) acc2)))))
+             (int+ i 1) acc))
+          ((= (Str8 ref i s) #\\) (self (int+ i 2) (pair (Str8 sub (int+ i 1) 1 s) acc)))
           (#t (pair (Str8 join "" (List reverse acc)) i)))))
     ((fn (self i acc)
        (match
-         ((not (%lt i n)) (List reverse acc))
-         ((%blank? (Str8 ref i s)) (self (%add i 1) acc))
+         ((not (int< i n)) (List reverse acc))
+         ((%blank? (Str8 ref i s)) (self (int+ i 1) acc))
          (#t
            (let ((w (word i ())))
-             (if (and (%lt (rest w) n) (= (Str8 ref (rest w) s) #\=))
-               (let ((v (word (%add (rest w) 1) ()))) (self (rest v) (pair (pair (first w) (first v)) acc)))
+             (if (and (int< (rest w) n) (= (Str8 ref (rest w) s) #\=))
+               (let ((v (word (int+ (rest w) 1) ()))) (self (rest v) (pair (pair (first w) (first v)) acc)))
                (let ((eq (Str8 index-of "=" (first w))))
                  (self (rest w)
                        (pair (if (null? eq) (pair (first w) ())
-                               (pair (Str8 sub 0 eq (first w)) (Str8 sub (%add eq 1) (%sub (Str8 length (first w)) (%add eq 1)) (first w))))
+                               (pair (Str8 sub 0 eq (first w)) (Str8 sub (int+ eq 1) (int- (Str8 length (first w)) (int+ eq 1)) (first w))))
                              acc))))))))
      0 ())))
 
@@ -316,22 +313,22 @@
 (def %int
   (fn (_ v)
     (def n (if (null? v) 0 (Str8 length v)))
-    (def last (if (= n 0) #\0 (Str8 ref (%sub n 1) v)))
+    (def last (if (= n 0) #\0 (Str8 ref (int- n 1) v)))
     (def scale
       (match ((or (= last #\k) (= last #\K)) 1024) ((or (= last #\m) (= last #\M)) 1048576)
              ((or (= last #\g) (= last #\G)) 1073741824) (#t 1)))
-    (def digits (if (= scale 1) (or v "") (Str8 sub 0 (%sub n 1) v)))
+    (def digits (if (= scale 1) (or v "") (Str8 sub 0 (int- n 1) v)))
     (def ok?
-      ((fn (self i) (if (%lt i (Str8 length digits))
-                      (if (or (%in? (Str8 ref i digits) #\0 #\9) (and (= i 0) (= (Str8 ref i digits) #\-))) (self (%add i 1)) #f)
-                      (%lt 0 (Str8 length digits))))
+      ((fn (self i) (if (int< i (Str8 length digits))
+                      (if (or (%in? (Str8 ref i digits) #\0 #\9) (and (= i 0) (= (Str8 ref i digits) #\-))) (self (int+ i 1)) #f)
+                      (int< 0 (Str8 length digits))))
        0))
     (if ok? (pair (lit ok) (* scale (%str->number digits 10))) (pair (lit bad) "invalid unit"))))
 
 ; Where a setting came from, as a refusal of its value names it.
 (def %where
   (fn (_ origin)
-    (if (Str8 starts? "file:" origin) (Str8 append " in file " (Str8 sub 5 (%sub (Str8 length origin) 5) origin)) " in command line")))
+    (if (Str8 starts? "file:" origin) (Str8 append " in file " (Str8 sub 5 (int- (Str8 length origin) 5) origin)) " in command line")))
 
 ; A value shown as --type asks: (ok . TEXT) or (err . TEXT); where is
 ; what %where says of it, or "".
@@ -357,7 +354,7 @@
   (fn (_ v)
     (def n (Str8 length v))
     (def quote?
-      (or (and (%lt 0 n) (or (= (Str8 ref 0 v) #\space) (= (Str8 ref (%sub n 1) v) #\space)))
+      (or (and (int< 0 n) (or (= (Str8 ref 0 v) #\space) (= (Str8 ref (int- n 1) v) #\space)))
           (not (null? (Str8 index-of ";" v))) (not (null? (Str8 index-of "#" v))) (not (null? (Str8 index-of "\r" v)))))
     (def body
       (Str8 join ""
@@ -383,15 +380,15 @@
 (def %edit
   (fn (_ text cuts puts)
     (def marks
-      (List sort (fn (_ a b) (or (%lt (first a) (first b)) (and (= (first a) (first b)) (%lt (first (rest a)) (first (rest b))))))
+      (List sort (fn (_ a b) (or (int< (first a) (first b)) (and (= (first a) (first b)) (int< (first (rest a)) (first (rest b))))))
         (List append (List map (fn (_ c) (list (first c) (rest c) "")) cuts)
           (List map (fn (_ p) (list (first p) (first p) (rest p))) puts))))
     ((fn (self ms i acc)
        (if (null? ms)
-         (Str8 join "" (List reverse (pair (Str8 sub i (%sub (Str8 length text) i) text) acc)))
+         (Str8 join "" (List reverse (pair (Str8 sub i (int- (Str8 length text) i) text) acc)))
          (let ((m (first ms)))
            (self (rest ms) (first (rest m))
-                 (pair (first (rest (rest m))) (pair (Str8 sub i (%sub (first m) i) text) acc))))))
+                 (pair (first (rest (rest m))) (pair (Str8 sub i (int- (first m) i) text) acc))))))
      marks 0 ())))
 
 ; Headers whose blocks hold no names once cuts are made, and nothing but
@@ -409,9 +406,9 @@
                               (if (null? nx) (Str8 length text) (first (rest (rest nx))))))))
                  (if (and (not (null? (List filter (fn (_ b) (cut? b)) body)))
                           (List all? cut? body)
-                          (= (Str8 length (Str8 trim (%edit (Str8 sub (first (rest (rest (rest it)))) (%sub end (first (rest (rest (rest it))))) text)
-                                                       (List map (fn (_ b) (pair (%sub (first (rest (rest (rest b)))) (first (rest (rest (rest it)))))
-                                                                                 (%sub (first (rest (rest (rest (rest b))))) (first (rest (rest (rest it)))))))
+                          (= (Str8 length (Str8 trim (%edit (Str8 sub (first (rest (rest (rest it)))) (int- end (first (rest (rest (rest it))))) text)
+                                                       (List map (fn (_ b) (pair (int- (first (rest (rest (rest b)))) (first (rest (rest (rest it)))))
+                                                                                 (int- (first (rest (rest (rest (rest b))))) (first (rest (rest (rest it)))))))
                                                          body)
                                                        ())))
                              0))
@@ -445,7 +442,7 @@
                 (let ((hits (List filter (fn (_ it) (and (eq? (first it) (lit key)) (str=? (first (rest it)) full))) items))
                       (span (fn (_ it) (pair (first (rest (rest (rest it)))) (first (rest (rest (rest (rest it)))))))))
                   (match
-                    ((and (not add?) (not all?) (%lt 1 (List length hits)))
+                    ((and (not add?) (not all?) (int< 1 (List length hits)))
                       (list (lit err) (first (rest (rest (rest (rest (rest op)))))) 5))
                     ((and (not add?) (not (null? hits)))
                       ; the first one's line replaced, any others cut
@@ -472,7 +469,7 @@
               (let ((hits (List filter (fn (_ it) (and (eq? (first it) (lit key)) (str=? (first (rest it)) (first (rest nm))))) items)))
                 (match
                   ((null? hits) (list (lit err) "" 5))
-                  ((and (not all?) (%lt 1 (List length hits))) (list (lit err) (first (rest (rest (rest op)))) 5))
+                  ((and (not all?) (int< 1 (List length hits))) (list (lit err) (first (rest (rest (rest op)))) 5))
                   (#t
                     (let ((cuts (List map (fn (_ it) (pair (first (rest (rest (rest it)))) (first (rest (rest (rest (rest it))))))) hits)))
                       (do (%write! path (%edit text (List append cuts (%emptied text items cuts)) ()))
@@ -547,7 +544,7 @@
         ((or (on? "--get") (on? "--get-all")) (lit get))
         ((on? "--add") (lit set))
         ((= (List length operands) 1) (lit get))
-        ((%lt 1 (List length operands)) (lit set))
+        ((int< 1 (List length operands)) (lit set))
         (#t ())))
     ; what is read: every source, or the one the options name
     (def scoped
@@ -639,7 +636,7 @@
               (let ((given (first operands)))
                 (let ((dot (Str8 index-of "." given)))
                   (let ((section (if (null? dot) (Str8 downcase given)
-                                   (Str8 append (Str8 downcase (Str8 sub 0 dot given)) (Str8 sub dot (%sub (Str8 length given) dot) given)))))
+                                   (Str8 append (Str8 downcase (Str8 sub 0 dot given)) (Str8 sub dot (int- (Str8 length given) dot) given)))))
                     (let ((r (%change! target (list (lit remove-section) section))))
                       (if (eq? (first r) (lit ok)) (list (lit out) "" 0)
                         (list (lit err) (Str8 append "fatal: no such section: " given "\n") 128)))))))))))))

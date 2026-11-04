@@ -39,17 +39,9 @@
 (import git/wire wire-of-fds wire-line wire-split wire-raw wire-send! wire-send-bytes! wire-flush!
   wire-send-raw! wire-send-split!)
 
-(def %add (prim-ref 'int '+))
-(def %sub (prim-ref 'int '-))
-(def %make-str (prim-ref (lit str) (lit make)))
-(def %str->ptr (prim-ref (lit str) (lit ->ptr)))
-(def %ptr->int (prim-ref (lit ptr) (lit ->int)))
-(def %int->ptr (prim-ref (lit int) (lit ->ptr)))
-(def %pset! (prim-ref (lit ptr) (lit set!)))
-(def %mem-copy (prim-ref (lit mem) (lit copy)))
-(def %str-byte-len (prim-ref (lit str) (lit byte-len)))
+(import x/core/doors int+ int- str-make str->ptr ptr->int int->ptr ptr-set! mem-copy str-byte-len)
 
-(def %at (fn (_ p off) (%int->ptr (%add (%ptr->int p) off))))
+(def %at (fn (_ p off) (int->ptr (int+ (ptr->int p) off))))
 
 (def %ZERO "0000000000000000000000000000000000000000")
 
@@ -65,7 +57,7 @@
     (when (>= (Sys dup2 3 0) 0) (Sys close 3))
     (wire-of-fds 0 1)))
 
-(def %say (fn (_ text) (File write 2 text (%str-byte-len text))))
+(def %say (fn (_ text) (File write 2 text (str-byte-len text))))
 
 ; The repository a service was started on, as enter_repo finds one: the
 ; directory, DIR.git, or DIR/.git; () when none.
@@ -93,12 +85,12 @@
   (fn (_ w band r n)
     ((fn (self at)
        (when (< at n)
-         (let ((k (if (> (%sub n at) 65515) 65515 (%sub n at))))
-           (let ((pk (%make-str (%add k 1))))
-             (do (%pset! (%str->ptr pk) 0 band 1)
-                 (%mem-copy (%at (%str->ptr pk) 1) (%at (%str->ptr r) at) k)
-                 (wire-send-bytes! w pk (%add k 1))
-                 (self (%add at k)))))))
+         (let ((k (if (> (int- n at) 65515) 65515 (int- n at))))
+           (let ((pk (str-make (int+ k 1))))
+             (do (ptr-set! (str->ptr pk) 0 band 1)
+                 (mem-copy (%at (str->ptr pk) 1) (%at (str->ptr r) at) k)
+                 (wire-send-bytes! w pk (int+ k 1))
+                 (self (int+ at k)))))))
      0)))
 
 ; The words after the first line's NUL, as a list.
@@ -174,7 +166,7 @@
         (def head (Str8 trim (File read-all (Str8 append g "/HEAD"))))
         (def symref
           (if (and (Str8 starts? "ref: " head) (not (null? (git-ref-read g "HEAD"))))
-            (Str8 append " symref=HEAD:" (Str8 sub 5 (%sub (Str8 length head) 5) head)) ""))
+            (Str8 append " symref=HEAD:" (Str8 sub 5 (int- (Str8 length head) 5) head)) ""))
         (%advertise! w refs (Str8 append %upload-caps symref " agent=x-git"))
         (def req (%read-wants w))
         (if (null? req) (list (lit out) "" 0)
@@ -216,14 +208,14 @@
     ((fn (self count i off)
        (def got (wire-raw w))
        (when (null? got) (Err raise (lit value) "the pack ended early" ()))
-       (git-bytes-put! b (%str->ptr (first got)) (rest got))
+       (git-bytes-put! b (str->ptr (first got)) (rest got))
        (def n (git-bytes-count b))
        (def r (git-bytes-region b))
        (def c (if (and (null? count) (>= n 12)) (git-pack-count r) count))
        (if (null? c) (self c i off)
          (let ((s (git-pack-scan r n c i off)))
-           (if (and (= (first s) c) (>= n (%add (rest s) 20)))
-             (pair r (%add (rest s) 20))
+           (if (and (= (first s) c) (>= n (int+ (rest s) 20)))
+             (pair r (int+ (rest s) 20))
              (self c (first s) (rest s))))))
      () 0 12)))
 
@@ -258,7 +250,7 @@
               (pair "" ()))))
       ((not (git-has-object? g new)) (pair "" "missing necessary objects"))
       ((and (not bare?) (not (null? head-ref)) (str=? name head-ref))
-        (pair (git-deny-current (Str8 sub 11 (%sub (Str8 length name) 11) name)) "branch is currently checked out"))
+        (pair (git-deny-current (Str8 sub 11 (int- (Str8 length name) 11) name)) "branch is currently checked out"))
       (#t (let ((old (git-ref-read g name)))
             (do (git-write-ref! g name new) (git-reflog-append! g name old new "push") (pair "" ())))))))
 
@@ -269,12 +261,12 @@
     (List for-each
       (fn (_ l)
         (def s (Str8 append l "\n"))
-        (def n (%add (%str-byte-len s) 4))
+        (def n (int+ (str-byte-len s) 4))
         (def h (Str8 append (if (< n 16) "000" (if (< n 256) "00" (if (< n 4096) "0" ""))) (%hex n)))
-        (git-bytes-put! b (%str->ptr h) 4)
-        (git-bytes-put! b (%str->ptr s) (%str-byte-len s)))
+        (git-bytes-put! b (str->ptr h) 4)
+        (git-bytes-put! b (str->ptr s) (str-byte-len s)))
       lines)
-    (git-bytes-put! b (%str->ptr "0000") 4)
+    (git-bytes-put! b (str->ptr "0000") 4)
     (pair (git-bytes-region b) (git-bytes-count b))))
 
 (def %hex
@@ -311,7 +303,7 @@
                                      cmds results)))
                       (band? (%member? "side-band-64k" caps)))
                   (do (unless (= (Str8 length said) 0)
-                        (if band? (%band! w 2 said (%str-byte-len said)) (%say said)))
+                        (if band? (%band! w 2 said (str-byte-len said)) (%say said)))
                       (when (%member? "report-status" caps)
                         (let ((rep (%report-bytes lines)))
                           (if band? (%band! w 1 (first rep) (rest rep)) (wire-send-raw! w (first rep) (rest rep)))))

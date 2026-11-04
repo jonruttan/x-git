@@ -33,14 +33,8 @@
 (import git/packs git-bytes-make git-bytes-put! git-bytes-region git-bytes-count)
 (import git/config git-config-value)
 
-(def %add (prim-ref (lit int) (lit +)))
-(def %sub (prim-ref (lit int) (lit -)))
-(def %make-str (prim-ref (lit str) (lit make)))
-(def %str->ptr (prim-ref (lit str) (lit ->ptr)))
-(def %ptr->int (prim-ref (lit ptr) (lit ->int)))
-(def %int->ptr (prim-ref (lit int) (lit ->ptr)))
-(def %mem-copy (prim-ref (lit mem) (lit copy)))
-(def %at (fn (_ p off) (%int->ptr (%add (%ptr->int p) off))))
+(import x/core/doors int+ int- str-make str->ptr ptr->int int->ptr mem-copy)
+(def %at (fn (_ p off) (int->ptr (int+ (ptr->int p) off))))
 
 ; What went wrong the last time a service was reached by http, in git's
 ; words, or ().
@@ -65,7 +59,7 @@
 
 ; A url without its trailing slashes, as git joins paths to it.
 (def %base
-  (fn (self url) (if (Str8 ends? "/" url) (self (Str8 sub 0 (%sub (Str8 length url) 1) url)) url)))
+  (fn (self url) (if (Str8 ends? "/" url) (self (Str8 sub 0 (int- (Str8 length url) 1) url)) url)))
 
 ; Http's options: the certificate unchecked when git is told not to
 ; check it.
@@ -82,8 +76,8 @@
 (def %text
   (fn (_ b)
     (def n (git-bytes-count b))
-    (def s (%make-str (if (= n 0) 1 n)))
-    (when (> n 0) (%mem-copy (%str->ptr s) (%str->ptr (git-bytes-region b)) n))
+    (def s (str-make (if (= n 0) 1 n)))
+    (when (> n 0) (mem-copy (str->ptr s) (str->ptr (git-bytes-region b)) n))
     (Str8 sub 0 n s)))
 
 (def %header
@@ -136,7 +130,7 @@
               (Vector set! 1 (git-bytes-make) st)
               (Vector set! 2 "" st)
               (let ((w (wire-of-driver
-                         (fn (_ r at n) (git-bytes-put! (%pending st) (%at (%str->ptr r) at) n))
+                         (fn (_ r at n) (git-bytes-put! (%pending st) (%at (str->ptr r) at) n))
                          ; each read collected after: a TLS record decrypted leaves
                          ; its garbage, and a hosted repository's advertisement
                          ; (its pull requests' refs) runs to hundreds of KB
@@ -144,7 +138,7 @@
                            (when (> (git-bytes-count (%pending st)) 0) (%post! st service open))
                            (let ((run (%Http read (%stream st) max)))
                              (if (null? run) 0
-                               (do (%mem-copy (%str->ptr region) (%str->ptr (first run)) (rest run))
+                               (do (mem-copy (str->ptr region) (str->ptr (first run)) (rest run))
                                    (Heap collect)
                                    (rest run)))))
                          (fn (_) (%Http close (%stream st))))))
@@ -165,7 +159,7 @@
     (def req
       (if (str=? service "receive-pack") (pair (git-bytes-region pending) (git-bytes-count pending))
         (let ((text (Str8 append (%said st) (%text pending))))
-          (do (Vector set! 2 (if (Str8 ends? "0000" text) (Str8 sub 0 (%sub (Str8 length text) 4) text) text) st)
+          (do (Vector set! 2 (if (Str8 ends? "0000" text) (Str8 sub 0 (int- (Str8 length text) 4) text) text) st)
               text))))
     (%Http close (%stream st))
     (Vector set! 1 (git-bytes-make) st)

@@ -29,21 +29,10 @@
 (import x/sys/posix Sys)
 (import x/type/vector Vector)
 
-(def %add (prim-ref 'int '+))
-(def %sub (prim-ref 'int '-))
-(def %pref (prim-ref (lit ptr) (lit ref)))
-(def %pset! (prim-ref (lit ptr) (lit set!)))
-(def %make-str (prim-ref (lit str) (lit make)))
-(def %str->ptr (prim-ref (lit str) (lit ->ptr)))
-(def %ptr->int (prim-ref (lit ptr) (lit ->int)))
-(def %int->ptr (prim-ref (lit int) (lit ->ptr)))
-(def %mem-copy (prim-ref (lit mem) (lit copy)))
-(def %str-byte-len (prim-ref (lit str) (lit byte-len)))
-(def %oref (prim-ref (lit obj) (lit ref)))
-(def %oset! (prim-ref (lit obj) (lit set!)))
+(import x/core/doors int+ int- ptr-ref ptr-set! str-make str->ptr ptr->int int->ptr mem-copy str-byte-len obj-ref obj-set!)
 
-(def %at (fn (_ p off) (%int->ptr (%add (%ptr->int p) off))))
-(def %byte (fn (_ p i) (& (%pref p i 1) 255)))
+(def %at (fn (_ p off) (int->ptr (int+ (ptr->int p) off))))
+(def %byte (fn (_ p i) (& (ptr-ref p i 1) 255)))
 
 (def %fail (fn (_ what) (Err raise (lit value) (Str8 append "git: " what) ())))
 
@@ -74,15 +63,15 @@
 (def %wire
   (fn (_ pid out in driver)
     (def w (Vector make 9 0))
-    (%oset! w 1 pid)
-    (%oset! w 2 out)
-    (%oset! w 3 in)
-    (%oset! w 4 (%make-str %CHUNK))
-    (%oset! w 5 %CHUNK)
-    (%oset! w 6 0)
-    (%oset! w 7 0)
-    (%oset! w 8 (%make-str %CHUNK))
-    (%oset! w 9 driver)
+    (obj-set! w 1 pid)
+    (obj-set! w 2 out)
+    (obj-set! w 3 in)
+    (obj-set! w 4 (str-make %CHUNK))
+    (obj-set! w 5 %CHUNK)
+    (obj-set! w 6 0)
+    (obj-set! w 7 0)
+    (obj-set! w 8 (str-make %CHUNK))
+    (obj-set! w 9 driver)
     w))
 
 ; A wire on descriptors this process already has: a service's own
@@ -95,12 +84,12 @@
 (def wire-of-driver
   (fn (_ send! recv! close!) (%wire -1 -1 -1 (list send! recv! close!))))
 
-(def %driver (fn (_ w) (%oref w 9)))
+(def %driver (fn (_ w) (obj-ref w 9)))
 
 ; Our end of the child's input closed: it reads EOF.
 (def wire-close-in!
   (fn (_ w)
-    (unless (< (%oref w 2) 0) (do (Sys close (%oref w 2)) (%oset! w 2 -1)))))
+    (unless (< (obj-ref w 2) 0) (do (Sys close (obj-ref w 2)) (obj-set! w 2 -1)))))
 
 ; Both ends closed and the child waited for; answers how it ended.  A
 ; driver's wire closes through its driver, and ends well; no wire at all
@@ -111,17 +100,17 @@
       ((null? w) 0)
       ((not (null? (%driver w))) (do ((first (rest (rest (%driver w))))) 0))
       (#t (do (wire-close-in! w)
-              (Sys close (%oref w 3))
-              (Sys wait (%oref w 1)))))))
+              (Sys close (obj-ref w 3))
+              (Sys wait (obj-ref w 1)))))))
 
 ; The bytes that come next, outside any packet: what the buffer holds
 ; unread, or one read's worth when it holds none.  (REGION . N), or ()
 ; at the end of the input.
 (def wire-raw
   (fn (_ w)
-    (def n (%sub (%oref w 7) (%oref w 6)))
+    (def n (int- (obj-ref w 7) (obj-ref w 6)))
     (if (if (> n 0) #t (%fill! w 1))
-      (let ((k (%sub (%oref w 7) (%oref w 6))))
+      (let ((k (int- (obj-ref w 7) (obj-ref w 6))))
         (pair (%take! w k) k))
       ())))
 
@@ -136,27 +125,27 @@
 ; that ended inside a packet leaving the room short of a chunk.)
 (def %fill!
   (fn (self w n)
-    (def start (%oref w 6))
-    (def end (%oref w 7))
-    (def room (%sub (%oref w 5) end))
+    (def start (obj-ref w 6))
+    (def end (obj-ref w 7))
+    (def room (int- (obj-ref w 5) end))
     (match
-      ((>= (%sub end start) n) #t)
-      ((> n (%oref w 5))
-        (do (def cap ((fn (grow c) (if (< c n) (grow (* c 2)) c)) (* (%oref w 5) 2)))
-            (def r (%make-str cap))
-            (%mem-copy (%str->ptr r) (%at (%str->ptr (%oref w 4)) start) (%sub end start))
-            (%oset! w 4 r) (%oset! w 5 cap) (%oset! w 6 0) (%oset! w 7 (%sub end start))
+      ((>= (int- end start) n) #t)
+      ((> n (obj-ref w 5))
+        (do (def cap ((fn (grow c) (if (< c n) (grow (* c 2)) c)) (* (obj-ref w 5) 2)))
+            (def r (str-make cap))
+            (mem-copy (str->ptr r) (%at (str->ptr (obj-ref w 4)) start) (int- end start))
+            (obj-set! w 4 r) (obj-set! w 5 cap) (obj-set! w 6 0) (obj-set! w 7 (int- end start))
             (self w n)))
       ((and (> start 0) (< room %CHUNK))
-        (do (%mem-copy (%str->ptr (%oref w 4)) (%at (%str->ptr (%oref w 4)) start) (%sub end start))
-            (%oset! w 6 0) (%oset! w 7 (%sub end start))
+        (do (mem-copy (str->ptr (obj-ref w 4)) (%at (str->ptr (obj-ref w 4)) start) (int- end start))
+            (obj-set! w 6 0) (obj-set! w 7 (int- end start))
             (self w n)))
       (#t
-        (let ((got (if (null? (%driver w)) (File read (%oref w 3) (%oref w 8) (if (< room %CHUNK) room %CHUNK))
-                     ((first (rest (%driver w))) (%oref w 8) (if (< room %CHUNK) room %CHUNK)))))
+        (let ((got (if (null? (%driver w)) (File read (obj-ref w 3) (obj-ref w 8) (if (< room %CHUNK) room %CHUNK))
+                     ((first (rest (%driver w))) (obj-ref w 8) (if (< room %CHUNK) room %CHUNK)))))
           (if (<= got 0) #f
-            (do (%mem-copy (%at (%str->ptr (%oref w 4)) end) (%str->ptr (%oref w 8)) got)
-                (%oset! w 7 (%add end got))
+            (do (mem-copy (%at (str->ptr (obj-ref w 4)) end) (str->ptr (obj-ref w 8)) got)
+                (obj-set! w 7 (int+ end got))
                 (self w n))))))))
 
 ; n unread bytes taken: a fresh region holding them, or () at the end of
@@ -164,25 +153,25 @@
 (def %take!
   (fn (_ w n)
     (if (not (%fill! w n)) ()
-      (let ((r (%make-str (if (= n 0) 1 n))))
-        (do (%mem-copy (%str->ptr r) (%at (%str->ptr (%oref w 4)) (%oref w 6)) n)
-            (%oset! w 6 (%add (%oref w 6) n))
+      (let ((r (str-make (if (= n 0) 1 n))))
+        (do (mem-copy (str->ptr r) (%at (str->ptr (obj-ref w 4)) (obj-ref w 6)) n)
+            (obj-set! w 6 (int+ (obj-ref w 6) n))
             r)))))
 
 (def %hex-value
   (fn (_ c)
     (match
-      ((and (>= c 48) (<= c 57)) (%sub c 48))
-      ((and (>= c 97) (<= c 102)) (%sub c 87))
-      ((and (>= c 65) (<= c 70)) (%sub c 55))
+      ((and (>= c 48) (<= c 57)) (int- c 48))
+      ((and (>= c 97) (<= c 102)) (int- c 87))
+      ((and (>= c 65) (<= c 70)) (int- c 55))
       (#t (%fail "a pkt-line length that is not hex")))))
 
 ; The length a pkt-line's four hex digits at i of pointer p give.
 (def wire-pkt-length
   (fn (_ p i)
     (| (<< (%hex-value (%byte p i)) 12)
-       (| (<< (%hex-value (%byte p (%add i 1))) 8)
-          (| (<< (%hex-value (%byte p (%add i 2))) 4) (%hex-value (%byte p (%add i 3))))))))
+       (| (<< (%hex-value (%byte p (int+ i 1))) 8)
+          (| (<< (%hex-value (%byte p (int+ i 2))) 4) (%hex-value (%byte p (int+ i 3))))))))
 
 ; The next packet: (REGION . N) its bytes, flush for 0000, delim for 0001,
 ; or () when the child's output ended.
@@ -190,15 +179,15 @@
   (fn (_ w)
     (def h (%take! w 4))
     (if (null? h) ()
-      (let ((p (%str->ptr h)))
+      (let ((p (str->ptr h)))
         (let ((len (wire-pkt-length p 0)))
           (match
             ((= len 0) (lit flush))
             ((= len 1) (lit delim))
             ((< len 4) (%fail "a pkt-line shorter than its own length"))
-            (#t (let ((r (%take! w (%sub len 4))))
+            (#t (let ((r (%take! w (int- len 4))))
                   (if (null? r) (%fail "the connection ended inside a pkt-line")
-                    (pair r (%sub len 4)))))))))))
+                    (pair r (int- len 4)))))))))))
 
 ; The next packet as text, its trailing newline dropped: a string, flush,
 ; delim or ().  A NUL inside stays in the string; wire-split finds it.
@@ -206,53 +195,53 @@
   (fn (_ w)
     (def pk (wire-pkt w))
     (if (not (pair? pk)) pk
-      (let ((n (rest pk)) (p (%str->ptr (first pk))))
-        (let ((k (if (and (> n 0) (= (%byte p (%sub n 1)) 10)) (%sub n 1) n)))
-          (let ((s (%make-str k)))
-            (do (when (> k 0) (%mem-copy (%str->ptr s) p k))
+      (let ((n (rest pk)) (p (str->ptr (first pk))))
+        (let ((k (if (and (> n 0) (= (%byte p (int- n 1)) 10)) (int- n 1) n)))
+          (let ((s (str-make k)))
+            (do (when (> k 0) (mem-copy (str->ptr s) p k))
                 (pair s k))))))))
 
 ; A line's text at the NUL: (BEFORE . AFTER), AFTER () without one.
 ; The line is (STRING . N) as wire-line answers it.
 (def wire-split
   (fn (_ line)
-    (def p (%str->ptr (first line)))
+    (def p (str->ptr (first line)))
     (def n (rest line))
-    (def nul ((fn (self i) (match ((>= i n) ()) ((= (%byte p i) 0) i) (#t (self (%add i 1))))) 0))
-    (def text (fn (_ start k) (let ((s (%make-str (if (= k 0) 1 k)))) (do (when (> k 0) (%mem-copy (%str->ptr s) (%at p start) k)) (when (= k 0) (%pset! (%str->ptr s) 0 0 1)) s))))
+    (def nul ((fn (self i) (match ((>= i n) ()) ((= (%byte p i) 0) i) (#t (self (int+ i 1))))) 0))
+    (def text (fn (_ start k) (let ((s (str-make (if (= k 0) 1 k)))) (do (when (> k 0) (mem-copy (str->ptr s) (%at p start) k)) (when (= k 0) (ptr-set! (str->ptr s) 0 0 1)) s))))
     (if (null? nul) (pair (text 0 n) ())
-      (pair (text 0 nul) (text (%add nul 1) (%sub n (%add nul 1)))))))
+      (pair (text 0 nul) (text (int+ nul 1) (int- n (int+ nul 1)))))))
 
 ; --- writing ---
 
-(def %hex-digit (fn (_ v) (if (< v 10) (%add v 48) (%add v 87))))
+(def %hex-digit (fn (_ v) (if (< v 10) (int+ v 48) (int+ v 87))))
 
 ; n bytes of region r written to fd, every one of them.
 (def %write-all!
   (fn (self fd r at n)
     (when (> n 0)
-      (let ((w (File write fd (if (= at 0) r (let ((s (%make-str n))) (do (%mem-copy (%str->ptr s) (%at (%str->ptr r) at) n) s))) n)))
+      (let ((w (File write fd (if (= at 0) r (let ((s (str-make n))) (do (mem-copy (str->ptr s) (%at (str->ptr r) at) n) s))) n)))
         (do (when (<= w 0) (%fail "the connection closed while writing"))
-            (self fd r (%add at w) (%sub n w)))))))
+            (self fd r (int+ at w) (int- n w)))))))
 
 ; n bytes of region r from at sent on the wire: to the child's input, or
 ; to its driver.
 (def %out!
   (fn (_ w r at n)
-    (if (null? (%driver w)) (%write-all! (%oref w 2) r at n) ((first (%driver w)) r at n))))
+    (if (null? (%driver w)) (%write-all! (obj-ref w 2) r at n) ((first (%driver w)) r at n))))
 
 ; n bytes of region r sent as one packet.
 (def wire-send-bytes!
   (fn (_ w r n)
-    (def len (%add n 4))
+    (def len (int+ n 4))
     (when (> len 65520) (%fail "a pkt-line longer than 65520 bytes"))
-    (def pk (%make-str len))
-    (def p (%str->ptr pk))
-    (%pset! p 0 (%hex-digit (& (>> len 12) 15)) 1)
-    (%pset! p 1 (%hex-digit (& (>> len 8) 15)) 1)
-    (%pset! p 2 (%hex-digit (& (>> len 4) 15)) 1)
-    (%pset! p 3 (%hex-digit (& len 15)) 1)
-    (when (> n 0) (%mem-copy (%at p 4) (%str->ptr r) n))
+    (def pk (str-make len))
+    (def p (str->ptr pk))
+    (ptr-set! p 0 (%hex-digit (& (>> len 12) 15)) 1)
+    (ptr-set! p 1 (%hex-digit (& (>> len 8) 15)) 1)
+    (ptr-set! p 2 (%hex-digit (& (>> len 4) 15)) 1)
+    (ptr-set! p 3 (%hex-digit (& len 15)) 1)
+    (when (> n 0) (mem-copy (%at p 4) (str->ptr r) n))
     (%out! w pk 0 len)))
 
 ; A text line sent as one packet, a newline after it, as git sends its
@@ -260,21 +249,21 @@
 (def wire-send!
   (fn (_ w text)
     (def s (Str8 append text "\n"))
-    (wire-send-bytes! w s (%str-byte-len s))))
+    (wire-send-bytes! w s (str-byte-len s))))
 
 ; Two texts with a NUL between them sent as one packet, a newline after:
 ; a command or ref line and the capabilities after it.
 (def wire-send-split!
   (fn (_ w before after)
-    (def bn (%str-byte-len before))
-    (def an (%str-byte-len after))
-    (def n (%add (%add bn an) 2))
-    (def r (%make-str n))
-    (def p (%str->ptr r))
-    (%mem-copy p (%str->ptr before) bn)
-    (%pset! p bn 0 1)
-    (%mem-copy (%at p (%add bn 1)) (%str->ptr after) an)
-    (%pset! p (%sub n 1) 10 1)
+    (def bn (str-byte-len before))
+    (def an (str-byte-len after))
+    (def n (int+ (int+ bn an) 2))
+    (def r (str-make n))
+    (def p (str->ptr r))
+    (mem-copy p (str->ptr before) bn)
+    (ptr-set! p bn 0 1)
+    (mem-copy (%at p (int+ bn 1)) (str->ptr after) an)
+    (ptr-set! p (int- n 1) 10 1)
     (wire-send-bytes! w r n)))
 
 (def wire-flush!

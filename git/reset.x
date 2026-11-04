@@ -29,8 +29,7 @@
 (import git/threeway git-tree-flat)
 (import git/reflog git-ref-log!)
 
-(def %add (prim-ref 'int '+))
-(def %sub (prim-ref 'int '-))
+(import x/core/doors int+ int-)
 
 (def %member? (fn (_ s l) (List any? (fn (_ x) (str=? x s)) l)))
 
@@ -112,9 +111,9 @@
 (def git-reset
   (fn (_ wd gitdir ops)
     ; a "--" ends the options; after it are paths alone
-    (def cut ((fn (self l k) (match ((null? l) ()) ((str=? (first l) "--") k) (#t (self (rest l) (%add k 1))))) ops 0))
+    (def cut ((fn (self l k) (match ((null? l) ()) ((str=? (first l) "--") k) (#t (self (rest l) (int+ k 1))))) ops 0))
     (def before (if (null? cut) ops (List take cut ops)))
-    (def after (if (null? cut) () (List drop (%add cut 1) ops)))
+    (def after (if (null? cut) () (List drop (int+ cut 1) ops)))
     (def o (Opts parse git-reset-options before))
     (def operands (Opts operands o))
     (def quiet? (Opts on? o "-q"))
@@ -122,7 +121,7 @@
     (match
       ((Opts help? git-reset-options ops) (list (lit out) (Opts usage git-reset-options) 0))
       ((not (null? (Opts unknown o)))
-        (list (lit err) (Str8 append "error: unknown option `" (Str8 sub 2 (%sub (Str8 length (Opts unknown o)) 2) (Opts unknown o)) "'\n"
+        (list (lit err) (Str8 append "error: unknown option `" (Str8 sub 2 (int- (Str8 length (Opts unknown o)) 2) (Opts unknown o)) "'\n"
                           (Opts usage git-reset-options)) 129))
       ((null? gitdir) (git-no-repo))
       (#t
