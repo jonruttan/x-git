@@ -296,6 +296,17 @@
     (def hits (List filter (fn (_ s) (str=? (first s) (first (rest nm)))) (%settings (%sources "" gitdir))))
     (if (null? hits) () (let ((v (first (rest (List last hits))))) (if (null? v) "true" v)))))
 
+; The configuration read once: a lookup from a name to every value it is
+; set to, in order, as `--get-all` lists them, a name given alone reading
+; "true".
+(def git-config-reader
+  (fn (_ gitdir)
+    (def ss (%settings (%sources "" gitdir)))
+    (fn (_ name)
+      (def nm (%name name))
+      (List map (fn (_ s) (let ((v (first (rest s)))) (if (null? v) "true" v)))
+        (List filter (fn (_ s) (str=? (first s) (first (rest nm)))) ss)))))
+
 ; --- values ---
 
 ; A value as a boolean, as git reads one: (ok . BOOL), or (bad).
@@ -654,4 +665,4 @@
   (fn (_ gitdir name value)
     (%change! (Str8 append gitdir "/config") (list (lit set) (%name name) value #f #f ""))))
 
-(provide git/config git-config-value git-config git-config-options git-config-parameters git-config-set!)
+(provide git/config git-config-value git-config-reader git-config git-config-options git-config-parameters git-config-set!)
