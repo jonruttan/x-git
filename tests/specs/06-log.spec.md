@@ -72,7 +72,7 @@ first queued first: a merge's first parent before its second.
     " && git checkout -q main && m 2000000 x m1 && git checkout -q x && c 2000000 d && m 2000000 main m2"
     " && git checkout -q main && m 2000000 x m3")
   %lg-d))
-(def %lg-same? (fn (_ . ops) (equal? (apply git-text-in (pair %lg-d (pair "log" ops))) (apply git-oracle-in (pair %lg-d (pair "log" ops))))))
+(def %lg-same? (fn (_ . ops) (let ((x (apply git-text-in (pair %lg-d (pair "log" ops)))) (g (apply git-oracle-in (pair %lg-d (pair "log" ops))))) (if (equal? x g) #t (list x g)))))
 (write (list (%lg-same? "--oneline") (%lg-same? "--oneline" "x") (%lg-same? "-n" "4") (%lg-same?)))
 ```
 ---
