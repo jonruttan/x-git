@@ -47,7 +47,7 @@ collected after it.
       (list (first (rest (rest r))) (if (null? more) "" (first more)) (%rv-plain text)))))
 (def %rv-g
   (fn (_ ops)
-    (def r (Proc capture (pair "/bin/sh" (pair "-c" (pair "cd \"$0\" && exec git \"$@\" 2>../git.err" (pair (Str8 append %rv-d "/g/r") ops))))))
+    (def r (Proc capture (pair "/bin/sh" (pair "-c" (pair "cd \"$0\" && exec git -c advice.statusHints=true -c advice.commitBeforeMerge=true \"$@\" 2>../git.err" (pair (Str8 append %rv-d "/g/r") ops))))))
     (list (first r) (rest r) (%rv-plain (File read-all (Str8 append %rv-d "/g/git.err"))))))
 ; the lines whose answers differ, as (OPS X GIT)
 (def %rv-steps
