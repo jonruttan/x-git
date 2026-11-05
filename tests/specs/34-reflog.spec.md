@@ -135,7 +135,7 @@ their own; their logs name the source, which is set aside.
              (%rl-both "rev-parse" "main@{1}" "main@{99}")
              (%rl-both "rev-parse" "@{99}")
              (%rl-both "rev-parse" "nosuch@{1}")
-             (%rl-both "log" "--oneline" "-n" "1" "main@{2}")
+             (%rl-both "log" "--oneline" "main@{2}")
              (%rl-both "log" "--oneline" "main@{99}")
              (%rl-both "show" "-s" "--oneline" "HEAD@{3}")
              (%rl-both "show" "-s" "--oneline" "HEAD@{99}")))

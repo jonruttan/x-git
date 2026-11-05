@@ -56,3 +56,24 @@ own offset, as git prints it.
 ```
 ---
     #t
+
+### merges whose commits share a time, and one dated before its parent
+
+Commits with the same time come out as git's queue holds them, the
+first queued first: a merge's first parent before its second.
+
+```git
+(def %lg-d (let ((t (File temp "/tmp/x-git-lg-"))) (do (File close (first t)) (File unlink (rest t)) (File mkdir (rest t)) (rest t))))
+(Proc run! (list "/bin/sh" "-c"
+  (Str8 append "cd \"$0\" && export GIT_AUTHOR_NAME=A GIT_AUTHOR_EMAIL=a@b.c GIT_COMMITTER_NAME=A GIT_COMMITTER_EMAIL=a@b.c && git init -q -b main ."
+    " && c() { GIT_COMMITTER_DATE=\"@$1 +0000\" GIT_AUTHOR_DATE=\"@$1 +0000\" git commit -q --allow-empty -m \"$2\"; }"
+    " && m() { GIT_COMMITTER_DATE=\"@$1 +0000\" GIT_AUTHOR_DATE=\"@$1 +0000\" git merge -q --no-ff \"$2\" -m \"$3\"; }"
+    " && c 1000000 a && git branch x && c 2000000 b && git checkout -q x && c 2000000 c && c 500000 skew"
+    " && git checkout -q main && m 2000000 x m1 && git checkout -q x && c 2000000 d && m 2000000 main m2"
+    " && git checkout -q main && m 2000000 x m3")
+  %lg-d))
+(def %lg-same? (fn (_ . ops) (let ((x (apply git-text-in (pair %lg-d (pair "log" ops)))) (g (apply git-oracle-in (pair %lg-d (pair "log" ops))))) (if (equal? x g) #t (list x g)))))
+(write (list (%lg-same? "--oneline") (%lg-same? "--oneline" "x") (%lg-same? "-n" "4") (%lg-same?)))
+```
+---
+    (#t #t #t #t)

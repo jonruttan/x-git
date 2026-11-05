@@ -209,7 +209,8 @@
       (fn (self item pending)
         (match
           ((null? pending) (list item))
-          ((>= (first item) (first (first pending))) (pair item pending))
+          ; newer first; among equals, the first queued first, as git's queue keeps them
+          ((> (first item) (first (first pending))) (pair item pending))
           (#t (pair (first pending) (self item (rest pending)))))))
     ((fn (self pending seen out n)
        (match
