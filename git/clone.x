@@ -29,8 +29,7 @@
 (import git/wire wire-close!)
 (import git/reflog git-ref-log! git-reflog-append!)
 
-(def %add (prim-ref 'int '+))
-(def %sub (prim-ref 'int '-))
+(import x/core/doors int+ int-)
 
 ; The name clone gives a directory when none is given: the path's last
 ; component, less a .git ending.
@@ -38,8 +37,8 @@
   (fn (_ path)
     (def p (git-strip-slash path))
     (def i (Str8 last-index-of "/" p))
-    (def base (if (null? i) p (Str8 sub (%add i 1) (%sub (Str8 length p) (%add i 1)) p)))
-    (if (Str8 ends? ".git" base) (Str8 sub 0 (%sub (Str8 length base) 4) base) base)))
+    (def base (if (null? i) p (Str8 sub (int+ i 1) (int- (Str8 length p) (int+ i 1)) p)))
+    (if (Str8 ends? ".git" base) (Str8 sub 0 (int- (Str8 length base) 4) base) base)))
 
 ; The source's .git: a working directory's, or the path itself when it is
 ; one (a bare repository); () when neither.
@@ -96,10 +95,10 @@
               (tags (List filter (fn (_ e) (Str8 starts? "refs/tags/" (first e))) refs)))
           (let ((branch
                   (match
-                    ((not (null? symref)) (if (Str8 starts? "refs/heads/" symref) (Str8 sub 11 (%sub (Str8 length symref) 11) symref) symref))
+                    ((not (null? symref)) (if (Str8 starts? "refs/heads/" symref) (Str8 sub 11 (int- (Str8 length symref) 11) symref) symref))
                     ((null? head) "master")
                     (#t (let ((at (List find (fn (_ e) (str=? (rest e) head)) branches)))
-                          (if (null? at) "master" (Str8 sub 11 (%sub (Str8 length (first at)) 11) (first at)))))))
+                          (if (null? at) "master" (Str8 sub 11 (int- (Str8 length (first at)) 11) (first at)))))))
                 (g (Str8 append dest "/.git")))
             (do (git-init-layout! dest branch)
                 (let ((wants ((fn (self l acc)
@@ -113,7 +112,7 @@
                 (File write-all (Str8 append g "/packed-refs")
                   (Str8 append "# pack-refs with: peeled fully-peeled sorted \n"
                     (Str8 join ""
-                      (List map (fn (_ e) (Str8 append (rest e) " refs/remotes/origin/" (Str8 sub 11 (%sub (Str8 length (first e)) 11) (first e)) "\n")) branches))
+                      (List map (fn (_ e) (Str8 append (rest e) " refs/remotes/origin/" (Str8 sub 11 (int- (Str8 length (first e)) 11) (first e)) "\n")) branches))
                     (Str8 join "" (List map (fn (_ e) (Str8 append (rest e) " " (first e) "\n")) tags))))
                 (unless (File exists? (Str8 append g "/refs/remotes")) (File mkdir (Str8 append g "/refs/remotes")))
                 (unless (File exists? (Str8 append g "/refs/remotes/origin")) (File mkdir (Str8 append g "/refs/remotes/origin")))
@@ -157,7 +156,7 @@
                 ((proto-url? src-arg) (%clone-wire! src-arg name dest))
                 (#t
                   (let ((head (Str8 trim (File read-all (Str8 append sgit "/HEAD")))))
-                    (let ((branch (if (Str8 starts? "ref: refs/heads/" head) (Str8 sub 16 (%sub (Str8 length head) 16) head) "master")))
+                    (let ((branch (if (Str8 starts? "ref: refs/heads/" head) (Str8 sub 16 (int- (Str8 length head) 16) head) "master")))
                       (let ((g (Str8 append dest "/.git")))
                         (do (git-init-layout! dest branch)
                             ; the objects, loose and packed

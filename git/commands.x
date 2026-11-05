@@ -19,13 +19,7 @@
 (import git/objects git-hash git-object-write! git-object-read git-tree-pretty git-read-file)
 (import git/refs git-rev-parse git-rev-path-missing git-rev-trouble)
 
-(def %add (prim-ref 'int '+))
-(def %sub (prim-ref 'int '-))
-(def %make-str (prim-ref (lit str) (lit make)))
-(def %str->ptr (prim-ref (lit str) (lit ->ptr)))
-(def %ptr->int (prim-ref (lit ptr) (lit ->int)))
-(def %int->ptr (prim-ref (lit int) (lit ->ptr)))
-(def %mem-copy (prim-ref (lit mem) (lit copy)))
+(import x/core/doors int+ int- str-make str->ptr ptr->int int->ptr mem-copy ptr-ref ptr-set! str-byte-len)
 
 (def git-fatal (fn (_ text) (list (lit err) (Str8 append "fatal: " text "\n") 128)))
 
@@ -46,7 +40,7 @@
 
 ; A path less one trailing slash; "/" stays as it is.
 (def git-strip-slash
-  (fn (_ s) (if (and (> (Str8 length s) 1) (Str8 ends? "/" s)) (Str8 sub 0 (%sub (Str8 length s) 1) s) s)))
+  (fn (_ s) (if (and (> (Str8 length s) 1) (Str8 ends? "/" s)) (Str8 sub 0 (int- (Str8 length s) 1) s) s)))
 
 ; --- cat-file ---
 
@@ -107,9 +101,9 @@
 ; The body alone, as a region of its own.
 (def %body
   (fn (_ r start size)
-    (def b (%make-str size))
+    (def b (str-make size))
     (when (> size 0)
-      (%mem-copy (%str->ptr b) (%int->ptr (%add (%ptr->int (%str->ptr r)) start)) size))
+      (mem-copy (str->ptr b) (int->ptr (int+ (ptr->int (str->ptr r)) start)) size))
     b))
 
 ; --- hash-object ---
@@ -126,16 +120,16 @@
   (fn (_ fd)
     (def chunks
       ((fn (self acc)
-         (let ((buf (%make-str 65536)))
+         (let ((buf (str-make 65536)))
            (let ((n (File read fd buf 65536)))
              (if (<= n 0) acc (self (pair (pair buf n) acc))))))
        ()))
-    (def total (List fold (fn (_ sum c) (%add sum (rest c))) 0 chunks))
-    (def r (%make-str total))
+    (def total (List fold (fn (_ sum c) (int+ sum (rest c))) 0 chunks))
+    (def r (str-make total))
     ((fn (self cs at)
        (unless (null? cs)
-         (do (%mem-copy (%int->ptr (%add (%ptr->int (%str->ptr r)) at)) (%str->ptr (first (first cs))) (rest (first cs)))
-             (self (rest cs) (%add at (rest (first cs)))))))
+         (do (mem-copy (int->ptr (int+ (ptr->int (str->ptr r)) at)) (str->ptr (first (first cs))) (rest (first cs)))
+             (self (rest cs) (int+ at (rest (first cs)))))))
      (List reverse chunks) 0)
     (pair r total)))
 
@@ -149,17 +143,14 @@
 
 ; --- bytes ---
 
-(def %pref (prim-ref (lit ptr) (lit ref)))
-(def %pset! (prim-ref (lit ptr) (lit set!)))
-(def %str-byte-len (prim-ref (lit str) (lit byte-len)))
-(def %at (fn (_ p off) (%int->ptr (%add (%ptr->int p) off))))
-(def %byte (fn (_ p i) (& (%pref p i 1) 255)))
+(def %at (fn (_ p off) (int->ptr (int+ (ptr->int p) off))))
+(def %byte (fn (_ p i) (& (ptr-ref p i 1) 255)))
 
 ; The k bytes from byte `start` of region r, as a fresh string.
 (def %bytes->string
   (fn (_ r start k)
-    (def s (%make-str k))
-    (when (> k 0) (%mem-copy (%str->ptr s) (%at (%str->ptr r) start) k))
+    (def s (str-make k))
+    (when (> k 0) (mem-copy (str->ptr s) (%at (str->ptr r) start) k))
     s))
 
 ; The records of the n bytes of region r, each ended by the byte b -- the
@@ -168,22 +159,22 @@
   (fn (_ r n b)
     ((fn (self i at acc)
        (match
-         ((>= i n) (List reverse (if (> i at) (pair (%bytes->string r at (%sub i at)) acc) acc)))
-         ((= (%byte (%str->ptr r) i) b) (self (%add i 1) (%add i 1) (pair (%bytes->string r at (%sub i at)) acc)))
-         (#t (self (%add i 1) at acc))))
+         ((>= i n) (List reverse (if (> i at) (pair (%bytes->string r at (int- i at)) acc) acc)))
+         ((= (%byte (str->ptr r) i) b) (self (int+ i 1) (int+ i 1) (pair (%bytes->string r at (int- i at)) acc)))
+         (#t (self (int+ i 1) at acc))))
      0 0 ())))
 
 ; Strings each ended by a NUL, as (REGION . N): what -z prints.
 (def git-nul-joined
   (fn (_ strs)
-    (def total (List fold (fn (_ t s) (%add t (%add (%str-byte-len s) 1))) 0 strs))
-    (def r (%make-str total))
+    (def total (List fold (fn (_ t s) (int+ t (int+ (str-byte-len s) 1))) 0 strs))
+    (def r (str-make total))
     ((fn (self l at)
        (unless (null? l)
-         (let ((k (%str-byte-len (first l))))
-           (do (when (> k 0) (%mem-copy (%at (%str->ptr r) at) (%str->ptr (first l)) k))
-               (%pset! (%str->ptr r) (%add at k) 0 1)
-               (self (rest l) (%add at (%add k 1)))))))
+         (let ((k (str-byte-len (first l))))
+           (do (when (> k 0) (mem-copy (%at (str->ptr r) at) (str->ptr (first l)) k))
+               (ptr-set! (str->ptr r) (int+ at k) 0 1)
+               (self (rest l) (int+ at (int+ k 1)))))))
      strs 0)
     (pair r total)))
 

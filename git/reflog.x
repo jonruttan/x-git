@@ -20,9 +20,7 @@
 (import git/config git-config-value)
 (import git/ident git-signature)
 
-(def %add (prim-ref 'int '+))
-(def %sub (prim-ref 'int '-))
-(def %str-byte-len (prim-ref (lit str) (lit byte-len)))
+(import x/core/doors int+ int- str-byte-len)
 
 (def %zero "0000000000000000000000000000000000000000")
 
@@ -52,9 +50,9 @@
          (if (>= i n) acc
            (let ((c (Str8 sub i 1 msg)))
              (match
-               ((and was (%space? c)) (self (%add i 1) #t acc))
-               ((%space? c) (self (%add i 1) #t (pair " " acc)))
-               (#t (self (%add i 1) #f (pair c acc)))))))
+               ((and was (%space? c)) (self (int+ i 1) #t acc))
+               ((%space? c) (self (int+ i 1) #t (pair " " acc)))
+               (#t (self (int+ i 1) #f (pair c acc)))))))
        0 #t ()))
     (def trimmed (if (and (not (null? out)) (str=? (first out) " ")) (rest out) out))
     (Str8 join "" (List reverse trimmed))))
@@ -91,7 +89,7 @@
           (def line (Str8 append (if (null? old) %zero old) " " (if (null? new) %zero new) " " who "\t" (%squeeze msg) "\n"))
           (def fd (File open (%log-path gitdir ref) (list (lit wronly) (lit creat) (lit append)) 420))
           (when (>= fd 0)
-            (do (File write fd line (%str-byte-len line))
+            (do (File write fd line (str-byte-len line))
                 (File close fd)))))))
 
 ; The branch HEAD names, as its ref (refs/heads/...), or () when detached.
@@ -99,7 +97,7 @@
   (fn (_ gitdir)
     (def path (Str8 append gitdir "/HEAD"))
     (def h (if (File exists? path) (Str8 trim (File read-all path)) ""))
-    (if (Str8 starts? "ref: " h) (Str8 sub 5 (%sub (Str8 length h) 5) h) ())))
+    (if (Str8 starts? "ref: " h) (Str8 sub 5 (int- (Str8 length h) 5) h) ())))
 
 ; A ref's move logged, and HEAD's too when HEAD names that ref.  As git's
 ; files backend does, a ref left where it was is not logged, but HEAD's
@@ -123,8 +121,8 @@
             (if (< (Str8 length l) 83) ()
               (let ((tab (Str8 index-of "\t" l)))
                 (list (list (Str8 sub 0 40 l) (Str8 sub 41 40 l)
-                            (Str8 sub 82 (%sub (if (null? tab) (Str8 length l) tab) 82) l)
-                            (if (null? tab) "" (Str8 sub (%add tab 1) (%sub (Str8 length l) (%add tab 1)) l)))))))
+                            (Str8 sub 82 (int- (if (null? tab) (Str8 length l) tab) 82) l)
+                            (if (null? tab) "" (Str8 sub (int+ tab 1) (int- (Str8 length l) (int+ tab 1)) l)))))))
           (Str8 split "\n" (File read-all path)))))))
 
 ; A deleted ref's log removed with it.

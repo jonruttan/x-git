@@ -41,8 +41,7 @@
 (import git/reflog git-reflog-append! git-reflog-delete!)
 (import x/type/vector Vector)
 
-(def %add (prim-ref 'int '+))
-(def %sub (prim-ref 'int '-))
+(import x/core/doors int+ int- obj-ref obj-set!)
 
 (def %not-a-repo
   (fn (_) (git-fatal "not a git repository (or any of the parent directories): .git")))
@@ -80,7 +79,7 @@
 (def %header-values
   (fn (_ o key)
     (def prefix (Str8 append key " "))
-    (List map (fn (_ l) (Str8 sub (Str8 length prefix) (%sub (Str8 length l) (Str8 length prefix)) l))
+    (List map (fn (_ l) (Str8 sub (Str8 length prefix) (int- (Str8 length l) (Str8 length prefix)) l))
       (List filter (fn (_ l) (Str8 starts? prefix l)) (%header-lines o)))))
 
 ; The objects an object names, with the path each is at, (SHA . PATH):
@@ -172,12 +171,12 @@
 (def %current-branch
   (fn (_ gitdir)
     (def h (Str8 trim (File read-all (Str8 append gitdir "/HEAD"))))
-    (if (Str8 starts? "ref: refs/heads/" h) (Str8 sub 16 (%sub (Str8 length h) 16) h) ())))
+    (if (Str8 starts? "ref: refs/heads/" h) (Str8 sub 16 (int- (Str8 length h) 16) h) ())))
 
 (def %sorted (fn (_ names) (List sort (fn (_ a b) (Str8 <? a b)) names)))
 
 (def %strip-heads
-  (fn (_ ref) (if (Str8 starts? "refs/heads/" ref) (Str8 sub 11 (%sub (Str8 length ref) 11) ref) ref)))
+  (fn (_ ref) (if (Str8 starts? "refs/heads/" ref) (Str8 sub 11 (int- (Str8 length ref) 11) ref) ref)))
 
 (def %abbrev (fn (_ sha) (Str8 sub 0 7 sha)))
 
@@ -260,23 +259,21 @@
     (if (null? adv) (do (wire-close! w) ())
       (let ((open (Vector make 1 w))
             (refs (List filter (fn (_ e) (not (Str8 ends? "^{}" (first e)))) (first adv)))
-            (peeled (List map (fn (_ e) (pair (Str8 sub 0 (%sub (Str8 length (first e)) 3) (first e)) (rest e)))
+            (peeled (List map (fn (_ e) (pair (Str8 sub 0 (int- (Str8 length (first e)) 3) (first e)) (rest e)))
                       (List filter (fn (_ e) (Str8 ends? "^{}" (first e))) (first adv)))))
         (list refs peeled
               (fn (_ shas)
-                (def w2 (if (null? (%oref open 1)) (proto-connect url "upload-pack" gitdir) (%oref open 1)))
-                (when (null? (%oref open 1))
+                (def w2 (if (null? (obj-ref open 1)) (proto-connect url "upload-pack" gitdir) (obj-ref open 1)))
+                (when (null? (obj-ref open 1))
                   (when (null? (proto-advertise w2)) (do (wire-close! w2) (%fail "the remote went away"))))
-                (%oset! open 1 ())
+                (obj-set! open 1 ())
                 (%fetch-wire! gitdir w2 shas))
               ; the connection never used for objects told there is nothing
               ; wanted of it
               (fn (_)
-                (unless (null? (%oref open 1))
-                  (do (wire-flush! (%oref open 1)) (wire-close! (%oref open 1)) (%oset! open 1 ())))))))))
+                (unless (null? (obj-ref open 1))
+                  (do (wire-flush! (obj-ref open 1)) (wire-close! (obj-ref open 1)) (obj-set! open 1 ())))))))))
 
-(def %oref (prim-ref (lit obj) (lit ref)))
-(def %oset! (prim-ref (lit obj) (lit set!)))
 (def %fail (fn (_ what) (Err raise (lit value) (Str8 append "git: " what) ())))
 
 ; The source a remote's url names: by wire for a url, by path for a
@@ -316,7 +313,7 @@
 ; repository now has: (LINE-PARTS SHA TAG), or ().
 (def %fetch-tag!
   (fn (_ gitdir src name sha action)
-    (def t (Str8 sub 10 (%sub (Str8 length name) 10) name))
+    (def t (Str8 sub 10 (int- (Str8 length name) 10) name))
     (def target (or (%lookup name (first (rest src))) sha))
     (if (and (null? (git-ref-read gitdir name)) (%has? gitdir target))
       (do (unless (%has? gitdir sha) ((first (rest (rest src))) (list sha)))
@@ -329,9 +326,9 @@
 ; slashes dropped, then a trailing .git.
 (def %shown-url
   (fn (_ url)
-    (def n ((fn (self k) (if (and (> k 0) (str=? (Str8 sub (%sub k 1) 1 url) "/")) (self (%sub k 1)) k)) (Str8 length url)))
-    (if (and (> n 4) (str=? (Str8 sub (%sub n 4) 4 url) ".git"))
-      (Str8 sub 0 (%sub n 4) url)
+    (def n ((fn (self k) (if (and (> k 0) (str=? (Str8 sub (int- k 1) 1 url) "/")) (self (int- k 1)) k)) (Str8 length url)))
+    (if (and (> n 4) (str=? (Str8 sub (int- n 4) 4 url) ".git"))
+      (Str8 sub 0 (int- n 4) url)
       (Str8 sub 0 n url))))
 
 (def %fetch
@@ -690,10 +687,10 @@
 (def %refspec
   (fn (_ spec force?)
     (def plus? (Str8 starts? "+" spec))
-    (def s (if plus? (Str8 sub 1 (%sub (Str8 length spec) 1) spec) spec))
+    (def s (if plus? (Str8 sub 1 (int- (Str8 length spec) 1) spec) spec))
     (def colon (Str8 index-of ":" s))
     (if (null? colon) (list (or plus? force?) s ())
-      (list (or plus? force?) (Str8 sub 0 colon s) (Str8 sub (%add colon 1) (%sub (Str8 length s) (%add colon 1)) s)))))
+      (list (or plus? force?) (Str8 sub 0 colon s) (Str8 sub (int+ colon 1) (int- (Str8 length s) (int+ colon 1)) s)))))
 
 ; What a source names here: (REF . SHA), REF the full ref, or () for a
 ; revision that is no ref; () when nothing answers.  A short name is
@@ -727,8 +724,8 @@
 (def %short
   (fn (_ ref)
     (match
-      ((Str8 starts? "refs/heads/" ref) (Str8 sub 11 (%sub (Str8 length ref) 11) ref))
-      ((Str8 starts? "refs/tags/" ref) (Str8 sub 10 (%sub (Str8 length ref) 10) ref))
+      ((Str8 starts? "refs/heads/" ref) (Str8 sub 11 (int- (Str8 length ref) 11) ref))
+      ((Str8 starts? "refs/tags/" ref) (Str8 sub 10 (int- (Str8 length ref) 10) ref))
       (#t ref))))
 
 ; --- push ---

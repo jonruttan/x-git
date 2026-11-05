@@ -22,15 +22,10 @@
 (import git/http http-connect http-refusal http-forget!)
 (import x/sys/posix Sys)
 
-(def %add (prim-ref 'int '+))
-(def %sub (prim-ref 'int '-))
-(def %pref (prim-ref (lit ptr) (lit ref)))
-(def %str->ptr (prim-ref (lit str) (lit ->ptr)))
-(def %ptr->int (prim-ref (lit ptr) (lit ->int)))
-(def %int->ptr (prim-ref (lit int) (lit ->ptr)))
+(import x/core/doors int+ int- ptr-ref str->ptr ptr->int int->ptr str-make ptr-set! mem-copy)
 
-(def %at (fn (_ p off) (%int->ptr (%add (%ptr->int p) off))))
-(def %byte (fn (_ p i) (& (%pref p i 1) 255)))
+(def %at (fn (_ p off) (int->ptr (int+ (ptr->int p) off))))
+(def %byte (fn (_ p i) (& (ptr-ref p i 1) 255)))
 
 (def %fail (fn (_ what) (Err raise (lit value) (Str8 append "git: " what) ())))
 
@@ -52,7 +47,7 @@
 ; ssh or http, the port () when none is named.  () for a path, which is
 ; no url.
 
-(def %tail (fn (_ s n) (Str8 sub n (%sub (Str8 length s) n) s)))
+(def %tail (fn (_ s n) (Str8 sub n (int- (Str8 length s) n) s)))
 
 (def %after-scheme
   (fn (_ url)
@@ -75,7 +70,7 @@
               (let ((colon (Str8 last-index-of ":" authority)))
                 (list (lit http)
                       (if (null? colon) authority (Str8 sub 0 colon authority))
-                      (if (null? colon) () (%tail authority (%add colon 1)))
+                      (if (null? colon) () (%tail authority (int+ colon 1)))
                       (if (null? slash) "/" (%tail after slash))))))))
       ((not (null? rest-ssh))
         (let ((slash (Str8 index-of "/" rest-ssh)))
@@ -84,13 +79,13 @@
             (let ((colon (Str8 last-index-of ":" authority)))
               (list (lit ssh)
                     (if (null? colon) authority (Str8 sub 0 colon authority))
-                    (if (null? colon) () (%tail authority (%add colon 1)))
+                    (if (null? colon) () (%tail authority (int+ colon 1)))
                     ; ssh://host/~user/path names a home directory
                     (if (Str8 starts? "/~" path) (%tail path 1) path))))))
       (#t
         (let ((colon (Str8 index-of ":" url)) (slash (Str8 index-of "/" url)))
           (if (and (not (null? colon)) (> colon 0) (or (null? slash) (< colon slash)))
-            (list (lit ssh) (Str8 sub 0 colon url) () (%tail url (%add colon 1)))
+            (list (lit ssh) (Str8 sub 0 colon url) () (%tail url (int+ colon 1)))
             ()))))))
 
 ; Does the url name a repository reached through a service?
@@ -153,14 +148,14 @@
 (def %ref-entry
   (fn (_ text)
     (when (< (Str8 length text) 42) (%fail (Str8 append "a ref line too short: " text)))
-    (pair (Str8 sub 41 (%sub (Str8 length text) 41) text) (Str8 sub 0 40 text))))
+    (pair (Str8 sub 41 (int- (Str8 length text) 41) text) (Str8 sub 0 40 text))))
 
 ; A text line, or a remote error raised in git's words.
 (def %text-line
   (fn (_ w)
     (def l (wire-line w))
     (when (and (pair? l) (Str8 starts? "ERR " (first l)))
-      (%fail (Str8 append "remote error: " (Str8 sub 4 (%sub (rest l) 4) (first l)))))
+      (%fail (Str8 append "remote error: " (Str8 sub 4 (int- (rest l) 4) (first l)))))
     l))
 
 ; What the service advertises, read to its flush: (REFS CAPS), REFS each
@@ -190,7 +185,7 @@
 (def proto-cap
   (fn (_ caps prefix)
     (def hit (List find (fn (_ c) (Str8 starts? prefix c)) caps))
-    (if (null? hit) () (Str8 sub (Str8 length prefix) (%sub (Str8 length hit) (Str8 length prefix)) hit))))
+    (if (null? hit) () (Str8 sub (Str8 length prefix) (int- (Str8 length hit) (Str8 length prefix)) hit))))
 
 (def %has-cap? (fn (_ caps name) (List any? (fn (_ c) (str=? c name)) caps)))
 
@@ -209,7 +204,7 @@
       ((str=? (first l) "NAK") (pair common ready?))
       ((Str8 starts? "ACK " (first l))
         (let ((sha (Str8 sub 4 40 (first l)))
-              (status (if (> (rest l) 45) (Str8 sub 45 (%sub (rest l) 45) (first l)) "")))
+              (status (if (> (rest l) 45) (Str8 sub 45 (int- (rest l) 45) (first l)) "")))
           (self w (if (%member? sha common) common (pair sha common))
                 (if (str=? status "ready") #t ready?))))
       (#t (%fail (Str8 append "an unexpected reply during negotiation: " (first l)))))))
@@ -226,12 +221,12 @@
          ((eq? pk (lit flush)) (pair (git-bytes-region b) (git-bytes-count b)))
          ((eq? pk (lit delim)) (self))
          (#t
-           (let ((p (%str->ptr (first pk))) (n (rest pk)))
+           (let ((p (str->ptr (first pk))) (n (rest pk)))
              (let ((band (if (> n 0) (%byte p 0) 0)))
                (match
-                 ((= band 1) (do (git-bytes-put! b (%at p 1) (%sub n 1)) (self)))
+                 ((= band 1) (do (git-bytes-put! b (%at p 1) (int- n 1)) (self)))
                  ((= band 2) (self))
-                 ((= band 3) (%fail (Str8 append "remote error: " (Str8 sub 1 (%sub n 1) (first pk)))))
+                 ((= band 3) (%fail (Str8 append "remote error: " (Str8 sub 1 (int- n 1) (first pk)))))
                  (#t (self))))))))
      ())))
 
@@ -249,7 +244,7 @@
             (if (or (null? q) (= k 0)) (pair (List reverse acc) q)
               (if (or (%member? (first q) seen) (%member? (first q) common))
                 (take (rest q) k acc)
-                (take (rest q) (%sub k 1) (pair (first q) acc)))))
+                (take (rest q) (int- k 1) (pair (first q) acc)))))
           queue 32 ()))
        (def haves (first round))
        (List for-each (fn (_ sha) (wire-send! w (Str8 append "have " sha))) haves)
@@ -262,7 +257,7 @@
          (do (wire-flush! w)
              (let ((a (%acks w common #f)))
                (let ((common2 (first a))
-                     (unacked2 (if (= (List length (first a)) (List length common)) (%add unacked (List length haves)) 0)))
+                     (unacked2 (if (= (List length (first a)) (List length common)) (int+ unacked (List length haves)) 0)))
                  (if (or (rest a) (>= unacked2 256))
                    (wire-send! w "done")
                    (self next seen2 common2 unacked2)))))))
@@ -299,29 +294,26 @@
           (Str8 join ""
             (List map (fn (_ l) (Str8 append "remote: " l (if (= (Str8 length l) 0) "" "        ") "\n")) whole)))))))
 
-(def %make-str (prim-ref (lit str) (lit make)))
-(def %pset! (prim-ref (lit ptr) (lit set!)))
-(def %mem-copy (prim-ref (lit mem) (lit copy)))
 
 ; k bytes from start of region r as a string of its own.
 (def %text-of
   (fn (_ r start k)
-    (def s (%make-str (if (= k 0) 1 k)))
-    (if (= k 0) (%pset! (%str->ptr s) 0 0 1) (%mem-copy (%str->ptr s) (%at (%str->ptr r) start) k))
+    (def s (str-make (if (= k 0) 1 k)))
+    (if (= k 0) (ptr-set! (str->ptr s) 0 0 1) (mem-copy (str->ptr s) (%at (str->ptr r) start) k))
     s))
 
 ; The pkt-lines in n bytes of region r, as text with newlines dropped,
 ; up to a flush or the end.
 (def %packets-in
   (fn (_ r n)
-    (def p (%str->ptr r))
+    (def p (str->ptr r))
     ((fn (self i acc)
-       (if (> (%add i 4) n) (List reverse acc)
+       (if (> (int+ i 4) n) (List reverse acc)
          (let ((len (wire-pkt-length p i)))
-           (if (or (< len 4) (> (%add i len) n)) (List reverse acc)
-             (let ((k (%sub len 4)))
-               (let ((k2 (if (and (> k 0) (= (%byte p (%add i (%add 3 k))) 10)) (%sub k 1) k)))
-                 (self (%add i len) (pair (%text-of r (%add i 4) k2) acc))))))))
+           (if (or (< len 4) (> (int+ i len) n)) (List reverse acc)
+             (let ((k (int- len 4)))
+               (let ((k2 (if (and (> k 0) (= (%byte p (int+ i (int+ 3 k))) 10)) (int- k 1) k)))
+                 (self (int+ i len) (pair (%text-of r (int+ i 4) k2) acc))))))))
      0 ())))
 
 (def %command-line
@@ -347,25 +339,25 @@
          ((eq? pk (lit flush)) ())
          ((eq? pk (lit delim)) (self))
          (#t
-           (let ((p (%str->ptr (first pk))) (n (rest pk)))
+           (let ((p (str->ptr (first pk))) (n (rest pk)))
              (let ((band (if (> n 0) (%byte p 0) 0)))
                (match
-                 ((= band 1) (do (git-bytes-put! report (%at p 1) (%sub n 1)) (self)))
-                 ((= band 2) (do (git-bytes-put! said (%at p 1) (%sub n 1)) (self)))
-                 ((= band 3) (%fail (Str8 append "remote error: " (Str8 sub 1 (%sub n 1) (first pk)))))
+                 ((= band 1) (do (git-bytes-put! report (%at p 1) (int- n 1)) (self)))
+                 ((= band 2) (do (git-bytes-put! said (%at p 1) (int- n 1)) (self)))
+                 ((= band 3) (%fail (Str8 append "remote error: " (Str8 sub 1 (int- n 1) (first pk)))))
                  (#t (self))))))))
      ())
     (def lines (%packets-in (git-bytes-region report) (git-bytes-count report)))
     (def unpack (List find (fn (_ l) (Str8 starts? "unpack " l)) lines))
     (list (proto-remote-lines (%text-of (git-bytes-region said) 0 (git-bytes-count said)))
-          (if (null? unpack) "no report" (Str8 sub 7 (%sub (Str8 length unpack) 7) unpack))
+          (if (null? unpack) "no report" (Str8 sub 7 (int- (Str8 length unpack) 7) unpack))
           (List map
             (fn (_ l)
-              (if (Str8 starts? "ok " l) (pair (Str8 sub 3 (%sub (Str8 length l) 3) l) ())
-                (let ((body (Str8 sub 3 (%sub (Str8 length l) 3) l)))
+              (if (Str8 starts? "ok " l) (pair (Str8 sub 3 (int- (Str8 length l) 3) l) ())
+                (let ((body (Str8 sub 3 (int- (Str8 length l) 3) l)))
                   (let ((sp (Str8 index-of " " body)))
                     (if (null? sp) (pair body "rejected")
-                      (pair (Str8 sub 0 sp body) (Str8 sub (%add sp 1) (%sub (Str8 length body) (%add sp 1)) body)))))))
+                      (pair (Str8 sub 0 sp body) (Str8 sub (int+ sp 1) (int- (Str8 length body) (int+ sp 1)) body)))))))
             (List filter (fn (_ l) (or (Str8 starts? "ok " l) (Str8 starts? "ng " l))) lines)))))
 
 ; What git prints after a service that said nothing: the service has said

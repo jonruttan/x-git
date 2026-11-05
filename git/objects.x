@@ -26,25 +26,16 @@
 (import git/packs git-pack-read git-pack-prefix git-pack-has?)
 (import git/quote git-quote-path)
 
-(def %add (prim-ref 'int '+))
-(def %sub (prim-ref 'int '-))
-(def %pref (prim-ref (lit ptr) (lit ref)))
-(def %pset! (prim-ref (lit ptr) (lit set!)))
-(def %make-str (prim-ref (lit str) (lit make)))
-(def %str->ptr (prim-ref (lit str) (lit ->ptr)))
-(def %ptr->int (prim-ref (lit ptr) (lit ->int)))
-(def %int->ptr (prim-ref (lit int) (lit ->ptr)))
-(def %mem-copy (prim-ref (lit mem) (lit copy)))
-(def %str-byte-len (prim-ref (lit str) (lit byte-len)))
+(import x/core/doors int+ int- ptr-ref ptr-set! str-make str->ptr ptr->int int->ptr mem-copy str-byte-len)
 
-(def %at (fn (_ p off) (%int->ptr (%add (%ptr->int p) off))))
-(def %byte (fn (_ p i) (& (%pref p i 1) 255)))
+(def %at (fn (_ p off) (int->ptr (int+ (ptr->int p) off))))
+(def %byte (fn (_ p i) (& (ptr-ref p i 1) 255)))
 
 ; The k bytes from byte `start` of region r, as a fresh string.
 (def %bytes->string
   (fn (_ r start k)
-    (def s (%make-str k))
-    (when (> k 0) (%mem-copy (%str->ptr s) (%at (%str->ptr r) start) k))
+    (def s (str-make k))
+    (when (> k 0) (mem-copy (str->ptr s) (%at (str->ptr r) start) k))
     s))
 
 ; The index of the first byte b at or past i in region r, or () before end.
@@ -52,8 +43,8 @@
   (fn (self r i end b)
     (match
       ((>= i end) ())
-      ((= (%byte (%str->ptr r) i) b) i)
-      (#t (self r (%add i 1) end b)))))
+      ((= (%byte (str->ptr r) i) b) i)
+      (#t (self r (int+ i 1) end b)))))
 
 ; A whole file as (REGION . SIZE): the size from stat, since a region's own
 ; length stops at a NUL.
@@ -104,13 +95,13 @@
 (def %assemble
   (fn (_ type src start n)
     (def hdr (Str8 append type " " (Str8 str n)))
-    (def hlen (%str-byte-len hdr))
-    (def total (%add (%add hlen 1) n))
-    (def r (%make-str total))
-    (def p (%str->ptr r))
-    (%mem-copy p (%str->ptr hdr) hlen)
-    (%pset! p hlen 0 1)
-    (when (> n 0) (%mem-copy (%at p (%add hlen 1)) (%at (%str->ptr src) start) n))
+    (def hlen (str-byte-len hdr))
+    (def total (int+ (int+ hlen 1) n))
+    (def r (str-make total))
+    (def p (str->ptr r))
+    (mem-copy p (str->ptr hdr) hlen)
+    (ptr-set! p hlen 0 1)
+    (when (> n 0) (mem-copy (%at p (int+ hlen 1)) (%at (str->ptr src) start) n))
     (pair r total)))
 
 ; The name of an object of type with n bytes of body from byte `start` of
@@ -149,10 +140,10 @@
                 (do (when (null? nul)
                       (Err raise (lit value) (Str8 append "git: malformed loose object " sha) ()))
                     (let ((type (%bytes->string out 0 sp))
-                          (size (%str->number (%bytes->string out (%add sp 1) (%sub (%sub nul sp) 1)) 10)))
-                      (do (unless (= size (%sub n (%add nul 1)))
+                          (size (%str->number (%bytes->string out (int+ sp 1) (int- (int- nul sp) 1)) 10)))
+                      (do (unless (= size (int- n (int+ nul 1)))
                             (Err raise (lit value) (Str8 append "git: loose object size disagrees " sha) ()))
-                          (list type size out (%add nul 1)))))))))))))
+                          (list type size out (int+ nul 1)))))))))))))
 
 ; --- names ---
 
@@ -161,15 +152,15 @@
 
 (def %hex-text?
   (fn (_ s)
-    (def p (%str->ptr s))
-    (def n (%str-byte-len s))
-    ((fn (self i) (if (>= i n) #t (if (%hex-digit? (%byte p i)) (self (%add i 1)) #f))) 0)))
+    (def p (str->ptr s))
+    (def n (str-byte-len s))
+    ((fn (self i) (if (>= i n) #t (if (%hex-digit? (%byte p i)) (self (int+ i 1)) #f))) 0)))
 
 ; The loose names a hex prefix begins, in full.
 (def %loose-prefix
   (fn (_ gitdir name)
     (def dir (Str8 append gitdir "/objects/" (Str8 sub 0 2 name)))
-    (def tail (Str8 sub 2 (%sub (%str-byte-len name) 2) name))
+    (def tail (Str8 sub 2 (int- (str-byte-len name) 2) name))
     (if (not (File exists? dir)) ()
       (List map (fn (_ f) (Str8 append (Str8 sub 0 2 name) f))
         (List filter (fn (_ f) (Str8 starts? tail f)) (File list-dir dir))))))
@@ -187,7 +178,7 @@
 ; starts with.  () otherwise.  Refs are not read yet.
 (def git-resolve
   (fn (_ gitdir name)
-    (def n (%str-byte-len name))
+    (def n (str-byte-len name))
     (match
       ((not (%hex-text? name)) ())
       ((= n 40) (if (or (File exists? (%object-path gitdir name)) (git-pack-has? gitdir name)) name ()))
@@ -210,9 +201,9 @@
 ; The 20 raw bytes at i of region r, in hex.
 (def %sha-hex
   (fn (_ r i)
-    (def p (%str->ptr r))
+    (def p (str->ptr r))
     (Hex encode-bytes
-      ((fn (self k acc) (if (< k 0) acc (self (%sub k 1) (pair (%byte p (%add i k)) acc)))) 19 ()))))
+      ((fn (self k acc) (if (< k 0) acc (self (int- k 1) (pair (%byte p (int+ i k)) acc)))) 19 ()))))
 
 ; A tree object's entries, in order: (MODE NAME SHA) each, MODE as the
 ; tree spells it, SHA in hex.  o is (TYPE SIZE REGION START).
@@ -220,16 +211,16 @@
   (fn (_ o)
     (def r (first (rest (rest o))))
     (def start (first (rest (rest (rest o)))))
-    (def end (%add start (first (rest o))))
+    (def end (int+ start (first (rest o))))
     (List reverse
       ((fn (self i acc)
          (if (>= i end) acc
            (let ((sp (%find-byte r i end 32)))
              (let ((nul (%find-byte r sp end 0)))
-               (self (%add nul 21)
-                 (pair (list (%bytes->string r i (%sub sp i))
-                             (%bytes->string r (%add sp 1) (%sub (%sub nul sp) 1))
-                             (%sha-hex r (%add nul 1)))
+               (self (int+ nul 21)
+                 (pair (list (%bytes->string r i (int- sp i))
+                             (%bytes->string r (int+ sp 1) (int- (int- nul sp) 1))
+                             (%sha-hex r (int+ nul 1)))
                        acc))))))
        start ()))))
 
@@ -254,7 +245,7 @@
   (fn (_ gitdir sha)
     (def text (git-object-text (git-object-read gitdir sha)))
     (def i (Str8 index-of "\n\n" text))
-    (if (null? i) "" (first (Str8 split "\n" (Str8 sub (%add i 2) (%sub (Str8 length text) (%add i 2)) text))))))
+    (if (null? i) "" (first (Str8 split "\n" (Str8 sub (int+ i 2) (int- (Str8 length text) (int+ i 2)) text))))))
 
 (provide git/objects git-dir git-parent git-read-file git-write-file! git-hash
   git-object-write! git-object-read git-resolve git-tree-pretty git-tree-entries git-object-text

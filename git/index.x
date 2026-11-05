@@ -23,28 +23,20 @@
 (import git/ignore git-ignorer)
 (import git/quote git-quote-path git-quote-path-sp)
 
-(def %add (prim-ref 'int '+))
-(def %sub (prim-ref 'int '-))
-(def %mul (prim-ref 'int '*))
-(def %pref (prim-ref (lit ptr) (lit ref)))
-(def %make-str (prim-ref (lit str) (lit make)))
-(def %str->ptr (prim-ref (lit str) (lit ->ptr)))
-(def %ptr->int (prim-ref (lit ptr) (lit ->int)))
-(def %int->ptr (prim-ref (lit int) (lit ->ptr)))
-(def %mem-copy (prim-ref (lit mem) (lit copy)))
+(import x/core/doors int+ int- int* ptr-ref str-make str->ptr ptr->int int->ptr mem-copy)
 (def %cvt (prim-ref (lit convert) (lit to)))
 (def %string-type (Type named STRING))
 
-(def %byte (fn (_ p i) (& (%pref p i 1) 255)))
+(def %byte (fn (_ p i) (& (ptr-ref p i 1) 255)))
 (def %u32
   (fn (_ p i)
-    (| (<< (%byte p i) 24) (| (<< (%byte p (%add i 1)) 16) (| (<< (%byte p (%add i 2)) 8) (%byte p (%add i 3)))))))
-(def %u16 (fn (_ p i) (| (<< (%byte p i) 8) (%byte p (%add i 1)))))
+    (| (<< (%byte p i) 24) (| (<< (%byte p (int+ i 1)) 16) (| (<< (%byte p (int+ i 2)) 8) (%byte p (int+ i 3)))))))
+(def %u16 (fn (_ p i) (| (<< (%byte p i) 8) (%byte p (int+ i 1)))))
 
 (def %bytes->string
   (fn (_ p start k)
-    (def s (%make-str k))
-    (when (> k 0) (%mem-copy (%str->ptr s) (%int->ptr (%add (%ptr->int p) start)) k))
+    (def s (str-make k))
+    (when (> k 0) (mem-copy (str->ptr s) (int->ptr (int+ (ptr->int p) start)) k))
     s))
 
 (def %hex-digits "0123456789abcdef")
@@ -53,8 +45,8 @@
     (Str8 join ""
       ((fn (self k acc)
          (if (< k 0) acc
-           (let ((b (%byte p (%add i k))))
-             (self (%sub k 1) (pair (Str8 append (Str8 sub (>> b 4) 1 %hex-digits) (Str8 sub (& b 15) 1 %hex-digits)) acc)))))
+           (let ((b (%byte p (int+ i k))))
+             (self (int- k 1) (pair (Str8 append (Str8 sub (>> b 4) 1 %hex-digits) (Str8 sub (& b 15) 1 %hex-digits)) acc)))))
        19 ()))))
 
 ; --- the index ---
@@ -67,7 +59,7 @@
     (def path (Str8 append gitdir "/index"))
     (if (not (File exists? path)) ()
       (let ((f (git-read-file path)))
-        (let ((p (%str->ptr (first f))) (n (rest f)))
+        (let ((p (str->ptr (first f))) (n (rest f)))
           (do (unless (and (>= n 12) (= (%byte p 0) 68) (= (%byte p 1) 73) (= (%byte p 2) 82) (= (%byte p 3) 67))
                 (Err raise (lit value) "git: index file is not DIRC" ()))
               (let ((version (%u32 p 4)) (count (%u32 p 8)))
@@ -75,20 +67,20 @@
                       (Err raise (lit value) (Str8 append "git: index version " (Str8 str version) " is not read") ()))
                     ((fn (self i k acc)
                        (if (>= k count) (List reverse acc)
-                         (let ((flags (%u16 p (%add i 60))))
+                         (let ((flags (%u16 p (int+ i 60))))
                            (let ((extended? (and (= version 3) (not (= (& flags 16384) 0)))))
-                             (let ((name-at (%add i (if extended? 64 62)))
+                             (let ((name-at (int+ i (if extended? 64 62)))
                                    (namelen (& flags 4095)))
                                (let ((len (if (< namelen 4095) namelen
-                                            ((fn (scan j) (if (= (%byte p j) 0) (%sub j name-at) (scan (%add j 1)))) name-at))))
+                                            ((fn (scan j) (if (= (%byte p j) 0) (int- j name-at) (scan (int+ j 1)))) name-at))))
                                  (let ((entry (list (%bytes->string p name-at len)
-                                                    (%cvt (%u32 p (%add i 24)) %string-type 8)
-                                                    (%sha-hex p (%add i 40))
+                                                    (%cvt (%u32 p (int+ i 24)) %string-type 8)
+                                                    (%sha-hex p (int+ i 40))
                                                     (& (>> flags 12) 3)
-                                                    (%u32 p (%add i 36))
-                                                    (%u32 p (%add i 8))))
-                                       (total (& (%add (%add (%sub name-at i) len) 8) (~ 7))))
-                                   (self (%add i total) (%add k 1) (pair entry acc)))))))))
+                                                    (%u32 p (int+ i 36))
+                                                    (%u32 p (int+ i 8))))
+                                       (total (& (int+ (int+ (int- name-at i) len) 8) (~ 7))))
+                                   (self (int+ i total) (int+ k 1) (pair entry acc)))))))))
                      12 0 ())))))))))
 
 ; --- the HEAD tree, flat ---
@@ -248,7 +240,7 @@
   (fn (_ gitdir)
     (def head (Str8 trim (File read-all (Str8 append gitdir "/HEAD"))))
     (if (Str8 starts? "ref: refs/heads/" head)
-      (Str8 append "On branch " (Str8 sub 16 (%sub (Str8 length head) 16) head) "\n")
+      (Str8 append "On branch " (Str8 sub 16 (int- (Str8 length head) 16) head) "\n")
       (Str8 append "HEAD detached at " (Str8 sub 0 7 head) "\n"))))
 
 (def %code-word
@@ -360,7 +352,7 @@
         (match
           ((str=? w "--ignored") (lit traditional))
           ((Str8 starts? "--ignored=" w)
-            (let ((v (Str8 sub 10 (%sub (Str8 length w) 10) w)))
+            (let ((v (Str8 sub 10 (int- (Str8 length w) 10) w)))
               (match ((str=? v "traditional") (lit traditional)) ((str=? v "matching") (lit matching))
                      ((str=? v "no") (lit no)) (#t (pair (lit bad) v)))))
           (#t m)))

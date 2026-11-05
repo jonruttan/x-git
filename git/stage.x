@@ -33,38 +33,29 @@
 (import git/ident git-signature)
 (import git/reflog git-ref-log!)
 
-(def %add (prim-ref 'int '+))
-(def %sub (prim-ref 'int '-))
-(def %mul (prim-ref 'int '*))
-(def %pset! (prim-ref (lit ptr) (lit set!)))
-(def %make-str (prim-ref (lit str) (lit make)))
-(def %str->ptr (prim-ref (lit str) (lit ->ptr)))
-(def %ptr->int (prim-ref (lit ptr) (lit ->int)))
-(def %int->ptr (prim-ref (lit int) (lit ->ptr)))
-(def %mem-copy (prim-ref (lit mem) (lit copy)))
-(def %str-byte-len (prim-ref (lit str) (lit byte-len)))
+(import x/core/doors int+ int- int* ptr-set! str-make str->ptr ptr->int int->ptr mem-copy str-byte-len int/ int%)
 
-(def %at (fn (_ p off) (%int->ptr (%add (%ptr->int p) off))))
+(def %at (fn (_ p off) (int->ptr (int+ (ptr->int p) off))))
 
 ; --- bytes ---
 
 (def %put-u32!
   (fn (_ p i v)
-    (%pset! p i (& (>> v 24) 255) 1)
-    (%pset! p (%add i 1) (& (>> v 16) 255) 1)
-    (%pset! p (%add i 2) (& (>> v 8) 255) 1)
-    (%pset! p (%add i 3) (& v 255) 1)))
+    (ptr-set! p i (& (>> v 24) 255) 1)
+    (ptr-set! p (int+ i 1) (& (>> v 16) 255) 1)
+    (ptr-set! p (int+ i 2) (& (>> v 8) 255) 1)
+    (ptr-set! p (int+ i 3) (& v 255) 1)))
 
 ; A hex name's 20 raw bytes written at i of p.
 (def %put-sha!
   (fn (_ p i hex)
-    ((fn (self k l) (unless (null? l) (do (%pset! p (%add i k) (first l) 1) (self (%add k 1) (rest l)))))
+    ((fn (self k l) (unless (null? l) (do (ptr-set! p (int+ i k) (first l) 1) (self (int+ k 1) (rest l)))))
      0 (Hex decode-bytes hex))))
 
 (def %put-str!
   (fn (_ p i s)
-    (def n (%str-byte-len s))
-    (when (> n 0) (%mem-copy (%at p i) (%str->ptr s) n))
+    (def n (str-byte-len s))
+    (when (> n 0) (mem-copy (%at p i) (str->ptr s) n))
     n))
 
 ; --- the index written ---
@@ -84,10 +75,10 @@
 ; bytes: (REGION . N).
 (def %index-bytes
   (fn (_ entries)
-    (def sizes (List map (fn (_ e) (& (%add (%add 62 (%str-byte-len (first e))) 8) (~ 7))) entries))
-    (def total (%add (%add 12 (List fold (fn (_ a b) (%add a b)) 0 sizes)) 20))
-    (def r (%make-str total))
-    (def p (%str->ptr r))
+    (def sizes (List map (fn (_ e) (& (int+ (int+ 62 (str-byte-len (first e))) 8) (~ 7))) entries))
+    (def total (int+ (int+ 12 (List fold (fn (_ a b) (int+ a b)) 0 sizes)) 20))
+    (def r (str-make total))
+    (def p (str->ptr r))
     (%put-str! p 0 "DIRC")
     (%put-u32! p 4 2)
     (%put-u32! p 8 (List length entries))
@@ -95,28 +86,28 @@
        (unless (null? es)
          (let ((e (first es)))
            (do (%put-u32! p i (first (rest (rest (rest (rest e))))))          ; ctime: the mtime
-               (%put-u32! p (%add i 4) 0)
-               (%put-u32! p (%add i 8) (first (rest (rest (rest (rest e))))))  ; mtime
-               (%put-u32! p (%add i 12) 0)
-               (%put-u32! p (%add i 16) 0)                                    ; dev
-               (%put-u32! p (%add i 20) 0)                                    ; ino
-               (%put-u32! p (%add i 24) (first (rest e)))                     ; mode
-               (%put-u32! p (%add i 28) 0)                                    ; uid
-               (%put-u32! p (%add i 32) 0)                                    ; gid
-               (%put-u32! p (%add i 36) (first (rest (rest (rest e)))))        ; size
-               (%put-sha! p (%add i 40) (first (rest (rest e))))
+               (%put-u32! p (int+ i 4) 0)
+               (%put-u32! p (int+ i 8) (first (rest (rest (rest (rest e))))))  ; mtime
+               (%put-u32! p (int+ i 12) 0)
+               (%put-u32! p (int+ i 16) 0)                                    ; dev
+               (%put-u32! p (int+ i 20) 0)                                    ; ino
+               (%put-u32! p (int+ i 24) (first (rest e)))                     ; mode
+               (%put-u32! p (int+ i 28) 0)                                    ; uid
+               (%put-u32! p (int+ i 32) 0)                                    ; gid
+               (%put-u32! p (int+ i 36) (first (rest (rest (rest e)))))        ; size
+               (%put-sha! p (int+ i 40) (first (rest (rest e))))
                ; the flags: the stage in bits 12-13, the name's length below
-               (%pset! p (%add i 60) (| (<< (%entry-stage e) 4) (>> (%str-byte-len (first e)) 8)) 1)
-               (%pset! p (%add i 61) (& (%str-byte-len (first e)) 255) 1)
-               (%put-str! p (%add i 62) (first e))
+               (ptr-set! p (int+ i 60) (| (<< (%entry-stage e) 4) (>> (str-byte-len (first e)) 8)) 1)
+               (ptr-set! p (int+ i 61) (& (str-byte-len (first e)) 255) 1)
+               (%put-str! p (int+ i 62) (first e))
                ; the name's NUL and the padding to eight: a fresh region is
                ; not zeroed, and git reads the name to its NUL
-               (let ((next (%add i (& (%add (%add 62 (%str-byte-len (first e))) 8) (~ 7)))))
-                 (do ((fn (zero j) (when (< j next) (do (%pset! p j 0 1) (zero (%add j 1)))))
-                      (%add (%add i 62) (%str-byte-len (first e))))
+               (let ((next (int+ i (& (int+ (int+ 62 (str-byte-len (first e))) 8) (~ 7)))))
+                 (do ((fn (zero j) (when (< j next) (do (ptr-set! p j 0 1) (zero (int+ j 1)))))
+                      (int+ (int+ i 62) (str-byte-len (first e))))
                      (self (rest es) next)))))))
      entries 12)
-    (%put-sha! p (%sub total 20) (Sha1 hex-n r (%sub total 20)))
+    (%put-sha! p (int- total 20) (Sha1 hex-n r (int- total 20)))
     (pair r total)))
 
 ; The index written from entries, replacing what is there.
@@ -266,7 +257,7 @@
     (def names
       ((fn (walk es acc)
          (if (null? es) (List reverse acc)
-           (let ((rel (Str8 sub plen (%sub (Str8 length (first (first es))) plen) (first (first es)))))
+           (let ((rel (Str8 sub plen (int- (Str8 length (first (first es))) plen) (first (first es)))))
              (let ((i (Str8 index-of "/" rel)))
                (let ((item (if (null? i)
                              (list (%cvt-mode (first (rest (first es)))) rel (first (rest (rest (first es)))))
@@ -282,18 +273,18 @@
             item))
         names))
     (def sorted (List sort %tree-name<? resolved))
-    (def size (List fold (fn (_ a it) (%add a (%add (%add (%add (Str8 length (first it)) 1) (%add (Str8 length (first (rest it))) 1)) 20))) 0 sorted))
-    (def r (%make-str (if (= size 0) 1 size)))
-    (def p (%str->ptr r))
+    (def size (List fold (fn (_ a it) (int+ a (int+ (int+ (int+ (Str8 length (first it)) 1) (int+ (Str8 length (first (rest it))) 1)) 20))) 0 sorted))
+    (def r (str-make (if (= size 0) 1 size)))
+    (def p (str->ptr r))
     ((fn (walk its i)
        (unless (null? its)
          (let ((it (first its)))
-           (let ((j (%add i (%put-str! p i (first it)))))
-             (do (%pset! p j 32 1)
-                 (let ((k (%add (%add j 1) (%put-str! p (%add j 1) (first (rest it))))))
-                   (do (%pset! p k 0 1)
-                       (%put-sha! p (%add k 1) (first (rest (rest it))))
-                       (walk (rest its) (%add k 21)))))))))
+           (let ((j (int+ i (%put-str! p i (first it)))))
+             (do (ptr-set! p j 32 1)
+                 (let ((k (int+ (int+ j 1) (%put-str! p (int+ j 1) (first (rest it))))))
+                   (do (ptr-set! p k 0 1)
+                       (%put-sha! p (int+ k 1) (first (rest (rest it))))
+                       (walk (rest its) (int+ k 21)))))))))
      sorted 0)
     (git-object-write! gitdir "tree" r 0 size)))
 
@@ -301,8 +292,6 @@
 (def %cvt-mode
   (fn (_ n) ((prim-ref (lit convert) (lit to)) n (Type named STRING) 8)))
 
-(def %int-div (prim-ref (lit int) (lit /)))
-(def %int-mod (prim-ref (lit int) (lit %)))
 
 ; A commit object written: its tree, its parents, its message, the author
 ; and committer as git finds them.  Answers its name, or () when the
@@ -317,7 +306,7 @@
                     "author " author "\n"
                     "committer " committer "\n"
                     "\n" message (if (Str8 ends? "\n" message) "" "\n"))))
-        (git-object-write! gitdir "commit" body 0 (%str-byte-len body))))))
+        (git-object-write! gitdir "commit" body 0 (str-byte-len body))))))
 
 ; The merge in progress: the commits MERGE_HEAD names, or () when none.
 (def %merge-heads
@@ -341,7 +330,7 @@
   (fn (_ text)
     (def kept (List filter (fn (_ l) (not (Str8 starts? "#" l))) (Str8 split "\n" text)))
     (def trimmed
-      ((fn (self ls) (if (and (not (null? ls)) (= (Str8 length (Str8 trim (List last ls))) 0)) (self (List take (%sub (List length ls) 1) ls)) ls))
+      ((fn (self ls) (if (and (not (null? ls)) (= (Str8 length (Str8 trim (List last ls))) 0)) (self (List take (int- (List length ls) 1) ls)) ls))
        kept))
     (if (null? trimmed) "" (Str8 append (Str8 join "\n" trimmed) "\n"))))
 
@@ -408,8 +397,8 @@
             (if (and (null? merging) (not (null? parent-tree)) (str=? tree parent-tree))
               (list (lit out) (git-long-status gitdir (git-status-lists wd gitdir)) 1)
               (let ((sha (git-commit-write! gitdir tree (List append (if (null? parent) () (list parent)) merging) msg))
-                    (branch (if (Str8 starts? "ref: refs/heads/" head) (Str8 sub 16 (%sub (Str8 length head) 16) head) ())))
-                (do (def ref-path (if (null? branch) (Str8 append gitdir "/HEAD") (Str8 append gitdir "/" (Str8 sub 5 (%sub (Str8 length head) 5) head))))
+                    (branch (if (Str8 starts? "ref: refs/heads/" head) (Str8 sub 16 (int- (Str8 length head) 16) head) ())))
+                (do (def ref-path (if (null? branch) (Str8 append gitdir "/HEAD") (Str8 append gitdir "/" (Str8 sub 5 (int- (Str8 length head) 5) head))))
                     ; replaced, not rewritten: the file before it may be read-only
                     (when (File exists? ref-path) (File unlink ref-path))
                     (git-write-file! ref-path (Str8 append sha "\n") 41)

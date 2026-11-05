@@ -20,43 +20,40 @@
 
 (def %root (Sys getenv "HT_ROOT"))
 (def %dir (Sys getenv "HT_DIR"))
-(def %pref (prim-ref (lit ptr) (lit ref)))
-(def %ptr (prim-ref (lit str) (lit ->ptr)))
-(def %make (prim-ref (lit str) (lit make)))
-(def %copy (prim-ref (lit mem) (lit copy)))
+(import x/core/doors ptr-ref str->ptr str-make mem-copy)
 (def %at (fn (_ p off) ((prim-ref (lit int) (lit ->ptr)) (+ ((prim-ref (lit ptr) (lit ->int)) p) off))))
 
 ; A growing buffer: (REGION . COUNT) in a vector's two slots.
-(def %buf (fn (_) (let ((v (Vector make 2 0))) (do (Vector set! 0 (%make 65536) v) (Vector set! 1 0 v) v))))
+(def %buf (fn (_) (let ((v (Vector make 2 0))) (do (Vector set! 0 (str-make 65536) v) (Vector set! 1 0 v) v))))
 (def %put!
   (fn (_ b p n)
     (def have (Vector ref 1 b))
     (def cap (Str8 length (Vector ref 0 b)))
     (when (> (+ have n) cap)
-      (let ((r (%make (* 2 (+ have n)))))
-        (do (%copy (%ptr r) (%ptr (Vector ref 0 b)) have) (Vector set! 0 r b))))
-    (%copy (%at (%ptr (Vector ref 0 b)) have) p n)
+      (let ((r (str-make (* 2 (+ have n)))))
+        (do (mem-copy (str->ptr r) (str->ptr (Vector ref 0 b)) have) (Vector set! 0 r b))))
+    (mem-copy (%at (str->ptr (Vector ref 0 b)) have) p n)
     (Vector set! 1 (+ have n) b)))
 
 ; Where "\r\n\r\n" starts in the buffer, or ().
 (def %blank
   (fn (_ b)
-    (def p (%ptr (Vector ref 0 b)))
+    (def p (str->ptr (Vector ref 0 b)))
     (def n (Vector ref 1 b))
     ((fn (self i)
        (match ((> (+ i 4) n) ())
-              ((and (= (%pref p i 1) 13) (= (%pref p (+ i 1) 1) 10) (= (%pref p (+ i 2) 1) 13) (= (%pref p (+ i 3) 1) 10)) i)
+              ((and (= (ptr-ref p i 1) 13) (= (ptr-ref p (+ i 1) 1) 10) (= (ptr-ref p (+ i 2) 1) 13) (= (ptr-ref p (+ i 3) 1) 10)) i)
               (#t (self (+ i 1)))))
      0)))
 
-(def %text (fn (_ b k) (let ((s (%make (+ k 1)))) (do (%copy (%ptr s) (%ptr (Vector ref 0 b)) k) (Str8 sub 0 k s)))))
+(def %text (fn (_ b k) (let ((s (str-make (+ k 1)))) (do (mem-copy (str->ptr s) (str->ptr (Vector ref 0 b)) k) (Str8 sub 0 k s)))))
 
 ; k bytes from at of the buffer written to path.
 (def %write-out
   (fn (_ b at k path)
     (def fd (File open path (list (lit wronly) (lit creat) (lit trunc)) 420))
     (when (> k 0)
-      (let ((s (%make k))) (do (%copy (%ptr s) (%at (%ptr (Vector ref 0 b)) at) k) (File write fd s k))))
+      (let ((s (str-make k))) (do (mem-copy (str->ptr s) (%at (str->ptr (Vector ref 0 b)) at) k) (File write fd s k))))
     (File close fd)))
 
 ; A file's bytes into a buffer.
@@ -64,8 +61,8 @@
   (fn (_ path)
     (def b (%buf))
     (def fd (File open path (lit rdonly)))
-    (def chunk (%make 65536))
-    ((fn (self) (let ((got (File read fd chunk 65536))) (when (> got 0) (do (%put! b (%ptr chunk) got) (self))))))
+    (def chunk (str-make 65536))
+    ((fn (self) (let ((got (File read fd chunk 65536))) (when (> got 0) (do (%put! b (str->ptr chunk) got) (self))))))
     (File close fd)
     b))
 
@@ -80,9 +77,9 @@
          (let ((at (%blank b)))
            (match
              ((not (null? at)) at)
-             ((and (> (Vector ref 1 b) 0) (= (%pref (%ptr (Vector ref 0 b)) 0 1) 22)) ())
+             ((and (> (Vector ref 1 b) 0) (= (ptr-ref (str->ptr (Vector ref 0 b)) 0 1) 22)) ())
              (#t (let ((run (Socket recv-run c 65536)))
-                   (if (null? run) () (do (%put! b (%ptr (first run)) (rest run)) (self))))))))))
+                   (if (null? run) () (do (%put! b (str->ptr (first run)) (rest run)) (self))))))))))
     (if (null? head-end) (Socket close c) (%answer c b head-end))))
 
 ; The request whose head ends at head-end in b answered on c.
@@ -99,7 +96,7 @@
     (def want (let ((cl (header "content-length"))) (if (= (Str8 length cl) 0) 0 (%str->number cl 10))))
     ((fn (self)
        (when (< (Vector ref 1 b) (+ head-end 4 want))
-         (let ((run (Socket recv-run c 65536))) (unless (null? run) (do (%put! b (%ptr (first run)) (rest run)) (self)))))))
+         (let ((run (Socket recv-run c 65536))) (unless (null? run) (do (%put! b (str->ptr (first run)) (rest run)) (self)))))))
     (%write-out b (+ head-end 4) want (Str8 append %dir "/body"))
     (List for-each (fn (_ e) (Sys setenv (first e) (rest e)))
       (list (pair "GIT_PROJECT_ROOT" %root) (pair "GIT_HTTP_EXPORT_ALL" "1")
@@ -118,7 +115,7 @@
         (Str8 join "" (List map (fn (_ l) (Str8 append l "\r\n")) (List filter (fn (_ l) (not (Str8 starts? "Status:" l))) cgi)))
         "Content-Length: " (Str8 str n) "\r\nConnection: close\r\n\r\n"))
     (when (> n 0)
-      (let ((s (%make n))) (do (%copy (%ptr s) (%at (%ptr (Vector ref 0 out)) (+ cgi-end 4)) n) (Socket send-run c s n))))
+      (let ((s (str-make n))) (do (mem-copy (str->ptr s) (%at (str->ptr (Vector ref 0 out)) (+ cgi-end 4)) n) (Socket send-run c s n))))
     (Socket close c)))
 
 (def %listen (Socket tcp-listen-on "127.0.0.1" 0))

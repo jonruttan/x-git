@@ -21,8 +21,7 @@
 (import git/config git-config-value)
 (import git/reflog git-reflog-append! git-reflog-delete!)
 
-(def %add (prim-ref 'int '+))
-(def %sub (prim-ref 'int '-))
+(import x/core/doors int+ int-)
 
 ; --- init ---
 
@@ -85,7 +84,7 @@
                    (match
                      ((null? ls) (List reverse acc))
                      ((and drop-peel (Str8 starts? "^" (first ls))) (self (rest ls) #f acc))
-                     ((and (> (Str8 length (first ls)) 41) (str=? (Str8 sub 41 (%sub (Str8 length (first ls)) 41) (first ls)) full))
+                     ((and (> (Str8 length (first ls)) 41) (str=? (Str8 sub 41 (int- (Str8 length (first ls)) 41) (first ls)) full))
                        (self (rest ls) #t acc))
                      (#t (self (rest ls) #f (pair (first ls) acc)))))
                  lines #f ())))
@@ -94,7 +93,7 @@
 (def %current-branch
   (fn (_ gitdir)
     (def head (Str8 trim (File read-all (Str8 append gitdir "/HEAD"))))
-    (if (Str8 starts? "ref: refs/heads/" head) (Str8 sub 16 (%sub (Str8 length head) 16) head) ())))
+    (if (Str8 starts? "ref: refs/heads/" head) (Str8 sub 16 (int- (Str8 length head) 16) head) ())))
 
 ; A ref made at a revision's object, or deleted; the list of them when
 ; nothing is named.  kind is "branch" or "tag", prefix its directory.

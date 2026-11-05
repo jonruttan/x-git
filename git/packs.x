@@ -29,20 +29,10 @@
 (import x/codec/hex Hex)
 (import git/delta delta-index delta-make)
 
-(def %add (prim-ref 'int '+))
-(def %sub (prim-ref 'int '-))
-(def %mul (prim-ref 'int '*))
-(def %pref (prim-ref (lit ptr) (lit ref)))
-(def %pset! (prim-ref (lit ptr) (lit set!)))
-(def %make-str (prim-ref (lit str) (lit make)))
-(def %str->ptr (prim-ref (lit str) (lit ->ptr)))
-(def %ptr->int (prim-ref (lit ptr) (lit ->int)))
-(def %int->ptr (prim-ref (lit int) (lit ->ptr)))
-(def %mem-copy (prim-ref (lit mem) (lit copy)))
-(def %mem-cmp (prim-ref (lit mem) (lit cmp)))
+(import x/core/doors int+ int- int* ptr-ref ptr-set! str-make str->ptr ptr->int int->ptr mem-copy mem-cmp obj-ref obj-set! str-byte-len int/)
 
-(def %at (fn (_ p off) (%int->ptr (%add (%ptr->int p) off))))
-(def %byte (fn (_ p i) (& (%pref p i 1) 255)))
+(def %at (fn (_ p off) (int->ptr (int+ (ptr->int p) off))))
+(def %byte (fn (_ p i) (& (ptr-ref p i 1) 255)))
 
 (def %fail (fn (_ what) (Err raise (lit value) (Str8 append "git: " what) ())))
 
@@ -51,7 +41,7 @@
 (def %pread
   (fn (_ fd off n)
     (File seek fd off (lit set))
-    (def r (%make-str n))
+    (def r (str-make n))
     (def got (File read fd r n))
     (pair r (if (< got 0) 0 got))))
 
@@ -59,25 +49,25 @@
 (def %u32
   (fn (_ p i)
     (| (<< (%byte p i) 24)
-       (| (<< (%byte p (%add i 1)) 16)
-          (| (<< (%byte p (%add i 2)) 8) (%byte p (%add i 3)))))))
+       (| (<< (%byte p (int+ i 1)) 16)
+          (| (<< (%byte p (int+ i 2)) 8) (%byte p (int+ i 3)))))))
 
 (def %u64
-  (fn (_ p i) (| (<< (%u32 p i) 32) (%u32 p (%add i 4)))))
+  (fn (_ p i) (| (<< (%u32 p i) 32) (%u32 p (int+ i 4)))))
 
 ; The 20 raw bytes of a hex name, as a region.
 (def %sha-raw
   (fn (_ hex)
     (def bytes (Hex decode-bytes hex))
-    (def r (%make-str 20))
-    (def p (%str->ptr r))
-    ((fn (self i l) (unless (null? l) (do (%pset! p i (first l) 1) (self (%add i 1) (rest l))))) 0 bytes)
+    (def r (str-make 20))
+    (def p (str->ptr r))
+    ((fn (self i l) (unless (null? l) (do (ptr-set! p i (first l) 1) (self (int+ i 1) (rest l))))) 0 bytes)
     r))
 
 (def %sha-hex
   (fn (_ p i)
     (Hex encode-bytes
-      ((fn (self k acc) (if (< k 0) acc (self (%sub k 1) (pair (%byte p (%add i k)) acc)))) 19 ()))))
+      ((fn (self k acc) (if (< k 0) acc (self (int- k 1) (pair (%byte p (int+ i k)) acc)))) 19 ()))))
 
 ; --- the index ---
 
@@ -88,7 +78,7 @@
     (if (not (File exists? dir)) ()
       (List map
         (fn (_ f)
-          (let ((stem (Str8 sub 0 (%sub (Str8 length f) 4) f)))
+          (let ((stem (Str8 sub 0 (int- (Str8 length f) 4) f)))
             (pair (Str8 append dir "/" f) (Str8 append dir "/" stem ".pack"))))
         (List filter (fn (_ f) (Str8 ends? ".idx" f)) (File list-dir dir))))))
 
@@ -97,25 +87,25 @@
 (def %idx-bucket
   (fn (_ fd b)
     (def fan (%pread fd 8 1024))
-    (def p (%str->ptr (first fan)))
+    (def p (str->ptr (first fan)))
     (list (%u32 p 1020)
-          (if (= b 0) 0 (%u32 p (%mul (%sub b 1) 4)))
-          (%u32 p (%mul b 4)))))
+          (if (= b 0) 0 (%u32 p (int* (int- b 1) 4)))
+          (%u32 p (int* b 4)))))
 
 ; Row i's offset into the pack: the 4-byte table, or the 8-byte one it
 ; points into when its top bit is set.
 (def %idx-offset
   (fn (_ fd n i)
-    (def o (%u32 (%str->ptr (first (%pread fd (%add (%add 1032 (%mul n 24)) (%mul i 4)) 4))) 0))
+    (def o (%u32 (str->ptr (first (%pread fd (int+ (int+ 1032 (int* n 24)) (int* i 4)) 4))) 0))
     (if (= (& o 2147483648) 0) o
-      (%u64 (%str->ptr (first (%pread fd (%add (%add 1032 (%mul n 28)) (%mul (& o 2147483647) 8)) 8))) 0))))
+      (%u64 (str->ptr (first (%pread fd (int+ (int+ 1032 (int* n 28)) (int* (& o 2147483647) 8)) 8))) 0))))
 
 ; The rows of a bucket: (REGION LO COUNT), the names from LO on, 20 bytes
 ; each, in REGION.
 (def %idx-rows
   (fn (_ fd lo hi)
-    (def rows (%pread fd (%add 1032 (%mul lo 20)) (%mul (%sub hi lo) 20)))
-    (list (first rows) lo (%sub hi lo))))
+    (def rows (%pread fd (int+ 1032 (int* lo 20)) (int* (int- hi lo) 20)))
+    (list (first rows) lo (int- hi lo))))
 
 ; Where a full name is in a pack: its offset, or () when the idx has no
 ; such name.
@@ -124,15 +114,15 @@
     (def raw (%sha-raw sha))
     (def fd (File open idx (lit rdonly)))
     (when (< fd 0) (%fail (Str8 append "cannot open " idx)))
-    (def bucket (%idx-bucket fd (%byte (%str->ptr raw) 0)))
+    (def bucket (%idx-bucket fd (%byte (str->ptr raw) 0)))
     (def rows (%idx-rows fd (first (rest bucket)) (first (rest (rest bucket)))))
-    (def rp (%str->ptr (first rows)))
+    (def rp (str->ptr (first rows)))
     (def hit
       ((fn (self k)
          (match
            ((>= k (first (rest (rest rows)))) ())
-           ((= 0 (%mem-cmp (%at rp (%mul k 20)) (%str->ptr raw) 20)) (%add (first (rest rows)) k))
-           (#t (self (%add k 1)))))
+           ((= 0 (mem-cmp (%at rp (int* k 20)) (str->ptr raw) 20)) (int+ (first (rest rows)) k))
+           (#t (self (int+ k 1)))))
        0))
     (def off (if (null? hit) () (%idx-offset fd (first bucket) hit)))
     (File close fd)
@@ -145,12 +135,12 @@
     (when (< fd 0) (%fail (Str8 append "cannot open " idx)))
     (def bucket (%idx-bucket fd (first (Hex decode-bytes (Str8 sub 0 2 prefix)))))
     (def rows (%idx-rows fd (first (rest bucket)) (first (rest (rest bucket)))))
-    (def rp (%str->ptr (first rows)))
+    (def rp (str->ptr (first rows)))
     (def hits
       ((fn (self k acc)
          (if (>= k (first (rest (rest rows)))) acc
-           (let ((hex (%sha-hex rp (%mul k 20))))
-             (self (%add k 1) (if (Str8 starts? prefix hex) (pair hex acc) acc)))))
+           (let ((hex (%sha-hex rp (int* k 20))))
+             (self (int+ k 1) (if (Str8 starts? prefix hex) (pair hex acc) acc)))))
        0 ()))
     (File close fd)
     (List reverse hits)))
@@ -174,7 +164,7 @@
     ((fn (self i v shift)
        (let ((c (%byte p i)))
          (let ((v2 (| v (<< (& c 127) shift))))
-           (if (= (& c 128) 0) (pair v2 (%add i 1)) (self (%add i 1) v2 (%add shift 7))))))
+           (if (= (& c 128) 0) (pair v2 (int+ i 1)) (self (int+ i 1) v2 (int+ shift 7))))))
      i 0 0)))
 
 ; An entry's header at i of p: (TYPE SIZE NEXT-INDEX); the size's low four
@@ -184,9 +174,9 @@
     (def c (%byte p i))
     (def type (& (>> c 4) 7))
     ((fn (self i size shift c)
-       (if (= (& c 128) 0) (list type size (%add i 1))
-         (let ((c2 (%byte p (%add i 1))))
-           (self (%add i 1) (| size (<< (& c2 127) shift)) (%add shift 7) c2))))
+       (if (= (& c 128) 0) (list type size (int+ i 1))
+         (let ((c2 (%byte p (int+ i 1))))
+           (self (int+ i 1) (| size (<< (& c2 127) shift)) (int+ shift 7) c2))))
      i (& c 15) 4 c)))
 
 ; OFS_DELTA's distance back, at i of p: (DISTANCE . NEXT-INDEX).  The
@@ -196,9 +186,9 @@
   (fn (_ p i)
     (def c0 (%byte p i))
     ((fn (self i v c)
-       (if (= (& c 128) 0) (pair v (%add i 1))
-         (let ((c2 (%byte p (%add i 1))))
-           (self (%add i 1) (| (<< (%add v 1) 7) (& c2 127)) c2))))
+       (if (= (& c 128) 0) (pair v (int+ i 1))
+         (let ((c2 (%byte p (int+ i 1))))
+           (self (int+ i 1) (| (<< (int+ v 1) 7) (& c2 127)) c2))))
      i (& c0 127) c0)))
 
 (def %type-name
@@ -224,38 +214,38 @@
 (def %entry
   (fn (_ fd off size)
     ((fn (self span)
-       (let ((p (%str->ptr (first span))) (avail (rest span)))
+       (let ((p (str->ptr (first span))) (avail (rest span)))
          (let ((h (%entry-header p 0)))
            (let ((type (first h)) (at (first (rest (rest h)))))
              (when (>= (first (rest h)) %engine-worth) (Inflate jit!))
              (let ((base (match
-                           ((= type 6) (let ((d (%ofs-distance p at))) (pair (lit ofs) (%sub off (first d)))))
+                           ((= type 6) (let ((d (%ofs-distance p at))) (pair (lit ofs) (int- off (first d)))))
                            ((= type 7) (pair (lit ref) (%sha-hex p at)))
                            (#t ())))
                    (start (match
                             ((= type 6) (rest (%ofs-distance p at)))
-                            ((= type 7) (%add at 20))
+                            ((= type 7) (int+ at 20))
                             (#t at))))
                (let ((z (guard (e (if (Str8 includes? "ends inside" (e msg)) (lit short) (Err raise (Err label e) (e msg) ())))
-                          (Inflate zlib (first span) start (%sub avail start)))))
+                          (Inflate zlib (first span) start (int- avail start)))))
                  (if (eq? z (lit short))
-                   (if (>= avail (%sub size off)) (%fail "a pack entry's stream runs past the pack")
+                   (if (>= avail (int- size off)) (%fail "a pack entry's stream runs past the pack")
                      (self (%entry-span fd off size (* avail 2))))
                    (list type (first z) (first (rest z)) base
-                         (%add off (%add start (first (rest (rest z)))))))))))))
+                         (int+ off (int+ start (first (rest (rest z)))))))))))))
      (%entry-span fd off size 4096))))
 
 ; A delta applied to its base: the result region and its count.
 (def %apply-delta
   (fn (_ base bn delta dn)
-    (def dp (%str->ptr delta))
-    (def bp (%str->ptr base))
+    (def dp (str->ptr delta))
+    (def bp (str->ptr base))
     (def v1 (%varint dp 0))
     (def v2 (%varint dp (rest v1)))
     (unless (= (first v1) bn) (%fail "a delta's base size disagrees"))
     (def rn (first v2))
-    (def out (%make-str (if (= rn 0) 1 rn)))
-    (def op (%str->ptr out))
+    (def out (str-make (if (= rn 0) 1 rn)))
+    (def op (str->ptr out))
     ; one copy op: the offset from the bytes bits 0-3 of the op name, then
     ; the size from the bytes bits 4-6 name, each byte at the next eight
     ; bits of its field
@@ -264,15 +254,15 @@
         (def read-field
           (fn (self i bit last shift v)
             (if (> bit last) (pair v i)
-              (if (= (& c bit) 0) (self i (<< bit 1) last (%add shift 8) v)
-                (self (%add i 1) (<< bit 1) last (%add shift 8) (| v (<< (%byte dp i) shift)))))))
+              (if (= (& c bit) 0) (self i (<< bit 1) last (int+ shift 8) v)
+                (self (int+ i 1) (<< bit 1) last (int+ shift 8) (| v (<< (%byte dp i) shift)))))))
         (def o (read-field i 1 8 0 0))
         (def s (read-field (rest o) 16 64 0 0))
         (def size (if (= (first s) 0) 65536 (first s)))
-        (when (> (%add (first o) size) bn) (%fail "a delta copies past its base"))
-        (when (> (%add at size) rn) (%fail "a delta writes past its result"))
-        (%mem-copy (%at op at) (%at bp (first o)) size)
-        (pair (rest s) (%add at size))))
+        (when (> (int+ (first o) size) bn) (%fail "a delta copies past its base"))
+        (when (> (int+ at size) rn) (%fail "a delta writes past its result"))
+        (mem-copy (%at op at) (%at bp (first o)) size)
+        (pair (rest s) (int+ at size))))
     ((fn (self i at)
        (if (>= i dn)
          (do (unless (= at rn) (%fail "a delta's result size disagrees")) (pair out rn))
@@ -280,10 +270,10 @@
            (match
              ((= c 0) (%fail "a delta op of zero"))
              ((= (& c 128) 0)
-               (do (when (> (%add at c) rn) (%fail "a delta writes past its result"))
-                   (%mem-copy (%at op at) (%at dp (%add i 1)) c)
-                   (self (%add (%add i 1) c) (%add at c))))
-             (#t (let ((r (copy! (%add i 1) c at))) (self (first r) (rest r))))))))
+               (do (when (> (int+ at c) rn) (%fail "a delta writes past its result"))
+                   (mem-copy (%at op at) (%at dp (int+ i 1)) c)
+                   (self (int+ (int+ i 1) c) (int+ at c))))
+             (#t (let ((r (copy! (int+ i 1) c at))) (self (first r) (rest r))))))))
      (rest v2) 0)))
 
 ; --- the delta base cache ---
@@ -303,20 +293,20 @@
 ; held.  A slot is (PATH OFF TYPE BODY N).
 (def %bc-get
   (fn (_ path off)
-    (let ((e (Vector ref (& off (%sub %BC-SLOTS 1)) %bc)))
+    (let ((e (Vector ref (& off (int- %BC-SLOTS 1)) %bc)))
       (if (and (pair? e) (= (first (rest e)) off) (str=? (first e) path)) (rest (rest e)) ()))))
 
 (def %bc-put!
   (fn (_ path off o)
     (def n (first (rest (rest o))))
     (when (<= n (>> %BC-LIMIT 3))
-      (let ((i (& off (%sub %BC-SLOTS 1))))
+      (let ((i (& off (int- %BC-SLOTS 1))))
         (do (let ((old (Vector ref i %bc)))
-              (when (pair? old) (set! %bc-bytes (%sub %bc-bytes (first (rest (rest (rest (rest old)))))))))
-            (when (> (%add %bc-bytes n) %BC-LIMIT)
+              (when (pair? old) (set! %bc-bytes (int- %bc-bytes (first (rest (rest (rest (rest old)))))))))
+            (when (> (int+ %bc-bytes n) %BC-LIMIT)
               (do (set! %bc (Vector make %BC-SLOTS ())) (set! %bc-bytes 0)))
             (Vector set! i (pair path (pair off o)) %bc)
-            (set! %bc-bytes (%add %bc-bytes n)))))))
+            (set! %bc-bytes (int+ %bc-bytes n)))))))
 
 ; The object at off in the pack at path, open on fd: (TYPE BODY N),
 ; deltas applied.  read-base answers (TYPE SIZE REGION START) for a
@@ -338,8 +328,8 @@
                  (%object-at path fd size (rest base) read-base)
                  (let ((o (read-base (rest base))))
                    (do (when (null? o) (%fail (Str8 append "a delta's base is missing: " (rest base))))
-                       (let ((body (%make-str (if (= (first (rest o)) 0) 1 (first (rest o))))))
-                         (do (%mem-copy (%str->ptr body) (%at (%str->ptr (first (rest (rest o)))) (first (rest (rest (rest o))))) (first (rest o)))
+                       (let ((body (str-make (if (= (first (rest o)) 0) 1 (first (rest o))))))
+                         (do (mem-copy (str->ptr body) (%at (str->ptr (first (rest (rest o)))) (first (rest (rest (rest o))))) (first (rest o)))
                              (list (first o) body (first (rest o))))))))))
         (let ((r (%apply-delta (first (rest b)) (first (rest (rest b))) (first (rest e)) (first (rest (rest e))))))
           (list (first b) (first r) (rest r)))))))
@@ -357,7 +347,7 @@
                    (let ((size (Assoc get (lit size) (File stat (rest (first pks))))))
                      (let ((o (%object-at (rest (first pks)) fd size off read-base)))
                        (do (File close fd)
-                           (%churned! (%add (first (rest (rest o))) 4096))
+                           (%churned! (int+ (first (rest (rest o))) 4096))
                            (list (first o) (first (rest (rest o))) (first (rest o)) 0))))))))))
      (git-packs gitdir))))
 
@@ -380,44 +370,41 @@
 ; A thin pack's bases may also be objects the reader already has, at the
 ; paths of the objects sent: those are named, and never written.
 
-(def %oref (prim-ref (lit obj) (lit ref)))
-(def %oset! (prim-ref (lit obj) (lit set!)))
-(def %str-byte-len (prim-ref (lit str) (lit byte-len)))
 
 ; A buffer's slots: the region, its size, how much is written, its address.
 (def %buf-make
   (fn (_)
     (def v (Vector make 4 0))
-    (def r (%make-str 4096))
-    (%oset! v 1 r)
-    (%oset! v 2 4096)
-    (%oset! v 3 0)
-    (%oset! v 4 (%str->ptr r))
+    (def r (str-make 4096))
+    (obj-set! v 1 r)
+    (obj-set! v 2 4096)
+    (obj-set! v 3 0)
+    (obj-set! v 4 (str->ptr r))
     v))
 
 (def %buf-room!
   (fn (_ b n)
-    (def need (%add (%oref b 3) n))
-    (if (> need (%oref b 2))
-      (do (def cap ((fn (grow c) (if (< c need) (grow (%mul c 2)) c)) (%mul (%oref b 2) 2)))
-          (def r (%make-str cap))
-          (%mem-copy (%str->ptr r) (%oref b 4) (%oref b 3))
-          (%oset! b 1 r)
-          (%oset! b 2 cap)
-          (%oset! b 4 (%str->ptr r)))
+    (def need (int+ (obj-ref b 3) n))
+    (if (> need (obj-ref b 2))
+      (do (def cap ((fn (grow c) (if (< c need) (grow (int* c 2)) c)) (int* (obj-ref b 2) 2)))
+          (def r (str-make cap))
+          (mem-copy (str->ptr r) (obj-ref b 4) (obj-ref b 3))
+          (obj-set! b 1 r)
+          (obj-set! b 2 cap)
+          (obj-set! b 4 (str->ptr r)))
       ())))
 
 (def %buf-put-bytes!
   (fn (_ b p n)
     (%buf-room! b n)
-    (%mem-copy (%at (%oref b 4) (%oref b 3)) p n)
-    (%oset! b 3 (%add (%oref b 3) n))))
+    (mem-copy (%at (obj-ref b 4) (obj-ref b 3)) p n)
+    (obj-set! b 3 (int+ (obj-ref b 3) n))))
 
 (def %buf-put-byte!
   (fn (_ b c)
     (%buf-room! b 1)
-    (%pset! (%oref b 4) (%oref b 3) c 1)
-    (%oset! b 3 (%add (%oref b 3) 1))))
+    (ptr-set! (obj-ref b 4) (obj-ref b 3) c 1)
+    (obj-set! b 3 (int+ (obj-ref b 3) 1))))
 
 (def %buf-put-u32!
   (fn (_ b v)
@@ -426,7 +413,7 @@
     (%buf-put-byte! b (& (>> v 8) 255))
     (%buf-put-byte! b (& v 255))))
 
-(def %buf-put-str! (fn (_ b s) (%buf-put-bytes! b (%str->ptr s) (%str-byte-len s))))
+(def %buf-put-str! (fn (_ b s) (%buf-put-bytes! b (str->ptr s) (str-byte-len s))))
 
 ; An entry's header: the type in bits 4-6 of the first byte with the
 ; size's low four bits, then the rest of the size seven bits a byte, each
@@ -473,20 +460,19 @@
 (def %O-AT 12)
 (def %O-ORDER 13)
 
-(def %idiv (prim-ref (lit int) (lit /)))
 
 ; git's hash of a path: each byte but a space shifted in from the top,
 ; so the last bytes count most and files of one name sort together.
 (def %name-hash
   (fn (_ name)
-    (def p (%str->ptr name))
-    (def n (%str-byte-len name))
+    (def p (str->ptr name))
+    (def n (str-byte-len name))
     ((fn (self i h)
        (if (>= i n) h
          (let ((c (%byte p i)))
-           (self (%add i 1)
+           (self (int+ i 1)
                  (if (or (= c 32) (and (>= c 9) (<= c 13))) h
-                   (& (%add (>> h 2) (<< c 24)) 4294967295))))))
+                   (& (int+ (>> h 2) (<< c 24)) 4294967295))))))
      0 0)))
 
 ; An object row -- (SHA TYPE SIZE REGION START NAME), NAME the path it
@@ -494,16 +480,16 @@
 (def %slots
   (fn (_ o order base?)
     (def v (Vector make 13 ()))
-    (%oset! v %O-SHA (first o))
-    (%oset! v %O-TYPE (%type-number (first (rest o))))
-    (%oset! v %O-SIZE (first (rest (rest o))))
-    (%oset! v %O-REGION (first (rest (rest (rest o)))))
-    (%oset! v %O-START (first (rest (rest (rest (rest o))))))
+    (obj-set! v %O-SHA (first o))
+    (obj-set! v %O-TYPE (%type-number (first (rest o))))
+    (obj-set! v %O-SIZE (first (rest (rest o))))
+    (obj-set! v %O-REGION (first (rest (rest (rest o)))))
+    (obj-set! v %O-START (first (rest (rest (rest (rest o))))))
     (def more (rest (rest (rest (rest (rest o))))))
-    (%oset! v %O-HASH (if (null? more) 0 (%name-hash (first more))))
-    (%oset! v %O-BASE? base?)
-    (%oset! v %O-DEPTH 0)
-    (%oset! v %O-ORDER order)
+    (obj-set! v %O-HASH (if (null? more) 0 (%name-hash (first more))))
+    (obj-set! v %O-BASE? base?)
+    (obj-set! v %O-DEPTH 0)
+    (obj-set! v %O-ORDER order)
     v))
 
 (def %depth-most 50)
@@ -515,17 +501,17 @@
 (def %sorts-before?
   (fn (_ a b)
     (match
-      ((not (= (%oref a %O-TYPE) (%oref b %O-TYPE))) (> (%oref a %O-TYPE) (%oref b %O-TYPE)))
-      ((not (= (%oref a %O-HASH) (%oref b %O-HASH))) (> (%oref a %O-HASH) (%oref b %O-HASH)))
-      ((not (eq? (%oref a %O-BASE?) (%oref b %O-BASE?))) (%oref a %O-BASE?))
-      ((not (= (%oref a %O-SIZE) (%oref b %O-SIZE))) (> (%oref a %O-SIZE) (%oref b %O-SIZE)))
-      (#t (< (%oref a %O-ORDER) (%oref b %O-ORDER))))))
+      ((not (= (obj-ref a %O-TYPE) (obj-ref b %O-TYPE))) (> (obj-ref a %O-TYPE) (obj-ref b %O-TYPE)))
+      ((not (= (obj-ref a %O-HASH) (obj-ref b %O-HASH))) (> (obj-ref a %O-HASH) (obj-ref b %O-HASH)))
+      ((not (eq? (obj-ref a %O-BASE?) (obj-ref b %O-BASE?))) (obj-ref a %O-BASE?))
+      ((not (= (obj-ref a %O-SIZE) (obj-ref b %O-SIZE))) (> (obj-ref a %O-SIZE) (obj-ref b %O-SIZE)))
+      (#t (< (obj-ref a %O-ORDER) (obj-ref b %O-ORDER))))))
 
 (def %index-of
   (fn (_ s)
-    (when (null? (%oref s %O-INDEX))
-      (%oset! s %O-INDEX (delta-index (%at (%str->ptr (%oref s %O-REGION)) (%oref s %O-START)) (%oref s %O-SIZE))))
-    (%oref s %O-INDEX)))
+    (when (null? (obj-ref s %O-INDEX))
+      (obj-set! s %O-INDEX (delta-index (%at (str->ptr (obj-ref s %O-REGION)) (obj-ref s %O-START)) (obj-ref s %O-SIZE))))
+    (obj-ref s %O-INDEX)))
 
 ; x collects only when asked.  Deflating a byte leaves some 280 objects
 ; behind, indexing and walking one for a delta some 170, so the build
@@ -534,7 +520,7 @@
 (def %churn 0)
 (def %churned!
   (fn (_ n)
-    (set! %churn (%add %churn n))
+    (set! %churn (int+ %churn n))
     (when (>= %churn 16384) (do (Heap collect) (set! %churn 0)))))
 
 ; t tried against s as its base, as git's try_delta: the most a delta
@@ -542,21 +528,21 @@
 ; down as s's chain is deeper.
 (def %try-delta!
   (fn (_ t s)
-    (def has (%oref t %O-DELTA))
-    (def most0 (if (null? has) (%sub (%idiv (%oref t %O-SIZE) 2) 20) (rest has)))
-    (def ref-depth (if (null? has) 1 (%oref t %O-DEPTH)))
-    (def most (%idiv (%mul most0 (%sub %depth-most (%oref s %O-DEPTH))) (%add (%sub %depth-most ref-depth) 1)))
-    (def tn (%oref t %O-SIZE))
-    (def sn (%oref s %O-SIZE))
-    (unless (or (>= (%oref s %O-DEPTH) %depth-most) (<= most 0)
-                (>= (if (< sn tn) (%sub tn sn) 0) most) (< tn (%idiv sn 32)))
-      (let ((d (delta-make (%index-of s) (%at (%str->ptr (%oref t %O-REGION)) (%oref t %O-START)) tn most)))
-        (%churned! (%add sn tn))
+    (def has (obj-ref t %O-DELTA))
+    (def most0 (if (null? has) (int- (int/ (obj-ref t %O-SIZE) 2) 20) (rest has)))
+    (def ref-depth (if (null? has) 1 (obj-ref t %O-DEPTH)))
+    (def most (int/ (int* most0 (int- %depth-most (obj-ref s %O-DEPTH))) (int+ (int- %depth-most ref-depth) 1)))
+    (def tn (obj-ref t %O-SIZE))
+    (def sn (obj-ref s %O-SIZE))
+    (unless (or (>= (obj-ref s %O-DEPTH) %depth-most) (<= most 0)
+                (>= (if (< sn tn) (int- tn sn) 0) most) (< tn (int/ sn 32)))
+      (let ((d (delta-make (%index-of s) (%at (str->ptr (obj-ref t %O-REGION)) (obj-ref t %O-START)) tn most)))
+        (%churned! (int+ sn tn))
         (unless (or (null? d)
-                    (and (not (null? has)) (= (rest d) (rest has)) (>= (%add (%oref s %O-DEPTH) 1) (%oref t %O-DEPTH))))
-          (do (%oset! t %O-FROM s)
-              (%oset! t %O-DELTA d)
-              (%oset! t %O-DEPTH (%add (%oref s %O-DEPTH) 1))))))))
+                    (and (not (null? has)) (= (rest d) (rest has)) (>= (int+ (obj-ref s %O-DEPTH) 1) (obj-ref t %O-DEPTH))))
+          (do (obj-set! t %O-FROM s)
+              (obj-set! t %O-DELTA d)
+              (obj-set! t %O-DEPTH (int+ (obj-ref s %O-DEPTH) 1))))))))
 
 ; Each object in the sorted order tried against the window before it,
 ; nearest first, until one of another type; then it joins the window,
@@ -565,13 +551,13 @@
   (fn (self sorted window)
     (unless (null? sorted)
       (let ((t (first sorted)))
-        (do (unless (%oref t %O-BASE?)
+        (do (unless (obj-ref t %O-BASE?)
               ((fn (try ws)
-                 (unless (or (null? ws) (not (= (%oref (first ws) %O-TYPE) (%oref t %O-TYPE))))
+                 (unless (or (null? ws) (not (= (obj-ref (first ws) %O-TYPE) (obj-ref t %O-TYPE))))
                    (do (%try-delta! t (first ws)) (try (rest ws)))))
                window))
             (def kept (if (< (List length window) %window) window
-                        (do (%oset! (List last window) %O-INDEX ())
+                        (do (obj-set! (List last window) %O-INDEX ())
                             (List reverse (rest (List reverse window))))))
             (self (rest sorted) (pair t kept)))))))
 
@@ -583,7 +569,7 @@
     (List for-each (fn (_ c) (%buf-put-byte! b c))
       ((fn (self v acc)
          (if (= v 0) acc
-           (let ((v1 (%sub v 1))) (self (>> v1 7) (pair (| 128 (& v1 127)) acc)))))
+           (let ((v1 (int- v 1))) (self (>> v1 7) (pair (| 128 (& v1 127)) acc)))))
        (>> d 7) (list (& d 127))))))
 
 ; A whole object's entry: the size bytes of region from start.
@@ -591,7 +577,7 @@
   (fn (_ b type size region start)
     (%put-entry-header! b type size)
     (def z (Deflate zlib region start size))
-    (%buf-put-bytes! b (%str->ptr (first z)) (first (rest z)))
+    (%buf-put-bytes! b (str->ptr (first z)) (first (rest z)))
     (%churned! size)))
 
 ; o written at the buffer's end, its base first when that is in the
@@ -599,22 +585,22 @@
 ; latest first, on acc.
 (def %write-object!
   (fn (self b o ofs? acc)
-    (if (not (null? (%oref o %O-AT))) acc
-      (let ((from (%oref o %O-FROM)))
-        (let ((acc2 (if (or (null? from) (%oref from %O-BASE?)) acc (self b from ofs? acc))))
-          (do (def off (%oref b 3))
-              (%oset! o %O-AT off)
-              (def d (%oref o %O-DELTA))
+    (if (not (null? (obj-ref o %O-AT))) acc
+      (let ((from (obj-ref o %O-FROM)))
+        (let ((acc2 (if (or (null? from) (obj-ref from %O-BASE?)) acc (self b from ofs? acc))))
+          (do (def off (obj-ref b 3))
+              (obj-set! o %O-AT off)
+              (def d (obj-ref o %O-DELTA))
               (if (null? d)
-                (%put-whole! b (%oref o %O-TYPE) (%oref o %O-SIZE) (%oref o %O-REGION) (%oref o %O-START))
-                (do (if (and ofs? (not (%oref from %O-BASE?)))
+                (%put-whole! b (obj-ref o %O-TYPE) (obj-ref o %O-SIZE) (obj-ref o %O-REGION) (obj-ref o %O-START))
+                (do (if (and ofs? (not (obj-ref from %O-BASE?)))
                       (do (%put-entry-header! b 6 (rest d))
-                          (%put-distance! b (%sub off (%oref from %O-AT))))
+                          (%put-distance! b (int- off (obj-ref from %O-AT))))
                       (do (%put-entry-header! b 7 (rest d))
-                          (%buf-put-bytes! b (%str->ptr (%sha-raw (%oref from %O-SHA))) 20)))
+                          (%buf-put-bytes! b (str->ptr (%sha-raw (obj-ref from %O-SHA))) 20)))
                     (def z (Deflate zlib (first d) 0 (rest d)))
-                    (%buf-put-bytes! b (%str->ptr (first z)) (first (rest z)))))
-              (pair (list (%oref o %O-SHA) off (Crc32 of (%oref b 1) off (%sub (%oref b 3) off))) acc2)))))))
+                    (%buf-put-bytes! b (str->ptr (first z)) (first (rest z)))))
+              (pair (list (obj-ref o %O-SHA) off (Crc32 of (obj-ref b 1) off (int- (obj-ref b 3) off))) acc2)))))))
 
 ; The objects -- (SHA TYPE SIZE REGION START NAME) each, as
 ; git-object-read answers them with their names and the paths they were
@@ -626,23 +612,23 @@
   (fn (_ objects bases ofs?)
     (def slots
       ((fn (self l k base? acc)
-         (if (null? l) (List reverse acc) (self (rest l) (%add k 1) base? (pair (%slots (first l) k base?) acc))))
+         (if (null? l) (List reverse acc) (self (rest l) (int+ k 1) base? (pair (%slots (first l) k base?) acc))))
        objects 0 #f ()))
     (def base-slots
       ((fn (self l k acc)
-         (if (null? l) acc (self (rest l) (%add k 1) (pair (%slots (first l) k #t) acc))))
+         (if (null? l) acc (self (rest l) (int+ k 1) (pair (%slots (first l) k #t) acc))))
        bases (List length objects) ()))
     (%find-deltas!
       (List sort %sorts-before?
-        (List filter (fn (_ s) (>= (%oref s %O-SIZE) %too-small)) (List append slots base-slots)))
+        (List filter (fn (_ s) (>= (obj-ref s %O-SIZE) %too-small)) (List append slots base-slots)))
       ())
     (def b (%buf-make))
     (%buf-put-str! b "PACK")
     (%buf-put-u32! b 2)
     (%buf-put-u32! b (List length objects))
     (def rows ((fn (self l acc) (if (null? l) acc (self (rest l) (%write-object! b (first l) ofs? acc)))) slots ()))
-    (def pack-sha (Sha1 hex-n (%oref b 1) (%oref b 3)))
-    (%buf-put-bytes! b (%str->ptr (%sha-raw pack-sha)) 20)
+    (def pack-sha (Sha1 hex-n (obj-ref b 1) (obj-ref b 3)))
+    (%buf-put-bytes! b (str->ptr (%sha-raw pack-sha)) 20)
     (list b rows pack-sha)))
 
 ; The objects written as a pack and its index under gitdir's
@@ -654,7 +640,7 @@
     (def dir (Str8 append gitdir "/objects/pack"))
     (unless (File exists? dir) (File mkdir dir))
     (def stem (Str8 append dir "/pack-" (first (rest (rest p)))))
-    (%write-region! (Str8 append stem ".pack") (%oref b 1) (%oref b 3))
+    (%write-region! (Str8 append stem ".pack") (obj-ref b 1) (obj-ref b 3))
     (%idx-write! stem (first (rest (rest p))) (first (rest p)))
     (Str8 append stem ".pack")))
 
@@ -664,7 +650,7 @@
 (def git-pack-bytes
   (fn (_ objects bases ofs?)
     (def b (first (%pack-build objects bases ofs?)))
-    (pair (%oref b 1) (%oref b 3))))
+    (pair (obj-ref b 1) (obj-ref b 3))))
 
 ; The index of a pack named pack-sha, written beside it: rows are (SHA
 ; OFFSET CRC) each.
@@ -679,22 +665,22 @@
     (def counts (Vector make 256 0))
     (List for-each
       (fn (_ r)
-        (def k (%add (first (Hex decode-bytes (Str8 sub 0 2 (first r)))) 1))
-        (%oset! counts k (%add (%oref counts k) 1)))
+        (def k (int+ (first (Hex decode-bytes (Str8 sub 0 2 (first r)))) 1))
+        (obj-set! counts k (int+ (obj-ref counts k) 1)))
       sorted)
     ((fn (self k acc)
        (if (< k 256)
-         (do (def acc2 (%add acc (%oref counts (%add k 1))))
+         (do (def acc2 (int+ acc (obj-ref counts (int+ k 1))))
              (%buf-put-u32! idx acc2)
-             (self (%add k 1) acc2))
+             (self (int+ k 1) acc2))
          ()))
      0 0)
-    (List for-each (fn (_ r) (%buf-put-bytes! idx (%str->ptr (%sha-raw (first r))) 20)) sorted)
+    (List for-each (fn (_ r) (%buf-put-bytes! idx (str->ptr (%sha-raw (first r))) 20)) sorted)
     (List for-each (fn (_ r) (%buf-put-u32! idx (first (rest (rest r))))) sorted)
     (List for-each (fn (_ r) (%buf-put-u32! idx (first (rest r)))) sorted)
-    (%buf-put-bytes! idx (%str->ptr (%sha-raw pack-sha)) 20)
-    (%buf-put-bytes! idx (%str->ptr (%sha-raw (Sha1 hex-n (%oref idx 1) (%oref idx 3)))) 20)
-    (%write-region! (Str8 append stem ".idx") (%oref idx 1) (%oref idx 3))))
+    (%buf-put-bytes! idx (str->ptr (%sha-raw pack-sha)) 20)
+    (%buf-put-bytes! idx (str->ptr (%sha-raw (Sha1 hex-n (obj-ref idx 1) (obj-ref idx 3)))) 20)
+    (%write-region! (Str8 append stem ".idx") (obj-ref idx 1) (obj-ref idx 3))))
 
 ; --- indexing a pack that arrived ---
 ;
@@ -710,13 +696,13 @@
 (def %object-sha
   (fn (_ type body n)
     (def hdr (Str8 append type " " (Str8 str n)))
-    (def hlen (%str-byte-len hdr))
-    (def total (%add (%add hlen 1) n))
-    (def r (%make-str total))
-    (def p (%str->ptr r))
-    (%mem-copy p (%str->ptr hdr) hlen)
-    (%pset! p hlen 0 1)
-    (when (> n 0) (%mem-copy (%at p (%add hlen 1)) (%str->ptr body) n))
+    (def hlen (str-byte-len hdr))
+    (def total (int+ (int+ hlen 1) n))
+    (def r (str-make total))
+    (def p (str->ptr r))
+    (mem-copy p (str->ptr hdr) hlen)
+    (ptr-set! p hlen 0 1)
+    (when (> n 0) (mem-copy (%at p (int+ hlen 1)) (str->ptr body) n))
     (Sha1 hex-n r total)))
 
 ; The first n bytes of region r, a pack as it came off the wire, written
@@ -725,13 +711,13 @@
 ; repository already has, for a delta whose base is not in the pack.
 (def git-pack-index!
   (fn (_ gitdir r n read-base)
-    (def p (%str->ptr r))
+    (def p (str->ptr r))
     (when (< n 32) (%fail "a pack too short to be one"))
-    (unless (= (%mem-cmp p (%str->ptr "PACK") 4) 0) (%fail "a pack without its signature"))
+    (unless (= (mem-cmp p (str->ptr "PACK") 4) 0) (%fail "a pack without its signature"))
     (unless (= (%u32 p 4) 2) (%fail "a pack of a version other than 2"))
     (def count (%u32 p 8))
-    (def pack-sha (Sha1 hex-n r (%sub n 20)))
-    (unless (str=? pack-sha (%sha-hex p (%sub n 20))) (%fail "a pack whose checksum disagrees"))
+    (def pack-sha (Sha1 hex-n r (int- n 20)))
+    (unless (str=? pack-sha (%sha-hex p (int- n 20))) (%fail "a pack whose checksum disagrees"))
     (def dir (Str8 append gitdir "/objects/pack"))
     (unless (File exists? dir) (File mkdir dir))
     (def stem (Str8 append dir "/pack-" pack-sha))
@@ -750,7 +736,7 @@
                (let ((e (%entry fd off n)))
                  (let ((base (first (rest (rest (rest e))))) (end (first (rest (rest (rest (rest e)))))))
                    (do (%churned! (first (rest (rest e))))
-                   (self (%add i 1) end
+                   (self (int+ i 1) end
                          (pair (list off end base
                                      (if (null? base) (%object-sha (%type-name (first e)) (first (rest e)) (first (rest (rest e)))) ()))
                                acc)))))))
@@ -778,7 +764,7 @@
                   (let ((o (%object-at path fd n off in-pack)))
                     (do (%churned! (first (rest (rest o))))
                         (%object-sha (first o) (first (rest o)) (first (rest (rest o))))))))
-              (list sha off (Crc32 of r off (%sub (first (rest e)) off))))
+              (list sha off (Crc32 of r off (int- (first (rest e)) off))))
             entries))
         (File close fd)
         (if (null? outside)
@@ -787,7 +773,7 @@
             (do (File unlink path)
                 (def stem2 (Str8 append dir "/pack-" (first (rest (rest fixed)))))
                 (def b (first fixed))
-                (%write-region! (Str8 append stem2 ".pack") (%oref b 1) (%oref b 3))
+                (%write-region! (Str8 append stem2 ".pack") (obj-ref b 1) (obj-ref b 3))
                 (%idx-write! stem2 (first (rest (rest fixed))) (List append rows (first (rest fixed))))
                 (Str8 append stem2 ".pack"))))))))
 
@@ -799,19 +785,19 @@
 (def %fix-thin
   (fn (_ r n count bases)
     (def b (%buf-make))
-    (%buf-put-bytes! b (%str->ptr r) (%sub n 20))
-    (def total (%add count (List length bases)))
-    (List for-each (fn (_ k) (%pset! (%oref b 4) (%add 8 k) (& (>> total (%mul (%sub 3 k) 8)) 255) 1)) (list 0 1 2 3))
+    (%buf-put-bytes! b (str->ptr r) (int- n 20))
+    (def total (int+ count (List length bases)))
+    (List for-each (fn (_ k) (ptr-set! (obj-ref b 4) (int+ 8 k) (& (>> total (int* (int- 3 k) 8)) 255) 1)) (list 0 1 2 3))
     (def rows
       (List map
         (fn (_ o)
-          (def off (%oref b 3))
+          (def off (obj-ref b 3))
           (%put-whole! b (%type-number (first (rest o))) (first (rest (rest o))) (first (rest (rest (rest o))))
             (first (rest (rest (rest (rest o))))))
-          (list (first o) off (Crc32 of (%oref b 1) off (%sub (%oref b 3) off))))
+          (list (first o) off (Crc32 of (obj-ref b 1) off (int- (obj-ref b 3) off))))
         bases))
-    (def pack-sha (Sha1 hex-n (%oref b 1) (%oref b 3)))
-    (%buf-put-bytes! b (%str->ptr (%sha-raw pack-sha)) 20)
+    (def pack-sha (Sha1 hex-n (obj-ref b 1) (obj-ref b 3)))
+    (%buf-put-bytes! b (str->ptr (%sha-raw pack-sha)) 20)
     (list b rows pack-sha)))
 
 ; --- a pack arriving on a stream ---
@@ -827,23 +813,23 @@
 ; when the bytes run out first.
 (def %varint-end
   (fn (self p i n)
-    (match ((>= i n) ()) ((= (& (%byte p i) 128) 0) (%add i 1)) (#t (self p (%add i 1) n)))))
+    (match ((>= i n) ()) ((= (& (%byte p i) 128) 0) (int+ i 1)) (#t (self p (int+ i 1) n)))))
 
 ; Where the entry at off ends, or () when its bytes have not all come.
 (def %entry-end
   (fn (_ r off n)
-    (def p (%str->ptr r))
+    (def p (str->ptr r))
     (def after-header (%varint-end p off n))
     (if (null? after-header) ()
       (let ((type (& (>> (%byte p off) 4) 7)))
         (let ((start (match
                        ((= type 6) (%varint-end p after-header n))
-                       ((= type 7) (if (<= (%add after-header 20) n) (%add after-header 20) ()))
+                       ((= type 7) (if (<= (int+ after-header 20) n) (int+ after-header 20) ()))
                        (#t after-header))))
           (if (null? start) ()
             (let ((z (guard (e (if (Str8 includes? "ends inside" (e msg)) () (Err raise (Err label e) (e msg) ())))
-                       (Inflate zlib r start (%sub n start)))))
-              (if (null? z) () (%add start (first (rest (rest z))))))))))))
+                       (Inflate zlib r start (int- n start)))))
+              (if (null? z) () (int+ start (first (rest (rest z))))))))))))
 
 ; The scan of a pack's first n bytes in r from entry i at offset off:
 ; (I . OFF), the entries read whole and where the next starts.  The pack
@@ -852,13 +838,13 @@
   (fn (self r n count i off)
     (if (>= i count) (pair i off)
       (let ((end (%entry-end r off n)))
-        (if (null? end) (pair i off) (self r n count (%add i 1) end))))))
+        (if (null? end) (pair i off) (self r n count (int+ i 1) end))))))
 
 ; The count a pack's header gives, from its first twelve bytes.
 (def git-pack-count
   (fn (_ r)
-    (def p (%str->ptr r))
-    (unless (= (%mem-cmp p (%str->ptr "PACK") 4) 0) (%fail "a pack without its signature"))
+    (def p (str->ptr r))
+    (unless (= (mem-cmp p (str->ptr "PACK") 4) 0) (%fail "a pack without its signature"))
     (%u32 p 8)))
 
 ; --- bytes gathered for the wire ---
@@ -867,8 +853,8 @@
 ; made empty; bytes put at its end; its region and count read back.
 (def git-bytes-make (fn (_) (%buf-make)))
 (def git-bytes-put! (fn (_ b p n) (%buf-put-bytes! b p n)))
-(def git-bytes-region (fn (_ b) (%oref b 1)))
-(def git-bytes-count (fn (_ b) (%oref b 3)))
+(def git-bytes-region (fn (_ b) (obj-ref b 1)))
+(def git-bytes-count (fn (_ b) (obj-ref b 3)))
 
 (provide git/packs git-packs git-pack-read git-pack-prefix git-pack-has? git-pack-write! git-pack-bytes git-pack-index!
   git-pack-scan git-pack-count git-bytes-make git-bytes-put! git-bytes-region git-bytes-count)

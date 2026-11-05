@@ -38,7 +38,7 @@
 (import git/reset git-reset)
 (import git/revert git-revert)
 
-(def %byte-len (prim-ref (lit str) (lit byte-len)))
+(import x/core/doors str-byte-len)
 
 (def git-options
   (Opts declare "git" "[-v | --version] [-C <path>] [-c <name>=<value>] <command> [<args>]" ()
@@ -156,7 +156,7 @@
 
 ; The bytes of a TEXT: a string's, or a region's count.
 (def %text-count
-  (fn (_ text) (if (pair? text) (rest text) (%byte-len text))))
+  (fn (_ text) (if (pair? text) (rest text) (str-byte-len text))))
 
 ; ops are the operands: (Sys args 'program) past the engine's path.  A
 ; result is (STREAM TEXT STATUS), or with a fourth element text for
@@ -172,7 +172,7 @@
       (File write (if (eq? (first r) (lit out)) 1 2)
         (if (pair? text) (first text) text) (%text-count text)))
     (let ((more (rest (rest (rest r)))))
-      (unless (null? more) (File write 1 (first more) (%byte-len (first more)))))
+      (unless (null? more) (File write 1 (first more) (str-byte-len (first more)))))
     (Sys exit (first (rest (rest r))))))
 
 (provide git/cli git-options git-plan git-run git-main)

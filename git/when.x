@@ -24,11 +24,7 @@
 
 (import x/sys/date Date)
 
-(def %add (prim-ref 'int '+))
-(def %sub (prim-ref 'int '-))
-(def %mul (prim-ref 'int '*))
-(def %int-div (prim-ref (lit int) (lit /)))
-(def %int-mod (prim-ref (lit int) (lit %)))
+(import x/core/doors int+ int- int* int/ int%)
 
 (def %month-names
   (list "january" "february" "march" "april" "may" "june" "july" "august" "september" "october" "november" "december"))
@@ -51,13 +47,13 @@
 (def %with (fn (_ f i v) (List map (fn (_ k) (if (= k i) v (List ref k f))) (List range 0 6))))
 
 ; The fields moved back secs seconds.
-(def %back (fn (_ f secs) (%fields (%sub (%epoch f) secs))))
+(def %back (fn (_ f secs) (%fields (int- (%epoch f) secs))))
 
 ; The fields moved back n months, the day left for the calendar to settle.
 (def %back-months
   (fn (_ f n)
-    (def m (%sub (%add (%mul (List ref 0 f) 12) (%sub (List ref 1 f) 1)) n))
-    (%fields (%epoch (%with (%with f 0 (%int-div m 12)) 1 (%add (%int-mod m 12) 1))))))
+    (def m (int- (int+ (int* (List ref 0 f) 12) (int- (List ref 1 f) 1)) n))
+    (%fields (%epoch (%with (%with f 0 (int/ m 12)) 1 (int+ (int% m 12) 1))))))
 
 ; The last time it was hour o'clock: today's, or yesterday's when today's
 ; is still to come.
@@ -81,27 +77,27 @@
     (def at (fn (_ i) (Str8 ref i text)))
     (def run
       (fn (self i ok?)
-        (if (and (< i n) (ok? i)) (self (%add i 1) ok?) i)))
+        (if (and (< i n) (ok? i)) (self (int+ i 1) ok?) i)))
     ((fn (self i acc)
        (if (>= i n) (List reverse acc)
          (let ((c (at i)))
            (match
              ((%alpha? c)
                (let ((j (run i (fn (_ k) (%alpha? (at k))))))
-                 (self j (pair (pair (lit word) (Str8 downcase (Str8 sub i (%sub j i) text))) acc))))
+                 (self j (pair (pair (lit word) (Str8 downcase (Str8 sub i (int- j i) text))) acc))))
              ((%digit? c)
                (let ((j (run i (fn (_ k) (or (%digit? (at k))
-                                             (and (< (%add k 1) n) (> k i)
+                                             (and (< (int+ k 1) n) (> k i)
                                                   (not (null? (Str8 index-of (Str8 sub k 1 text) "-/.:")))
-                                                  (%digit? (at (%add k 1)))))))))
-                 (self j (pair (pair (lit num) (Str8 sub i (%sub j i) text)) acc))))
-             ((and (or (= (Char ->int c) 43) (= (Char ->int c) 45)) (<= (%add i 5) n)
-                   (List all? (fn (_ k) (%digit? (at (%add i k)))) (list 1 2 3 4))
-                   (or (= (%add i 5) n) (not (%digit? (at (%add i 5))))))
-               (let ((hh (%number (Str8 sub (%add i 1) 2 text))) (mm (%number (Str8 sub (%add i 3) 2 text))))
-                 (self (%add i 5)
-                   (pair (pair (lit zone) (%mul (if (= (Char ->int c) 45) -1 1) (%add (%mul hh 3600) (%mul mm 60)))) acc))))
-             (#t (self (%add i 1) acc))))))
+                                                  (%digit? (at (int+ k 1)))))))))
+                 (self j (pair (pair (lit num) (Str8 sub i (int- j i) text)) acc))))
+             ((and (or (= (Char ->int c) 43) (= (Char ->int c) 45)) (<= (int+ i 5) n)
+                   (List all? (fn (_ k) (%digit? (at (int+ i k)))) (list 1 2 3 4))
+                   (or (= (int+ i 5) n) (not (%digit? (at (int+ i 5))))))
+               (let ((hh (%number (Str8 sub (int+ i 1) 2 text))) (mm (%number (Str8 sub (int+ i 3) 2 text))))
+                 (self (int+ i 5)
+                   (pair (pair (lit zone) (int* (if (= (Char ->int c) 45) -1 1) (int+ (int* hh 3600) (int* mm 60)))) acc))))
+             (#t (self (int+ i 1) acc))))))
      0 ())))
 
 ; Whether a word names the thing whose full name is given: at least its
@@ -161,22 +157,22 @@
       ((str=? text "noon") (done (%last-hour f 12)))
       ((str=? text "midnight") (done (%last-hour f 0)))
       ((str=? text "tea") (done (%last-hour f 17)))
-      ((str=? text "am") (done (%with f 3 (%int-mod (if (null? pending) (List ref 3 f) pending) 12))))
-      ((str=? text "pm") (done (%with f 3 (%add (%int-mod (if (null? pending) (List ref 3 f) pending) 12) 12))))
+      ((str=? text "am") (done (%with f 3 (int% (if (null? pending) (List ref 3 f) pending) 12))))
+      ((str=? text "pm") (done (%with f 3 (int+ (int% (if (null? pending) (List ref 3 f) pending) 12) 12))))
       ((str=? text "last") (list f 1 zone #t #f))
       ((not (null? (List find (fn (_ u) (%names? text (first u))) %units)))
-        (done (%back f (%mul n (rest (List find (fn (_ u) (%names? text (first u))) %units))))))
+        (done (%back f (int* n (rest (List find (fn (_ u) (%names? text (first u))) %units))))))
       ((%names? text "month") (done (%back-months f n)))
-      ((%names? text "year") (done (%with f 0 (%sub (List ref 0 f) n))))
+      ((%names? text "year") (done (%with f 0 (int- (List ref 0 f) n))))
       ((not (null? (List find (fn (_ m) (%names? text m)) %month-names)))
-        (let ((m (%add 1 (List index-of (List find (fn (_ m) (%names? text m)) %month-names) %month-names))))
+        (let ((m (int+ 1 (List index-of (List find (fn (_ m) (%names? text m)) %month-names) %month-names))))
           (list (if (and (not (null? pending)) (<= pending 31)) (%with (%with f 1 m) 2 pending) (%with f 1 m)) () zone #t #t)))
       ; last WEEKDAY: that day the week before, or this week's when it has been
       ((and (not (null? pending)) (not (null? (List find (fn (_ d) (%names? text d)) %day-names))))
         (let ((target (List index-of (List find (fn (_ d) (%names? text d)) %day-names) %day-names))
               (today (Assoc get (lit wday) (Date local (%epoch f)))))
-          (let ((diff (%sub today target)))
-            (done (%back f (%mul 86400 (if (<= diff 0) (%add diff (%mul 7 pending)) (%add diff (%mul 7 (%sub pending 1))))))))))
+          (let ((diff (int- today target)))
+            (done (%back f (int* 86400 (if (<= diff 0) (int+ diff (int* 7 pending)) (int+ diff (int* 7 (int- pending 1))))))))))
       (#t st))))
 
 (def git-approxidate
@@ -184,7 +180,7 @@
     (def t (Str8 trim text))
     (if (and (Str8 starts? "@" t) (> (Str8 length t) 1)
              (List all? (fn (_ i) (%digit? (Str8 ref i t))) (List range 1 (Str8 length t))))
-      (%number (Str8 sub 1 (%sub (Str8 length t) 1) t))
+      (%number (Str8 sub 1 (int- (Str8 length t) 1) t))
       (let ((st (List fold %step (list (%fields now) () () #f #f) (%tokens t))))
         (let ((f (List ref 0 st)) (pending (List ref 1 st)) (zone (List ref 2 st)))
           (let ((g (match
@@ -195,7 +191,7 @@
             (match
               ((and (not (List ref 3 st)) (or (null? pending) (> pending 2100))) ())
               ((null? zone) (%epoch g))
-              (#t (%sub (Date to-unix (list (pair (lit year) (List ref 0 g)) (pair (lit month) (List ref 1 g))
+              (#t (int- (Date to-unix (list (pair (lit year) (List ref 0 g)) (pair (lit month) (List ref 1 g))
                                             (pair (lit day) (List ref 2 g)) (pair (lit hour) (List ref 3 g))
                                             (pair (lit minute) (List ref 4 g)) (pair (lit second) (List ref 5 g))))
                         zone)))))))))
@@ -210,13 +206,13 @@
 (def git-rfc2822-date
   (fn (_ epoch zone)
     (def sign (if (Str8 starts? "-" zone) -1 1))
-    (def off (%mul sign (%add (%mul (%number (Str8 sub 1 2 zone)) 3600) (%mul (%number (Str8 sub 3 2 zone)) 60))))
-    (def d (Date from-unix (%add epoch off)))
+    (def off (int* sign (int+ (int* (%number (Str8 sub 1 2 zone)) 3600) (int* (%number (Str8 sub 3 2 zone)) 60))))
+    (def d (Date from-unix (int+ epoch off)))
     (def g (fn (_ k) (Assoc get k d)))
     (Str8 append
       (%short (List ref (g (lit wday)) %day-names)) ", "
       (Str8 str (g (lit day))) " "
-      (%short (List ref (%sub (g (lit month)) 1) %month-names)) " "
+      (%short (List ref (int- (g (lit month)) 1) %month-names)) " "
       (Str8 str (g (lit year))) " "
       (%two (g (lit hour))) ":" (%two (g (lit minute))) ":" (%two (g (lit second))) " " zone)))
 

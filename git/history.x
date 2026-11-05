@@ -24,8 +24,7 @@
 (import git/diff git-tree-patch)
 (import git/quote git-quote-path)
 
-(def %add (prim-ref 'int '+))
-(def %sub (prim-ref 'int '-))
+(import x/core/doors int+ int-)
 
 ; --- ls-tree ---
 
@@ -79,9 +78,9 @@
   (fn (_ gitdir tree path recurse? trees? long? names?)
     (def all (%tree-lines gitdir tree "" #t #t long? names?))
     (def dir? (Str8 ends? "/" path))
-    (def bare (if dir? (Str8 sub 0 (%sub (Str8 length path) 1) path) path))
+    (def bare (if dir? (Str8 sub 0 (int- (Str8 length path) 1) path) path))
     (def name-of (fn (_ line) (let ((i (Str8 index-of "\t" line)))
-                               (Str8 trim (if (null? i) line (Str8 sub (%add i 1) (%sub (Str8 length line) (%add i 1)) line))))))
+                               (Str8 trim (if (null? i) line (Str8 sub (int+ i 1) (int- (Str8 length line) (int+ i 1)) line))))))
     ; the lines under bare/: all of them with -r, else the direct ones
     (def under
       (List filter
@@ -89,7 +88,7 @@
           (let ((n (name-of l)))
             (and (Str8 starts? (Str8 append bare "/") n)
                  (or recurse?
-                     (null? (Str8 index-of "/" (Str8 sub (%add (Str8 length bare) 1) (%sub (Str8 length n) (%add (Str8 length bare) 1)) n)))))))
+                     (null? (Str8 index-of "/" (Str8 sub (int+ (Str8 length bare) 1) (int- (Str8 length n) (int+ (Str8 length bare) 1)) n)))))))
         all))
     (def own (List filter (fn (_ l) (str=? (name-of l) bare)) all))
     (match
@@ -139,11 +138,11 @@
     (def sign (if (Str8 starts? "-" zone) -1 1))
     (def hh (%str->number (Str8 sub 1 2 zone) 10))
     (def mm (%str->number (Str8 sub 3 2 zone) 10))
-    (def d (Date from-unix (%add epoch (* sign (%add (* hh 3600) (* mm 60))))))
+    (def d (Date from-unix (int+ epoch (* sign (int+ (* hh 3600) (* mm 60))))))
     (def g (fn (_ k) (Assoc get k d)))
     (Str8 append
       (List ref (g (lit wday)) %day-names) " "
-      (List ref (%sub (g (lit month)) 1) %month-names) " "
+      (List ref (int- (g (lit month)) 1) %month-names) " "
       (Str8 str (g (lit day))) " "
       (%two (g (lit hour))) ":" (%two (g (lit minute))) ":" (%two (g (lit second))) " "
       (Str8 str (g (lit year))) " " zone)))
@@ -153,8 +152,8 @@
 (def %ident
   (fn (_ line)
     (def gt (Str8 last-index-of ">" line))
-    (def who (Str8 sub 0 (%add gt 1) line))
-    (def tail (Str8 split " " (Str8 trim (Str8 sub (%add gt 1) (%sub (Str8 length line) (%add gt 1)) line))))
+    (def who (Str8 sub 0 (int+ gt 1) line))
+    (def tail (Str8 split " " (Str8 trim (Str8 sub (int+ gt 1) (int- (Str8 length line) (int+ gt 1)) line))))
     (list who (%str->number (first tail) 10) (first (rest tail)))))
 
 ; An author or committer line's date as git prints it by default, for the
@@ -168,10 +167,10 @@
   (fn (_ gitdir sha)
     (def text (git-object-text (git-object-read gitdir sha)))
     (def i (Str8 index-of "\n\n" text))
-    (def body (if (null? i) "" (Str8 sub (%add i 2) (%sub (Str8 length text) (%add i 2)) text)))
+    (def body (if (null? i) "" (Str8 sub (int+ i 2) (int- (Str8 length text) (int+ i 2)) text)))
     ((fn (self lines)
        (if (and (not (null? lines)) (= (Str8 length (List last lines)) 0))
-         (self (List take (%sub (List length lines) 1) lines))
+         (self (List take (int- (List length lines) 1) lines))
          lines))
      (Str8 split "\n" body))))
 
@@ -224,7 +223,7 @@
                  (self
                    (List fold (fn (_ acc p) (insert (pair (%commit-time gitdir (rest p)) (rest p)) acc))
                      (rest pending) parents)
-                   (pair cur seen) (pair cur out) (%add n 1))))))))
+                   (pair cur seen) (pair cur out) (int+ n 1))))))))
      (list (pair (%commit-time gitdir sha) sha)) () () 0)))
 
 (def git-log
@@ -275,7 +274,7 @@
   (fn (_ gitdir sha)
     (def text (git-object-text (git-object-read gitdir sha)))
     (def i (Str8 index-of "\n\n" text))
-    (if (null? i) "" (Str8 sub (%add i 2) (%sub (Str8 length text) (%add i 2)) text))))
+    (if (null? i) "" (Str8 sub (int+ i 2) (int- (Str8 length text) (int+ i 2)) text))))
 
 ; A message's subject -- its first paragraph's lines joined by spaces --
 ; and its body, what follows the blank lines after: (SUBJECT . BODY).
@@ -301,7 +300,7 @@
         (def who (first id))
         (def lt (Str8 index-of " <" who))
         (list (if (null? lt) who (Str8 sub 0 lt who))
-              (if (null? lt) "" (Str8 sub (%add lt 2) (%sub (Str8 length who) (%add lt 3)) who))
+              (if (null? lt) "" (Str8 sub (int+ lt 2) (int- (Str8 length who) (int+ lt 3)) who))
               (%git-date (first (rest id)) (first (rest (rest id)))))))
     (def raw (%raw-message gitdir sha))
     (def sb (%subject-body raw))
@@ -323,13 +322,13 @@
        (match
          ((>= i n) (Str8 join "" (List reverse acc)))
          ((str=? (Str8 sub i 1 fmt) "%")
-           (let ((two (if (<= (%add i 3) n) (one (Str8 sub (%add i 1) 2 fmt)) ()))
-                 (single (if (< (%add i 1) n) (one (Str8 sub (%add i 1) 1 fmt)) ())))
+           (let ((two (if (<= (int+ i 3) n) (one (Str8 sub (int+ i 1) 2 fmt)) ()))
+                 (single (if (< (int+ i 1) n) (one (Str8 sub (int+ i 1) 1 fmt)) ())))
              (match
-               ((not (null? two)) (self (%add i 3) (pair two acc)))
-               ((not (null? single)) (self (%add i 2) (pair single acc)))
-               (#t (self (%add i 1) (pair "%" acc))))))
-         (#t (self (%add i 1) (pair (Str8 sub i 1 fmt) acc)))))
+               ((not (null? two)) (self (int+ i 3) (pair two acc)))
+               ((not (null? single)) (self (int+ i 2) (pair single acc)))
+               (#t (self (int+ i 1) (pair "%" acc))))))
+         (#t (self (int+ i 1) (pair (Str8 sub i 1 fmt) acc)))))
      0 ())))
 
 ; How commits are shown: (KIND . FORMAT), KIND medium, oneline (--oneline),
@@ -337,7 +336,7 @@
 (def %pretty
   (fn (_ o)
     (def spec (or (Opts value o "--format" ()) (Opts value o "--pretty" ())))
-    (def after (fn (_ prefix s) (Str8 sub (Str8 length prefix) (%sub (Str8 length s) (Str8 length prefix)) s)))
+    (def after (fn (_ prefix s) (Str8 sub (Str8 length prefix) (int- (Str8 length s) (Str8 length prefix)) s)))
     (match
       ((null? spec) (pair (if (Opts on? o "--oneline") (lit oneline) (lit medium)) ()))
       ((and (null? (Opts value o "--format" ())) (str=? spec "oneline")) (pair (lit full) ()))
@@ -410,7 +409,7 @@
               (match
                 ((not (null? (git-rev-trouble gitdir bad))) (git-fatal (git-rev-trouble gitdir bad)))
                 ((not (null? base))
-                  (git-fatal (Str8 append "path '" (Str8 sub (%add (Str8 length base) 1) (%sub (Str8 length bad) (%add (Str8 length base) 1)) bad)
+                  (git-fatal (Str8 append "path '" (Str8 sub (int+ (Str8 length base) 1) (int- (Str8 length bad) (int+ (Str8 length base) 1)) bad)
                             "' does not exist in '" base "'")))
                 (#t
                   (list (lit err)
@@ -456,7 +455,7 @@
     ((fn (self es i acc)
        (if (null? es) (List reverse acc)
          (let ((e (first es)))
-           (self (rest es) (%add i 1)
+           (self (rest es) (int+ i 1)
              (pair (Str8 append (Str8 sub 0 7 (first (rest e))) " " name "@{" (Str8 str i) "}: " (first (rest (rest (rest e)))) "\n") acc)))))
      entries 0 ())))
 

@@ -31,8 +31,7 @@
 (import x/sys/posix Sys)
 (import git/config git-config-value)
 
-(def %add (prim-ref 'int '+))
-(def %sub (prim-ref 'int '-))
+(import x/core/doors int+ int-)
 
 ; --- a glob on one path segment ---
 
@@ -41,18 +40,18 @@
 (def %class
   (fn (_ p i np c)
     (def negated (if (< i np) (if (or (= (Str8 ref i p) #\!) (= (Str8 ref i p) #\^)) #t #f) #f))
-    (def start (if negated (%add i 1) i))
+    (def start (if negated (int+ i 1) i))
     ((fn (self k hit first?)
        (if (>= k np) (pair #f np)
          (do (def ch (Str8 ref k p))
              (match
-               ((and (= ch #\]) (not first?)) (pair (if negated (not hit) hit) (%add k 1)))
-               ((and (< (%add k 2) np) (= (Str8 ref (%add k 1) p) #\-) (not (= (Str8 ref (%add k 2) p) #\])))
-                 (self (%add k 3)
+               ((and (= ch #\]) (not first?)) (pair (if negated (not hit) hit) (int+ k 1)))
+               ((and (< (int+ k 2) np) (= (Str8 ref (int+ k 1) p) #\-) (not (= (Str8 ref (int+ k 2) p) #\])))
+                 (self (int+ k 3)
                        (or hit (and (>= (Char ->int c) (Char ->int ch))
-                                    (<= (Char ->int c) (Char ->int (Str8 ref (%add k 2) p)))))
+                                    (<= (Char ->int c) (Char ->int (Str8 ref (int+ k 2) p)))))
                        #f))
-               (#t (self (%add k 1) (or hit (= ch c)) #f))))))
+               (#t (self (int+ k 1) (or hit (= ch c)) #f))))))
      start #f #t)))
 
 ; Does the glob p match the whole of s?  Characters, so a multibyte name
@@ -63,18 +62,18 @@
       (do (def c (Str8 ref i p))
           (match
             ((= c #\*)
-              (if (self p (%add i 1) np s j ns) #t
-                (if (< j ns) (self p i np s (%add j 1) ns) #f)))
+              (if (self p (int+ i 1) np s j ns) #t
+                (if (< j ns) (self p i np s (int+ j 1) ns) #f)))
             ((>= j ns) #f)
-            ((= c #\?) (self p (%add i 1) np s (%add j 1) ns))
+            ((= c #\?) (self p (int+ i 1) np s (int+ j 1) ns))
             ((= c #\[)
-              (do (def r (%class p (%add i 1) np (Str8 ref j s)))
-                  (if (first r) (self p (rest r) np s (%add j 1) ns) #f)))
+              (do (def r (%class p (int+ i 1) np (Str8 ref j s)))
+                  (if (first r) (self p (rest r) np s (int+ j 1) ns) #f)))
             ((= c #\\)
-              (if (< (%add i 1) np)
-                (if (= (Str8 ref (%add i 1) p) (Str8 ref j s)) (self p (%add i 2) np s (%add j 1) ns) #f)
+              (if (< (int+ i 1) np)
+                (if (= (Str8 ref (int+ i 1) p) (Str8 ref j s)) (self p (int+ i 2) np s (int+ j 1) ns) #f)
                 #f))
-            (#t (if (= c (Str8 ref j s)) (self p (%add i 1) np s (%add j 1) ns) #f)))))))
+            (#t (if (= c (Str8 ref j s)) (self p (int+ i 1) np s (int+ j 1) ns) #f)))))))
 
 (def %segment? (fn (_ p s) (%glob? p 0 (Str8 length p) s 0 (Str8 length s))))
 
@@ -90,14 +89,14 @@
     (match
       ((null? ps) taken)
       ((str=? (first ps) "**")
-        (if (null? (rest ps)) (if (null? segs) () (%add taken (List length segs)))
+        (if (null? (rest ps)) (if (null? segs) () (int+ taken (List length segs)))
           ((fn (try ss k)
              (if (null? ss) ()
                (do (def r (self (rest ps) ss k))
-                   (if (null? r) (try (rest ss) (%add k 1)) r))))
+                   (if (null? r) (try (rest ss) (int+ k 1)) r))))
            segs taken)))
       ((null? segs) ())
-      ((%segment? (first ps) (first segs)) (self (rest ps) (rest segs) (%add taken 1)))
+      ((%segment? (first ps) (first segs)) (self (rest ps) (rest segs) (int+ taken 1)))
       (#t ()))))
 
 ; A rule: (NEGATED? DIR-ONLY? ANCHORED? SEGMENTS BASE SOURCE LINE TEXT),
@@ -109,13 +108,13 @@
     (def l (%trim-trailing line))
     (if (or (= (Str8 length l) 0) (Str8 starts? "#" l)) ()
       (do (def negated (Str8 starts? "!" l))
-          (def body0 (if negated (Str8 sub 1 (%sub (Str8 length l) 1) l)
-                       (if (Str8 starts? "\\!" l) (Str8 sub 1 (%sub (Str8 length l) 1) l)
-                         (if (Str8 starts? "\\#" l) (Str8 sub 1 (%sub (Str8 length l) 1) l) l))))
+          (def body0 (if negated (Str8 sub 1 (int- (Str8 length l) 1) l)
+                       (if (Str8 starts? "\\!" l) (Str8 sub 1 (int- (Str8 length l) 1) l)
+                         (if (Str8 starts? "\\#" l) (Str8 sub 1 (int- (Str8 length l) 1) l) l))))
           (def dir-only (Str8 ends? "/" body0))
-          (def body1 (if dir-only (Str8 sub 0 (%sub (Str8 length body0) 1) body0) body0))
+          (def body1 (if dir-only (Str8 sub 0 (int- (Str8 length body0) 1) body0) body0))
           (def anchored (not (null? (Str8 index-of "/" body1))))
-          (def body (if (Str8 starts? "/" body1) (Str8 sub 1 (%sub (Str8 length body1) 1) body1) body1))
+          (def body (if (Str8 starts? "/" body1) (Str8 sub 1 (int- (Str8 length body1) 1) body1) body1))
           (if (= (Str8 length body) 0) ()
             (list negated dir-only anchored (Str8 split "/" body) base source at l))))))
 
@@ -129,8 +128,8 @@
   (fn (self s)
     (def n (Str8 length s))
     (if (= n 0) s
-      (if (= (Str8 ref (%sub n 1) s) #\space)
-        (if (and (> n 1) (= (Str8 ref (%sub n 2) s) #\\)) s (self (Str8 sub 0 (%sub n 1) s)))
+      (if (= (Str8 ref (int- n 1) s) #\space)
+        (if (and (> n 1) (= (Str8 ref (int- n 2) s) #\\)) s (self (Str8 sub 0 (int- n 1) s)))
         s))))
 
 ; Does the rule match the path (relative to the repository), which is a
@@ -139,7 +138,7 @@
   (fn (_ rule path dir?)
     (def base (first (rest (rest (rest (rest rule))))))
     (if (not (Str8 starts? base path)) #f
-      (do (def rel (Str8 sub (Str8 length base) (%sub (Str8 length path) (Str8 length base)) path))
+      (do (def rel (Str8 sub (Str8 length base) (int- (Str8 length path) (Str8 length base)) path))
           (def segs (Str8 split "/" rel))
           (def n (List length segs))
           (def dir-only (first (rest rule)))
@@ -152,8 +151,8 @@
             ((fn (self ss i)
                (if (null? ss) #f
                  (if (%segment? (first ps) (first ss))
-                   (if (< i (%sub n 1)) #t (if dir-only dir? #t))
-                   (self (rest ss) (%add i 1)))))
+                   (if (< i (int- n 1)) #t (if dir-only dir? #t))
+                   (self (rest ss) (int+ i 1)))))
              segs 0))))))
 
 ; The rules of a file, latest first, or () when there is no file; source
@@ -164,7 +163,7 @@
       ((fn (self lines at acc)
          (if (null? lines) acc
            (let ((r (%rule (first lines) base source at)))
-             (self (rest lines) (%add at 1) (if (null? r) acc (pair r acc))))))
+             (self (rest lines) (int+ at 1) (if (null? r) acc (pair r acc))))))
        (Str8 split "\n" (File read-all path)) 1 ()))))
 
 ; core.excludesFile, ~/ for the home directory, or git's default in the
@@ -176,7 +175,7 @@
     (def home (env "HOME"))
     (match
       ((not (null? named))
-        (if (and (Str8 starts? "~/" named) (not (null? home))) (Str8 append home (Str8 sub 1 (%sub (Str8 length named) 1) named)) named))
+        (if (and (Str8 starts? "~/" named) (not (null? home))) (Str8 append home (Str8 sub 1 (int- (Str8 length named) 1) named)) named))
       ((not (null? (env "XDG_CONFIG_HOME"))) (Str8 append (env "XDG_CONFIG_HOME") "/git/ignore"))
       ((not (null? home)) (Str8 append home "/.config/git/ignore"))
       (#t ()))))
@@ -187,7 +186,7 @@
     ((fn (self i acc)
        (def j (Str8 last-index-of "/" (Str8 sub 0 i path)))
        (if (null? j) (pair "" acc)
-         (self j (pair (Str8 sub 0 (%add j 1) path) acc))))
+         (self j (pair (Str8 sub 0 (int+ j 1) path) acc))))
      (Str8 length path) ())))
 
 (def git-ignore-matcher
@@ -228,7 +227,7 @@
       ((fn (self ds)
          (if (null? ds) (decide path dir?)
            (if (str=? (first ds) "") (self (rest ds))
-             (do (def r (decide (Str8 sub 0 (%sub (Str8 length (first ds)) 1) (first ds)) #t))
+             (do (def r (decide (Str8 sub 0 (int- (Str8 length (first ds)) 1) (first ds)) #t))
                  (if (or (null? r) (first r)) (self (rest ds)) r)))))
        (%dirs-above path)))))
 
