@@ -295,6 +295,17 @@
     (def untracked (first (rest (rest lists))))
     (def unmerged (first (rest (rest (rest lists)))))
     (def merging? (File exists? (Str8 append gitdir "/MERGE_HEAD")))
+    ; a cherry-pick or a revert in progress: (VERB COMMAND SHA), or ()
+    (def picking
+      (match
+        ((File exists? (Str8 append gitdir "/CHERRY_PICK_HEAD"))
+          (list "cherry-picking" "cherry-pick" (Str8 trim (File read-all (Str8 append gitdir "/CHERRY_PICK_HEAD")))))
+        ((File exists? (Str8 append gitdir "/REVERT_HEAD"))
+          (list "reverting" "revert" (Str8 trim (File read-all (Str8 append gitdir "/REVERT_HEAD")))))
+        (#t ())))
+    ; git's hints to unstage are left out while it concludes a merge or a
+    ; cherry-pick, not a revert
+    (def quiet? (or merging? (and (not (null? picking)) (str=? (first (rest picking)) "cherry-pick"))))
     (def section
       (fn (_ title hints items)
         (if (null? items) ""
@@ -309,10 +320,18 @@
         ((not (null? unmerged))
           "You have unmerged paths.\n  (fix conflicts and run \"git commit\")\n  (use \"git merge --abort\" to abort the merge)\n\n")
         (#t "All conflicts fixed but you are still merging.\n  (use \"git commit\" to conclude merge)\n\n"))
-      ; during a merge, what is staged carries no hint to unstage it
-      (section "Changes to be committed:" (if merging? () (list (pair "git restore --staged <file>..." "to unstage"))) staged)
+      (if (null? picking) ""
+        (let ((cmd (first (rest picking))))
+          (Str8 append "You are currently " (first picking) " commit " (Str8 sub 0 7 (first (rest (rest picking)))) ".\n"
+            (if (null? unmerged)
+              (Str8 append "  (all conflicts fixed: run \"git " cmd " --continue\")\n")
+              (Str8 append "  (fix conflicts and run \"git " cmd " --continue\")\n"))
+            "  (use \"git " cmd " --skip\" to skip this patch)\n"
+            "  (use \"git " cmd " --abort\" to cancel the " cmd " operation)\n\n")))
+      (section "Changes to be committed:" (if quiet? () (list (pair "git restore --staged <file>..." "to unstage"))) staged)
       (if (null? unmerged) ""
         (Str8 append "Unmerged paths:\n"
+          (if quiet? "" "  (use \"git restore --staged <file>...\" to unstage)\n")
           (if (List all? (fn (_ u) (or (str=? (first u) "UU") (str=? (first u) "AA"))) unmerged)
             "  (use \"git add <file>...\" to mark resolution)\n"
             "  (use \"git add/rm <file>...\" as appropriate to mark resolution)\n")

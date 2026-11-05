@@ -47,7 +47,7 @@ collected after it.
       (list (first (rest (rest r))) (if (null? more) "" (first more)) (%rv-plain text)))))
 (def %rv-g
   (fn (_ ops)
-    (def r (Proc capture (pair "/bin/sh" (pair "-c" (pair "cd \"$0\" && exec git \"$@\" 2>../git.err" (pair (Str8 append %rv-d "/g/r") ops))))))
+    (def r (Proc capture (pair "/bin/sh" (pair "-c" (pair "cd \"$0\" && exec git -c advice.statusHints=true -c advice.commitBeforeMerge=true \"$@\" 2>../git.err" (pair (Str8 append %rv-d "/g/r") ops))))))
     (list (first r) (rest r) (%rv-plain (File read-all (Str8 append %rv-d "/g/git.err"))))))
 ; the lines whose answers differ, as (OPS X GIT)
 (def %rv-steps
@@ -64,7 +64,7 @@ collected after it.
         (List map (fn (_ args) (list args (apply git-oracle-in (pair (Str8 append %rv-d "/x/r") args)) (apply git-oracle-in (pair (Str8 append %rv-d "/g/r") args))))
           (list (list "rev-parse" "HEAD") (list "log" "-1" "--format=%B") (list "ls-files" "-s") (list "status" "--porcelain")))
         (List map (fn (_ p) (list p (%rv-file "x" p) (%rv-file "g" p)))
-          (list "a" "new" "d/f" ".git/REVERT_HEAD" ".git/MERGE_MSG"))))))
+          (list "a" "new" "d/f" ".git/REVERT_HEAD" ".git/MERGE_MSG" ".git/logs/HEAD"))))))
 (%rv-twins "")
 (write (list (%rv-steps (list (list "revert" "--no-edit" "HEAD") (list "revert" "HEAD") (list "revert" "--no-edit" "HEAD")))
              (%rv-same)))
@@ -105,6 +105,19 @@ collected after it.
 ```
 ---
     (() ())
+
+### status tells of it; --skip gives it up, --quit forgets it
+
+```git
+(%rv-twins " && printf 'a\\nCHANGED\\nc\\n' > a && git commit -qam three")
+(def %rv-s1 (%rv-steps (list (list "revert" "--no-edit" "HEAD~1") (list "status") (list "revert" "--skip") (list "revert" "--skip"))))
+(def %rv-s2 (%rv-same))
+(write (list %rv-s1 %rv-s2
+             (%rv-steps (list (list "revert" "--no-edit" "HEAD~1") (list "revert" "--quit") (list "status")))
+             (%rv-same)))
+```
+---
+    (() () () ())
 
 ## refusals
 

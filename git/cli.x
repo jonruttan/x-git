@@ -37,6 +37,7 @@
 (import git/config git-config git-config-parameters)
 (import git/reset git-reset)
 (import git/revert git-revert)
+(import git/pick git-cherry-pick)
 
 (import x/core/doors str-byte-len)
 
@@ -85,6 +86,7 @@
         (pair "config" git-config)
         (pair "reset" git-reset)
         (pair "revert" git-revert)
+        (pair "cherry-pick" git-cherry-pick)
         (pair "reflog" git-reflog)))
 
 ; The command a name runs, or ().
