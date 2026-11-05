@@ -27,29 +27,31 @@
 (import git/commands git-no-repo)
 (import git/refs git-commit-of git-tree-of git-headers)
 (import git/index git-status-lists git-tree-files)
-(import git/stage git-read-entries git-write-tree! git-commit-write! git-merge-state-clear! git-message-strip git-commit)
+(import git/stage git-read-entries git-write-tree! git-commit-write-by! git-commit-report-idents git-merge-state-clear! git-message-strip git-commit)
 (import git/merge git-merge-place! git-restore-head!)
 (import git/remote git-write-ref! git-current-branch)
 (import git/threeway git-tree-flat)
 (import git/diff git-commit-summary)
-(import git/history git-ident-date)
 (import git/config git-config-value)
 (import git/reflog git-ref-log!)
 
 (import x/core/doors int-)
 
-; A refusal as the sequencer words one: the error, then "revert failed".
-(def %failed
-  (fn (_ text) (list (lit err) (Str8 append text "fatal: revert failed\n") 128)))
+; A refusal as the sequencer words one: the error, then "CMD failed".
+(def git-pick-failed
+  (fn (_ cmd text) (list (lit err) (Str8 append text "fatal: " cmd " failed\n") 128)))
+(def %failed (fn (_ text) (git-pick-failed "revert" text)))
 
 (def git-revert-options
-  (Opts declare "git revert" "[--no-edit] [-n] <commit> | (--continue | --abort)" ()
+  (Opts declare "git revert" "[--no-edit] [-n] <commit> | (--continue | --skip | --abort | --quit)" ()
     (list
       (Opts flag "--no-edit" "Commit with git's message, unedited")
       (Opts flag "-e" "--edit" "Edit the message first (the default)")
       (Opts flag "-n" "--no-commit" "Leave the change staged, uncommitted")
       (Opts flag "--continue" "Commit once the conflicts are resolved")
-      (Opts flag "--abort" "Give up, the working directory and index set back"))))
+      (Opts flag "--skip" "Give the commit up, the working directory and index set back")
+      (Opts flag "--abort" "Give up, the working directory and index set back")
+      (Opts flag "--quit" "Forget the revert, its changes and conflicts left"))))
 
 ; git's message for a revert: a revert of a revert reapplies.
 (def %message
@@ -83,37 +85,68 @@
     (def status (Proc run! (list "/bin/sh" "-c" (Str8 append (%editor gitdir) " \"$@\"") (%editor gitdir) path)))
     (if (not (= status 0)) () (git-message-strip (File read-all path)))))
 
-(def %hints
-  (Str8 join ""
-    (List map (fn (_ l) (Str8 append "hint: " l "\n"))
-      (list "After resolving the conflicts, mark them with"
-            "\"git add/rm <pathspec>\", then run"
-            "\"git revert --continue\"."
-            "You can instead skip this commit with \"git revert --skip\"."
-            "To abort and get back to the state before \"git revert\","
-            "run \"git revert --abort\"."
-            "Disable this message with \"git config set advice.mergeConflict false\""))))
+(def git-pick-editor (fn (_ gitdir) (%editor gitdir)))
+(def git-pick-edit (fn (_ gitdir msg branch) (%edit gitdir msg branch)))
 
-; The revert committed: the branch moved, git's report of it after what
-; the merge said.
-(def %commit!
-  (fn (_ gitdir head message said)
+; git's hints after a conflict, for revert or cherry-pick.
+(def git-pick-hints
+  (fn (_ cmd)
+    (Str8 join ""
+      (List map (fn (_ l) (Str8 append "hint: " l "\n"))
+        (list "After resolving the conflicts, mark them with"
+              "\"git add/rm <pathspec>\", then run"
+              (Str8 append "\"git " cmd " --continue\".")
+              (Str8 append "You can instead skip this commit with \"git " cmd " --skip\".")
+              (Str8 append "To abort and get back to the state before \"git " cmd "\",")
+              (Str8 append "run \"git " cmd " --abort\".")
+              "Disable this message with \"git config set advice.mergeConflict false\"")))))
+(def %hints (git-pick-hints "revert"))
+
+; A revert or a cherry-pick in progress, either of which --abort and
+; --continue take up.
+(def git-pick-in-progress?
+  (fn (_ gitdir)
+    (or (File exists? (Str8 append gitdir "/REVERT_HEAD")) (File exists? (Str8 append gitdir "/CHERRY_PICK_HEAD")))))
+
+; A revert or a cherry-pick committed: the index's tree on head, by the
+; author given (or () for git's), the branch moved and logged as action
+; logs it, git's report of it after what the merge said.
+(def git-pick-commit!
+  (fn (_ gitdir head message said by action)
     (def tree (git-write-tree! gitdir (git-read-entries gitdir)))
-    (def sha (git-commit-write! gitdir tree (list head) message))
+    (def sha (git-commit-write-by! gitdir tree (list head) message by))
     (def branch (git-current-branch gitdir))
     (if (null? branch)
       (File write-all (Str8 append gitdir "/HEAD") (Str8 append sha "\n"))
       (git-write-ref! gitdir (Str8 append "refs/heads/" branch) sha))
     (git-ref-log! gitdir (if (null? branch) "HEAD" (Str8 append "refs/heads/" branch)) head sha
-      (Str8 append (or (Sys getenv "GIT_REFLOG_ACTION") "revert") ": " (first (Str8 split "\n" message))))
-    (def author (rest (List find (fn (_ kv) (str=? (first kv) "author")) (git-headers gitdir sha))))
+      (Str8 append (or (Sys getenv "GIT_REFLOG_ACTION") action) ": " (first (Str8 split "\n" message))))
     (list (lit out)
       (Str8 append said "[" (if (null? branch) "detached HEAD" branch) " " (Str8 sub 0 7 sha) "] " (first (Str8 split "\n" message)) "\n"
-        " Date: " (git-ident-date author) "\n"
-        (git-commit-summary gitdir (git-tree-files gitdir (git-tree-of gitdir head)) (git-tree-files gitdir tree)))
+        (git-commit-report-idents gitdir sha #t)
+        ; a commit that changes nothing has no summary line
+        (if (str=? tree (git-tree-of gitdir head)) ""
+          (git-commit-summary gitdir (git-tree-files gitdir (git-tree-of gitdir head)) (git-tree-files gitdir tree))))
       0)))
 
+(def %commit!
+  (fn (_ gitdir head message said) (git-pick-commit! gitdir head message said () "revert")))
+
 (def %in-progress? (fn (_ gitdir) (File exists? (Str8 append gitdir "/REVERT_HEAD"))))
+
+; A revert or a cherry-pick given up (--abort, --skip): the working
+; directory and index back at HEAD, the state cleared, and the reset to
+; HEAD that does it in git logged as git logs it.
+(def git-pick-give-up!
+  (fn (_ wd gitdir)
+    (def head (git-commit-of gitdir "HEAD"))
+    (def branch (git-current-branch gitdir))
+    (git-restore-head! wd gitdir)
+    (git-merge-state-clear! gitdir)
+    (File write-all (Str8 append gitdir "/ORIG_HEAD") (Str8 append head "\n"))
+    (git-ref-log! gitdir (if (null? branch) "HEAD" (Str8 append "refs/heads/" branch)) head head
+      (Str8 append "reset: moving to " head))
+    (list (lit out) "" 0)))
 
 (def git-revert
   (fn (_ wd gitdir ops)
@@ -126,11 +159,17 @@
       ((null? gitdir) (git-no-repo))
       ; giving up: the working directory and index back at HEAD
       ((Opts on? o "--abort")
-        (if (not (%in-progress? gitdir)) (%failed "error: no cherry-pick or revert in progress\n")
-          (do (git-restore-head! wd gitdir) (git-merge-state-clear! gitdir) (list (lit out) "" 0))))
+        (if (not (git-pick-in-progress? gitdir)) (%failed "error: no cherry-pick or revert in progress\n")
+          (git-pick-give-up! wd gitdir)))
+      ; skipping the one commit: as giving up, when it is a revert
+      ((Opts on? o "--skip")
+        (if (not (%in-progress? gitdir)) (%failed "error: no revert in progress\n")
+          (git-pick-give-up! wd gitdir)))
+      ; quitting: the state forgotten, the changes and conflicts left
+      ((Opts on? o "--quit") (do (git-merge-state-clear! gitdir) (list (lit out) "" 0)))
       ; going on: the revert committed as commit concludes it
       ((Opts on? o "--continue")
-        (if (not (%in-progress? gitdir)) (%failed "error: no cherry-pick or revert in progress\n")
+        (if (not (git-pick-in-progress? gitdir)) (%failed "error: no cherry-pick or revert in progress\n")
           (git-commit wd gitdir ())))
       ((null? operands) (list (lit err) (Opts usage git-revert-options) 129))
       ((not (null? (first (rest (rest (rest (git-status-lists wd gitdir)))))))
@@ -184,4 +223,5 @@
                                 (list (lit err) "Aborting commit due to empty commit message.\n" 1))
                               (#t (%commit! gitdir head edited (Str8 join "" (first (rest (rest placed)))))))))))))))))))))
 
-(provide git/revert git-revert git-revert-options)
+(provide git/revert git-revert git-revert-options git-pick-failed git-pick-editor git-pick-edit git-pick-hints
+  git-pick-in-progress? git-pick-commit! git-pick-give-up!)

@@ -25,13 +25,14 @@
 (import x/codec/hex Hex)
 (import git/objects git-hash git-object-write! git-object-read git-object-text git-read-file git-write-file!)
 (import git/commands git-fatal git-no-repo git-unknown-option git-strip-slash)
-(import git/refs git-ref-read git-rev-parse git-tree-of git-commit-of)
+(import git/refs git-ref-read git-rev-parse git-tree-of git-commit-of git-headers)
 (import git/index git-index-read git-status-lists git-tree-files git-untracked-with git-long-status)
 (import git/ignore git-ignorer)
 (import git/diff git-commit-summary)
 (import git/config git-config-value)
 (import git/ident git-signature)
 (import git/reflog git-ref-log!)
+(import git/history git-ident-date)
 
 (import x/core/doors int+ int- int* ptr-set! str-make str->ptr ptr->int int->ptr mem-copy str-byte-len int/ int%)
 
@@ -294,11 +295,12 @@
 
 
 ; A commit object written: its tree, its parents, its message, the author
-; and committer as git finds them.  Answers its name, or () when the
-; identity is unknown.
-(def git-commit-write!
-  (fn (_ gitdir tree parents message)
-    (def author (git-signature gitdir "AUTHOR"))
+; given (a commit's `NAME <EMAIL> WHEN`, as a cherry-pick keeps it) or ()
+; for the one git finds, and the committer git finds.  Answers its name,
+; or () when the identity is unknown.
+(def git-commit-write-by!
+  (fn (_ gitdir tree parents message by)
+    (def author (if (null? by) (git-signature gitdir "AUTHOR") by))
     (def committer (git-signature gitdir "COMMITTER"))
     (if (or (null? author) (null? committer)) ()
       (let ((body (Str8 append "tree " tree "\n"
@@ -308,6 +310,28 @@
                     "\n" message (if (Str8 ends? "\n" message) "" "\n"))))
         (git-object-write! gitdir "commit" body 0 (str-byte-len body))))))
 
+(def git-commit-write!
+  (fn (_ gitdir tree parents message) (git-commit-write-by! gitdir tree parents message ())))
+
+; The lines git's report of a commit it made carries after the first:
+; " Author: " when the author is not the committer, " Date: " (the
+; author's) when dated? -- as a pick's report always is.
+(def %who (fn (_ line) (Str8 sub 0 (int+ (Str8 last-index-of ">" line) 1) line)))
+(def git-commit-report-idents
+  (fn (_ gitdir sha dated?)
+    (def hs (git-headers gitdir sha))
+    (def author (rest (List find (fn (_ kv) (str=? (first kv) "author")) hs)))
+    (def committer (rest (List find (fn (_ kv) (str=? (first kv) "committer")) hs)))
+    (Str8 append
+      (if (str=? (%who author) (%who committer)) "" (Str8 append " Author: " (%who author) "\n"))
+      (if dated? (Str8 append " Date: " (git-ident-date author) "\n") ""))))
+
+; The commit a cherry-pick in progress picks, or ().
+(def git-picking
+  (fn (_ gitdir)
+    (def path (Str8 append gitdir "/CHERRY_PICK_HEAD"))
+    (if (File exists? path) (Str8 trim (File read-all path)) ())))
+
 ; The merge in progress: the commits MERGE_HEAD names, or () when none.
 (def %merge-heads
   (fn (_ gitdir)
@@ -315,13 +339,13 @@
     (if (not (File exists? path)) ()
       (List filter (fn (_ l) (= (Str8 length l) 40)) (Str8 split "\n" (File read-all path))))))
 
-; The files a merge or a revert in progress leaves, removed once it is
-; concluded or abandoned.
+; The files a merge, a revert or a cherry-pick in progress leaves, removed
+; once it is concluded or abandoned.
 (def git-merge-state-clear!
   (fn (_ gitdir)
     (List for-each
       (fn (_ f) (let ((p (Str8 append gitdir "/" f))) (when (File exists? p) (File unlink p))))
-      (list "MERGE_HEAD" "MERGE_MSG" "MERGE_MODE" "AUTO_MERGE" "REVERT_HEAD"))))
+      (list "MERGE_HEAD" "MERGE_MSG" "MERGE_MODE" "AUTO_MERGE" "REVERT_HEAD" "CHERRY_PICK_HEAD"))))
 
 ; A message with git's comment lines (those starting #) taken out and its
 ; trailing blank lines dropped, as git cleans one that was edited; "" when
@@ -367,11 +391,15 @@
     (def o (Opts parse git-commit-options ops))
     (def merging (if (null? gitdir) () (%merge-heads gitdir)))
     (def merge-msg-path (if (null? gitdir) () (Str8 append gitdir "/MERGE_MSG")))
+    ; a cherry-pick in progress concludes with the picked commit's author
+    (def picking (if (null? gitdir) () (git-picking gitdir)))
     ; a merge in progress concludes with the message it left, as --no-edit
-    ; takes it; a revert's, its comment lines taken out
+    ; takes it; a revert's or a cherry-pick's, its comment lines taken out
     (def msg (or (Opts value o "-m" ())
                  (if (and (not (null? merging)) (File exists? merge-msg-path)) (File read-all merge-msg-path) ())
-                 (if (and (not (null? gitdir)) (File exists? (Str8 append gitdir "/REVERT_HEAD")) (File exists? merge-msg-path))
+                 (if (and (not (null? gitdir))
+                          (or (not (null? picking)) (File exists? (Str8 append gitdir "/REVERT_HEAD")))
+                          (File exists? merge-msg-path))
                    (git-message-strip (File read-all merge-msg-path)) ())))
     (def entries (if (null? gitdir) () (%read-entries gitdir)))
     (def unmerged
@@ -396,7 +424,9 @@
             ; a merge commit may record the tree it had; any other must change it
             (if (and (null? merging) (not (null? parent-tree)) (str=? tree parent-tree))
               (list (lit out) (git-long-status gitdir (git-status-lists wd gitdir)) 1)
-              (let ((sha (git-commit-write! gitdir tree (List append (if (null? parent) () (list parent)) merging) msg))
+              (let ((sha (git-commit-write-by! gitdir tree (List append (if (null? parent) () (list parent)) merging) msg
+                           (if (null? picking) ()
+                             (rest (List find (fn (_ kv) (str=? (first kv) "author")) (git-headers gitdir picking))))))
                     (branch (if (Str8 starts? "ref: refs/heads/" head) (Str8 sub 16 (int- (Str8 length head) 16) head) ())))
                 (do (def ref-path (if (null? branch) (Str8 append gitdir "/HEAD") (Str8 append gitdir "/" (Str8 sub 5 (int- (Str8 length head) 5) head))))
                     ; replaced, not rewritten: the file before it may be read-only
@@ -404,7 +434,8 @@
                     (git-write-file! ref-path (Str8 append sha "\n") 41)
                     (git-ref-log! gitdir (if (null? branch) "HEAD" (Str8 append "refs/heads/" branch)) parent sha
                       (Str8 append (or (Sys getenv "GIT_REFLOG_ACTION")
-                                       (match ((null? parent) "commit (initial)") ((not (null? merging)) "commit (merge)") (#t "commit")))
+                                       (match ((null? parent) "commit (initial)") ((not (null? merging)) "commit (merge)")
+                                              ((not (null? picking)) "commit (cherry-pick)") (#t "commit")))
                         ": " (first (Str8 split "\n" msg))))
                     (git-merge-state-clear! gitdir)
                     (if (Opts on? o "-q") (list (lit out) "" 0)
@@ -412,6 +443,7 @@
                         (Str8 append
                           "[" (if (null? branch) "detached HEAD" branch) (if (null? parent) " (root-commit) " " ") (Str8 sub 0 7 sha) "] "
                           (first (Str8 split "\n" msg)) "\n"
+                          (git-commit-report-idents gitdir sha (not (null? picking)))
                           ; a merge commit's line says what it is and nothing more
                           (if (null? merging) (git-commit-summary gitdir (git-tree-files gitdir parent-tree) (git-tree-files gitdir tree)) ""))
                         0)))))))))))
@@ -430,4 +462,5 @@
 (def git-write-tree! (fn (_ gitdir entries) (%write-tree! gitdir entries "")))
 
 (provide git/stage git-add git-add-options git-commit git-commit-options git-index-write!
-  git-read-entries git-commit-write! git-write-tree! git-merge-state-clear! git-message-strip)
+  git-read-entries git-commit-write! git-commit-write-by! git-commit-report-idents git-picking
+  git-write-tree! git-merge-state-clear! git-message-strip)

@@ -46,7 +46,9 @@ the kernel and x are installed (x-os).
   configuration, and the clock -- the branch moved; the summary as git prints it, its
   line counts from a line diff.  A merge in progress is concluded: its
   second parent from `MERGE_HEAD`, its message from `MERGE_MSG` when no
-  `-m` is given; a path still in conflict refuses it
+  `-m` is given; a path still in conflict refuses it.  So is a revert or
+  a cherry-pick, a cherry-pick by the picked commit's author
+- status tells of a revert or a cherry-pick in progress, as git does
 - `diff [--cached] [--stat] [<revision> [<revision>]] [--] [<path>...]`:
   git's unified form, hunks with three lines of context headed by the
   line git's default takes for a function; the edit script as git's
@@ -120,12 +122,21 @@ the kernel and x are installed (x-os).
   set too (mixed) or the index and the working directory (hard), a merge
   in progress given up; with paths, their index entries alone.  git's
   report of the changes left unstaged, or of where a hard reset lands
-- `revert [--no-edit] [-n] <commit>`, `revert --continue | --abort`: a
-  commit's change undone by merge's three-way merge and committed with
-  git's message (`Revert "..."`, `Reapply "..."` for a revert of a
-  revert), edited first in git's editor unless `--no-edit`; a conflict
-  left with `REVERT_HEAD` and `MERGE_MSG` for `--continue` or `commit`.
-  One commit at a time; a merge, which needs `-m`, is refused
+- `revert [--no-edit] [-n] <commit>`, `revert --continue | --skip |
+  --abort | --quit`: a commit's change undone by merge's three-way merge
+  and committed with git's message (`Revert "..."`, `Reapply "..."` for
+  a revert of a revert), edited first in git's editor unless
+  `--no-edit`; a conflict left with `REVERT_HEAD` and `MERGE_MSG` for
+  `--continue` or `commit`.  One commit at a time; a merge, which needs
+  `-m`, is refused
+- `cherry-pick [-e] [-n] [-x] [--ff] [--allow-empty] <commit>`,
+  `cherry-pick --continue | --skip | --abort | --quit`: a commit's change
+  made again on HEAD by the same merge and committed with its own
+  message and author (`-x` notes the commit picked, `-e` edits the
+  message first, `--ff` moves the branch to the commit when HEAD is its
+  parent); a conflict, or a pick that changes nothing, left with
+  `CHERRY_PICK_HEAD` and `MERGE_MSG` for `--continue` or `commit`.  One
+  commit at a time, not a range; a merge, which needs `-m`, is refused
 - `rm [-r] [--cached] [-f] <pathspec>...`, `mv <source>... <destination>`;
   `.gitignore`, `.git/info/exclude` and `core.excludesFile` (or
   `~/.config/git/ignore`) as gitignore(5) reads them, and
@@ -204,7 +215,8 @@ DIR holds this tree as `git` and x-ssh as `ssh`.
     git/serve.x       upload-pack and receive-pack, the services
     git/merge.x       merge and pull
     git/reset.x       reset
-    git/revert.x      revert
+    git/revert.x      revert, and the machinery cherry-pick shares
+    git/pick.x        cherry-pick
     git/threeway.x    the merge base, files and trees merged three ways
     git/renames.x     renames, as git finds them
     git/paths.x       rm, mv
