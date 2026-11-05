@@ -65,7 +65,7 @@ first queued first: a merge's first parent before its second.
 ```git
 (def %lg-d (let ((t (File temp "/tmp/x-git-lg-"))) (do (File close (first t)) (File unlink (rest t)) (File mkdir (rest t)) (rest t))))
 (Proc run! (list "/bin/sh" "-c"
-  (Str8 append "cd \"$0\" && git init -q -b main ."
+  (Str8 append "cd \"$0\" && export GIT_AUTHOR_NAME=A GIT_AUTHOR_EMAIL=a@b.c GIT_COMMITTER_NAME=A GIT_COMMITTER_EMAIL=a@b.c && git init -q -b main ."
     " && c() { GIT_COMMITTER_DATE=\"@$1 +0000\" GIT_AUTHOR_DATE=\"@$1 +0000\" git commit -q --allow-empty -m \"$2\"; }"
     " && m() { GIT_COMMITTER_DATE=\"@$1 +0000\" GIT_AUTHOR_DATE=\"@$1 +0000\" git merge -q --no-ff \"$2\" -m \"$3\"; }"
     " && c 1000000 a && git branch x && c 2000000 b && git checkout -q x && c 2000000 c && c 500000 skew"
