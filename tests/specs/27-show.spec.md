@@ -65,7 +65,7 @@ with is compared.
 
 ## how much is shown
 
-### -s, --stat, --oneline, --pretty and --format
+### -s, --stat, --oneline, --pretty and --format, git's forms and a user's
 
 ```git
 (write
@@ -83,17 +83,22 @@ with is compared.
           (list "show" "-s" "--format=%s" "HEAD~2" "HEAD~1")
           (list "show" "-s" "--pretty=format:%s" "HEAD~2" "HEAD~1")
           (list "show" "--format=%s" "HEAD~1")
-          (list "show" "--pretty=format:%s" "HEAD~1"))))
+          (list "show" "--pretty=format:%s" "HEAD~1")
+          (list "show" "-s" "--pretty=short" "HEAD~2" "HEAD~1")
+          (list "show" "-s" "--pretty=full" "HEAD~1")
+          (list "show" "--pretty=fuller" "HEAD~1")
+          (list "show" "-s" "--format=oneline" "HEAD~1")
+          (list "show" "-s" "--pretty=%h" "HEAD~1"))))
 ```
 ---
     ()
 
 ## refusals
 
-### no such revision, no such path
+### no such revision, no such path, no such format
 
 ```git
-(write (%sw-steps (list (list "show" "nope") (list "show" "HEAD:nope"))))
+(write (%sw-steps (list (list "show" "nope") (list "show" "HEAD:nope") (list "show" "-s" "--pretty=nope") (list "show" "-s" "--format=nope"))))
 ```
 ---
     ()
