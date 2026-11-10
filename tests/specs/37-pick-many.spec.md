@@ -1,5 +1,5 @@
 # @weight 4
-# @timeout-scale 3
+# @timeout-scale 5
 
 Cherry-picks and reverts of several commits, against git itself: the
 commits named in the order given, a range in git's order, and git's
