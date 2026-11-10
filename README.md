@@ -29,12 +29,17 @@ the kernel and x are installed (x-os).
   as git prints one
 - `rev-parse <revision>...`
 - `ls-tree [-r] [-t] [-l] [--name-only] <tree-ish> [<path>...]`
-- `log [--oneline] [-n <number>] [<revision>]`, newest committer time first
+- `log [--oneline | --pretty=<format> | --format=<format>] [-<number> |
+  -n <number>] [<revision>]`, newest committer time first, in show's
+  forms, a user's format ending each commit (`--format`, `tformat:`) or
+  set between them (`format:`)
 - `show [-s] [--stat] [--oneline | --pretty=<format> | --format=<format>]
   [<object>...]`: a commit with its patch or --stat against its first
   parent, an annotated tag then what it tags, a tree's entries, a blob's
-  text; git's placeholders for --format (%H %h %T %t %P %p %s %b %B %an
-  %ae %ad %cn %ce %cd %n %%).  A merge's combined diff is not drawn
+  text; git's forms (oneline, short, medium, full, fuller) and its
+  placeholders for a format of one's own (%H %h %T %t %P %p %s %b %B %an
+  %ae %ad %cn %ce %cd %n %%), any other spec refused as git refuses it.
+  A merge's combined diff is not drawn
 - `ls-files [-c] [-s] [-o] [-i] [--exclude-standard]` and
   `status [-s | --porcelain] [--ignored[=traditional|matching|no]]` from
   the index, the untracked paths as `.gitignore` leaves them and, when

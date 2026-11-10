@@ -120,10 +120,26 @@
 ; --- log ---
 
 (def git-log-options
-  (Opts declare "git log" "[--oneline] [-n <number>] [<revision>]" ()
+  (Opts declare "git log" "[--oneline | --format=<format>] [-<number> | -n <number>] [<revision>]" ()
     (list
       (Opts flag "--oneline" "One line a commit: the abbreviated name and the subject")
-      (Opts arg "-n" "--max-count" "<number>" "Show at most <number> commits"))))
+      (Opts arg "--format" "<format>" "A commit as the format says")
+      (Opts arg "--pretty" "<format>" "oneline, short, medium, full, fuller, format:<format> or tformat:<format>")
+      (Opts arg "-n" "--max-count" "<number>" "Show at most <number> commits; -<number> the same"))))
+
+; git's -<number>, spelled as -n <number>, up to a --.
+(def %counts
+  (fn (_ ops)
+    (def count? (fn (_ op) (and (< 1 (Str8 length op)) (Str8 starts? "-" op)
+                                 (List all? (fn (_ i) (let ((c (Str8 sub i 1 op))) (and (Str8 <? "/" c) (Str8 <? c ":"))))
+                                   (List range 1 (Str8 length op))))))
+    ((fn (self ops)
+       (match
+         ((null? ops) ())
+         ((str=? (first ops) "--") ops)
+         ((count? (first ops)) (pair "-n" (pair (Str8 sub 1 (int- (Str8 length (first ops)) 1) (first ops)) (self (rest ops)))))
+         (#t (pair (first ops) (self (rest ops))))))
+     ops)))
 
 (def %month-names
   (list "Jan" "Feb" "Mar" "Apr" "May" "Jun" "Jul" "Aug" "Sep" "Oct" "Nov" "Dec"))
@@ -174,26 +190,46 @@
          lines))
      (Str8 split "\n" body))))
 
-; One commit as `git log` prints it.
+; One commit as `git log` prints it in one of git's built-in forms: kind
+; medium (the default), short, full or fuller.
 (def %commit-text
-  (fn (_ gitdir sha)
+  (fn (_ gitdir sha kind)
     (def hs (git-headers gitdir sha))
     (def parents (List filter (fn (_ kv) (str=? (first kv) "parent")) hs))
-    (def author (%ident (rest (List find (fn (_ kv) (str=? (first kv) "author")) hs))))
+    (def person (fn (_ k) (%ident (rest (List find (fn (_ kv) (str=? (first kv) k)) hs)))))
+    (def date (fn (_ id) (%git-date (first (rest id)) (first (rest (rest id))))))
+    (def author (person "author"))
+    (def committer (person "committer"))
+    (def message (%message gitdir sha))
     (Str8 append
       "commit " sha "\n"
       (if (> (List length parents) 1)
         (Str8 append "Merge: " (Str8 join " " (List map (fn (_ p) (Str8 sub 0 7 (rest p))) parents)) "\n")
         "")
-      "Author: " (first author) "\n"
-      "Date:   " (%git-date (first (rest author)) (first (rest (rest author)))) "\n"
+      (match
+        ((eq? kind (lit short)) (Str8 append "Author: " (first author) "\n"))
+        ((eq? kind (lit full)) (Str8 append "Author: " (first author) "\n" "Commit: " (first committer) "\n"))
+        ((eq? kind (lit fuller))
+          (Str8 append "Author:     " (first author) "\n" "AuthorDate: " (date author) "\n"
+                       "Commit:     " (first committer) "\n" "CommitDate: " (date committer) "\n"))
+        (#t (Str8 append "Author: " (first author) "\n" "Date:   " (date author) "\n")))
       "\n"
-      (Str8 join "" (List map (fn (_ l) (Str8 append "    " l "\n")) (%message gitdir sha))))))
+      (Str8 join ""
+        (List map (fn (_ l) (Str8 append "    " l "\n"))
+          ; short: the subject's lines alone
+          (if (not (eq? kind (lit short))) message
+            ((fn (self ls) (if (or (null? ls) (= (Str8 length (Str8 trim (first ls))) 0)) () (pair (first ls) (self (rest ls)))))
+             message)))))))
 
+; --oneline's line: the abbreviated name and the subject.
 (def %oneline-text
   (fn (_ gitdir sha)
-    (def msg (%message gitdir sha))
-    (Str8 append (Str8 sub 0 7 sha) " " (if (null? msg) "" (first msg)) "\n")))
+    (Str8 append (Str8 sub 0 7 sha) " " (first (%subject-body (%raw-message gitdir sha))) "\n")))
+
+; --pretty=oneline's: the full name and the subject.
+(def %line-text
+  (fn (_ gitdir sha)
+    (Str8 append sha " " (first (%subject-body (%raw-message gitdir sha))) "\n")))
 
 ; A committer's epoch, to order the walk.
 (def %commit-time
@@ -236,13 +272,16 @@
 
 (def git-log
   (fn (_ wd gitdir ops)
-    (def o (Opts parse git-log-options ops))
+    (def o (Opts parse git-log-options (%counts ops)))
     (def operands (Opts operands o))
-    (def limit (let ((v (Opts value o "-n" ()))) (if (null? v) () (%str->number v 10))))
+    ; the last count given
+    (def limit (let ((vs (Opts values o "-n"))) (if (null? vs) () (%str->number (List last vs) 10))))
+    (def pretty (%pretty o))
     (match
       ((Opts help? git-log-options ops) (list (lit out) (Opts usage git-log-options) 0))
       ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-log-options)))
       ((null? gitdir) (git-no-repo))
+      ((eq? (first pretty) (lit bad)) (%bad-pretty pretty))
       (#t
         (let ((rev (if (null? operands) "HEAD" (first operands))))
           (let ((sha (git-commit-of gitdir rev)))
@@ -260,9 +299,7 @@
               (#t
                 (let ((commits (%walk gitdir (list sha) () limit)))
                   (list (lit out)
-                    (if (Opts on? o "--oneline")
-                      (Str8 join "" (List map (fn (_ c) (%oneline-text gitdir c)) commits))
-                      (Str8 join "\n" (List map (fn (_ c) (%commit-text gitdir c)) commits)))
+                    (Str8 join (if (%apart? pretty) "\n" "") (List map (fn (_ c) (%pretty-text gitdir c pretty)) commits))
                     0))))))))))
 
 ; --- show ---
@@ -274,7 +311,7 @@
       (Opts flag "--stat" "The change as a row a file and the summary")
       (Opts flag "--oneline" "One line a commit: the abbreviated name and the subject")
       (Opts arg "--format" "<format>" "A commit as the format says")
-      (Opts arg "--pretty" "<format>" "oneline, medium, format:<format> or tformat:<format>"))))
+      (Opts arg "--pretty" "<format>" "oneline, short, medium, full, fuller, format:<format> or tformat:<format>"))))
 
 ; An object's text after its header's blank line: a commit's or a tag's
 ; message as written.
@@ -339,19 +376,46 @@
          (#t (self (int+ i 1) (pair (Str8 sub i 1 fmt) acc)))))
      0 ())))
 
-; How commits are shown: (KIND . FORMAT), KIND medium, oneline (--oneline),
-; full (--pretty=oneline), tformat (--format) or format (format:).
+; How commits are shown, from --format or --pretty, which git reads
+; alike, the last given: (KIND . FORMAT), KIND one of git's built-in
+; forms -- medium (the default), short, full, fuller, or line for
+; oneline -- or oneline for --oneline; or format (format:) or tformat
+; (tformat:, or a format with a % in it) with its FORMAT; or (bad . SPEC)
+; for a spec git has no form for.
 (def %pretty
   (fn (_ o)
-    (def spec (or (Opts value o "--format" ()) (Opts value o "--pretty" ())))
+    (def given (List append (Opts values o "--pretty") (Opts values o "--format")))
+    (def spec (if (null? given) () (List last given)))
     (def after (fn (_ prefix s) (Str8 sub (Str8 length prefix) (int- (Str8 length s) (Str8 length prefix)) s)))
     (match
       ((null? spec) (pair (if (Opts on? o "--oneline") (lit oneline) (lit medium)) ()))
-      ((and (null? (Opts value o "--format" ())) (str=? spec "oneline")) (pair (lit full) ()))
-      ((and (null? (Opts value o "--format" ())) (str=? spec "medium")) (pair (lit medium) ()))
+      ((str=? spec "oneline") (pair (lit line) ()))
+      ((str=? spec "short") (pair (lit short) ()))
+      ((str=? spec "medium") (pair (lit medium) ()))
+      ((str=? spec "full") (pair (lit full) ()))
+      ((str=? spec "fuller") (pair (lit fuller) ()))
       ((Str8 starts? "format:" spec) (pair (lit format) (after "format:" spec)))
       ((Str8 starts? "tformat:" spec) (pair (lit tformat) (after "tformat:" spec)))
-      (#t (pair (lit tformat) spec)))))
+      ((not (null? (Str8 index-of "%" spec))) (pair (lit tformat) spec))
+      (#t (pair (lit bad) spec)))))
+
+(def %bad-pretty (fn (_ pretty) (git-fatal (Str8 append "invalid --pretty format: " (rest pretty)))))
+
+; A commit's header in the pretty form, as log and show print it.
+(def %pretty-text
+  (fn (_ gitdir sha pretty)
+    (def kind (first pretty))
+    (match
+      ((eq? kind (lit oneline)) (%oneline-text gitdir sha))
+      ((eq? kind (lit line)) (%line-text gitdir sha))
+      ((eq? kind (lit tformat)) (Str8 append (%expand gitdir sha (rest pretty)) "\n"))
+      ((eq? kind (lit format)) (%expand gitdir sha (rest pretty)))
+      (#t (%commit-text gitdir sha kind)))))
+
+; Whether commits shown one after another are set apart: by a blank line
+; in git's forms of several lines, by a newline under format:, which ends
+; none of its own.
+(def %apart? (fn (_ pretty) (not (List any? (fn (_ k) (eq? k (first pretty))) (list (lit oneline) (lit line) (lit tformat))))))
 
 ; A commit as show prints it: its header in the pretty form, then its
 ; change against its first parent -- the patch, or the --stat -- after
@@ -361,14 +425,8 @@
   (fn (_ gitdir sha pretty patch? stat?)
     (def kind (first pretty))
     (def parents (List map rest (List filter (fn (_ kv) (str=? (first kv) "parent")) (git-headers gitdir sha))))
-    (def head
-      (match
-        ((eq? kind (lit oneline)) (%oneline-text gitdir sha))
-        ((eq? kind (lit full)) (Str8 append sha " " (first (%subject-body (%raw-message gitdir sha))) "\n"))
-        ((eq? kind (lit tformat)) (Str8 append (%expand gitdir sha (rest pretty)) "\n"))
-        ((eq? kind (lit format)) (%expand gitdir sha (rest pretty)))
-        (#t (%commit-text gitdir sha))))
-    (def gap (if (or (eq? kind (lit oneline)) (eq? kind (lit full))) "" "\n"))
+    (def head (%pretty-text gitdir sha pretty))
+    (def gap (if (or (eq? kind (lit oneline)) (eq? kind (lit line))) "" "\n"))
     (match
       ((not (or patch? stat?)) head)
       ((and (not stat?) (< 1 (List length parents))) (Str8 append head gap))
@@ -408,6 +466,7 @@
       ((Opts help? git-show-options ops) (list (lit out) (Opts usage git-show-options) 0))
       ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-show-options)))
       ((null? gitdir) (git-no-repo))
+      ((eq? (first pretty) (lit bad)) (%bad-pretty pretty))
       (#t
         ; each name resolved once, all before anything is shown
         (let ((shas (List map (fn (_ n) (git-rev-parse gitdir n)) names)))
@@ -434,7 +493,7 @@
                (if (null? ns) (list (lit out) (Str8 join "" (List reverse acc)) 0)
                  (let ((sha (rest (first ns))))
                    (let ((type (first (git-object-read gitdir sha)))
-                         (sep (if (and after-commit? (or (eq? (first pretty) (lit medium)) (eq? (first pretty) (lit format)))) "\n" "")))
+                         (sep (if (and after-commit? (%apart? pretty)) "\n" "")))
                      (match
                        ((str=? type "commit")
                          (self (rest ns) (pair (Str8 append sep (%show-commit gitdir sha pretty patch? stat?)) acc) #t))
