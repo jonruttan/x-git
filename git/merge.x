@@ -159,15 +159,27 @@
           (%conclude-merge! gitdir head theirs placed message action))))))
 
 ; HEAD's files and theirs merged from base's into the working directory
-; and index, as merge and revert merge them: (placed RESULTS MESSAGES
-; CONFLICTED STOPPED?), the conflicts marked in the files and staged,
-; ORIG_HEAD left at head; or (blocked PATH ...) and nothing touched, when
-; the working directory's own changes are in the way.  name2 is what the
-; conflict markers call theirs.
+; and index, as merge merges them: (placed RESULTS MESSAGES CONFLICTED
+; STOPPED?), the conflicts marked in the files and staged, ORIG_HEAD left
+; at head; or (blocked PATH ...) and nothing touched, when the working
+; directory's own changes are in the way.  name2 is what the conflict
+; markers call theirs.
 (def git-merge-place!
   (fn (_ wd gitdir head base-files theirs-files name2)
+    (def placed
+      (git-merge-place-on! wd gitdir head (git-tree-flat gitdir (git-tree-of gitdir head) "") (%dirty wd gitdir)
+        base-files theirs-files name2))
+    (when (eq? (first placed) (lit placed))
+      (File write-all (Str8 append gitdir "/ORIG_HEAD") (Str8 append head "\n")))
+    placed))
+
+; The same, as cherry-pick and revert merge -- ORIG_HEAD left be -- ours
+; given as files and the paths whose changes of their own stand in the
+; way as dirty: HEAD's, and the changes staged or not; or, with -n, what
+; the index has, and the working directory's changes from it.
+(def git-merge-place-on!
+  (fn (_ wd gitdir head ours-files dirty base-files theirs-files name2)
     (def write-blob (fn (_ text) (git-object-write! gitdir "blob" text 0 (str-byte-len text))))
-    (def ours-files (git-tree-flat gitdir (git-tree-of gitdir head) ""))
     (def r (git-merge-trees base-files ours-files theirs-files "HEAD" name2 (%dir-renames-mode gitdir) 7 gitdir write-blob))
     (def results (first r))
     (def ours-of (fn (_ path) (List find (fn (_ f) (str=? (first f) path)) ours-files)))
@@ -184,9 +196,9 @@
                       (not (str=? (first (rest (rest x))) (first (rest o))))))
                 (#t #t))))
           results)))
-    (def blocked (List filter (fn (_ p) (List any? (fn (_ t) (str=? t p)) touched)) (%dirty wd gitdir)))
+    (def blocked (List filter (fn (_ p) (List any? (fn (_ t) (str=? t p)) touched)) dirty))
     (if (not (null? blocked)) (pair (lit blocked) (List sort (fn (_ a b) (Str8 <? a b)) blocked))
-      (do (%place! wd gitdir head results touched)
+      (do (%place! wd gitdir results touched)
           (list (lit placed) results (first (rest r))
                 (List map first (List filter (fn (_ x) (eq? (first (rest x)) (lit conflict))) results))
                 (first (rest (rest r))))))))
@@ -203,9 +215,9 @@
       (#t "conflict"))))
 
 ; The merge's results put in place: each touched path written or
-; removed, the index set, ORIG_HEAD left at head.
+; removed, the index set.
 (def %place!
-  (fn (_ wd gitdir head results touched)
+  (fn (_ wd gitdir results touched)
     (def touched? (fn (_ p) (List any? (fn (_ t) (str=? t p)) touched)))
     (def kept (List filter (fn (_ e) (not (touched? (first e)))) (git-read-entries gitdir)))
     (def fresh
@@ -226,8 +238,7 @@
                           (git-write-blob! wd gitdir path sha mode))))
                     (List map (fn (_ s) (list path (%mode-number (first (rest s))) (first (rest (rest s))) 0 0 (first s))) stages))))))
         results))
-    (git-index-write! gitdir (List append kept fresh))
-    (File write-all (Str8 append gitdir "/ORIG_HEAD") (Str8 append head "\n"))))
+    (git-index-write! gitdir (List append kept fresh))))
 
 ; A merge placed: a merge commit made, or the conflicts left with
 ; MERGE_HEAD -- left too when the merge stopped with none.
@@ -389,4 +400,4 @@
                     (if (= (Str8 length err) 0) (list (lit out) (first (rest r)) (first (rest (rest r))))
                       (list (lit err) err (first (rest (rest r))) (first (rest r)))))))))))))))
 
-(provide git/merge git-merge git-merge-options git-pull git-pull-options git-merge-place! git-restore-head!)
+(provide git/merge git-merge git-merge-options git-pull git-pull-options git-merge-place! git-merge-place-on! git-restore-head!)

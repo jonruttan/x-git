@@ -201,10 +201,11 @@
     (def e (List find (fn (_ kv) (str=? (first kv) "committer")) (git-headers gitdir sha)))
     (if (null? e) 0 (first (rest (%ident (rest e)))))))
 
-; The commits reachable from sha, newest committer time first, each once;
-; at most limit of them (() for all).
+; The commits reachable from the shas starts but not from those in
+; excluded, newest committer time first, each once, as git walks them; at
+; most limit of them (() for all).
 (def %walk
-  (fn (_ gitdir sha limit)
+  (fn (_ gitdir starts excluded limit)
     (def insert
       (fn (self item pending)
         (match
@@ -212,20 +213,26 @@
           ; newer first; among equals, the first queued first, as git's queue keeps them
           ((> (first item) (first (first pending))) (pair item pending))
           (#t (pair (first pending) (self item (rest pending)))))))
+    (def queue (fn (_ pending sha) (insert (pair (%commit-time gitdir sha) sha) pending)))
+    (def known? (fn (_ sha l) (List any? (fn (_ s) (str=? s sha)) l)))
     ((fn (self pending seen out n)
        (match
          ((null? pending) (List reverse out))
          ((if (null? limit) #f (>= n limit)) (List reverse out))
          (#t
            (let ((cur (rest (first pending))))
-             (if (List any? (fn (_ s) (str=? s cur)) seen)
+             (if (or (known? cur seen) (known? cur excluded))
                (self (rest pending) seen out n)
                (let ((parents (List filter (fn (_ kv) (str=? (first kv) "parent")) (git-headers gitdir cur))))
-                 (self
-                   (List fold (fn (_ acc p) (insert (pair (%commit-time gitdir (rest p)) (rest p)) acc))
-                     (rest pending) parents)
+                 (self (List fold (fn (_ acc p) (queue acc (rest p))) (rest pending) parents)
                    (pair cur seen) (pair cur out) (int+ n 1))))))))
-     (list (pair (%commit-time gitdir sha) sha)) () () 0)))
+     (List fold queue () starts) () () 0)))
+
+; The commits revisions name, as git's revision walk lists them: those
+; reachable from the shas in starts and from none in ends, newest first.
+(def git-rev-walk
+  (fn (_ gitdir starts ends)
+    (%walk gitdir starts (if (null? ends) () (%walk gitdir ends () ())) ())))
 
 (def git-log
   (fn (_ wd gitdir ops)
@@ -251,7 +258,7 @@
                           ""))
                   128))
               (#t
-                (let ((commits (%walk gitdir sha limit)))
+                (let ((commits (%walk gitdir (list sha) () limit)))
                   (list (lit out)
                     (if (Opts on? o "--oneline")
                       (Str8 join "" (List map (fn (_ c) (%oneline-text gitdir c)) commits))
@@ -502,5 +509,5 @@
                      "")))))))
          (if (null? names) (list "HEAD") names) ())))))
 
-(provide git/history git-ls-tree git-ls-tree-options git-log git-log-options git-show git-show-options git-ident-date
+(provide git/history git-ls-tree git-ls-tree-options git-log git-log-options git-show git-show-options git-ident-date git-rev-walk
   git-reflog git-reflog-options)
