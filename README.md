@@ -1,8 +1,14 @@
 # x-git
 
-git on x-lang, as a lang bundle.
+git, written in [x-lang](https://github.com/jonruttan/x-lang) and loaded as
+a lang.
 
     x -l git -- [-C <path>] <command> [<args>]
+
+    x -l git -- clone https://example.org/project.git
+    x -l git -- -C project log --oneline -5
+    x -l git -- -C project commit -m 'a change'
+    x -l git -- -C project push
 
 The reference is git itself (`/usr/bin/git`): output, refusals and exit
 statuses are compared with it, and the spec suite makes its fixture
@@ -10,7 +16,45 @@ repository with it.  The digests and compression git needs are x-lang
 codecs, written in x and compiled, so the bundle runs where nothing but
 the kernel and x are installed (x-os).
 
+## Commands
+
+| Area | Commands |
+|---|---|
+| Repositories | `init`, `clone`, `config` |
+| Changes | `status`, `add`, `rm`, `mv`, `commit`, `restore`, `reset`, `clean` |
+| History | `log`, `show`, `diff`, `reflog` |
+| Branches and tags | `branch`, `tag`, `checkout`, `switch`, `merge`, `revert`, `cherry-pick` |
+| Remotes | `fetch`, `pull`, `push`, `ls-remote`, over a path, `file://`, ssh and smart http(s) |
+| Plumbing | `cat-file`, `hash-object`, `rev-parse`, `ls-tree`, `ls-files`, `check-ignore` |
+| Services | `upload-pack`, `receive-pack` |
+
+Not served: `rebase`, `stash`, `blame`, `bisect`, `grep`, `describe`,
+`remote`, `submodule`, `worktree`, `gc` and `repack`, `apply`, `am` and
+`format-patch`, `archive`, `notes`, and annotated or signed tags (`tag`
+makes lightweight ones).  Repositories are SHA-1; the index is written at
+version 2.  Any other command is refused as git refuses an unknown one.
+
+## Security
+
+x-git has had no independent review.  It is checked against git for what
+it prints and writes, which is not evidence about a repository, a pack or
+a server made to misbehave.
+
+- **https** is x-lang's own TLS, through `x/net/http`.  The server's certificate
+  is checked against Mozilla's roots unless `http.sslVerify` is false or
+  `GIT_SSL_NO_VERIFY` is set.  The TLS and the codecs under it have had
+  no review either, and their arithmetic is not constant-time.
+- **No credentials** are sent over http or https: there is no
+  `Authorization` header, credential helper or prompt, so a repository
+  that asks for a login cannot be reached that way.
+- **ssh** is whichever client git would choose (`GIT_SSH_COMMAND`,
+  `core.sshCommand`, `GIT_SSH`, then `ssh`); its security is that
+  client's.
+- **A pack** that arrives is checked against its trailing checksum.
+
 ## Served
+
+The detail of each command:
 
 - `--version`, `-v`, `version`; `-C <path>`; `-c <name>=<value>`
 - `config`: get, set, `--add`, `--unset`, `--unset-all`,
@@ -22,8 +66,7 @@ the kernel and x are installed (x-os).
   and `GIT_CONFIG_COUNT`, the last value winning; files parsed and
   written as git parses and writes them (includes are not followed)
 - `hash-object [-t <type>] [-w] [--stdin] <file>...`: an object's name,
-  and with `-w` the object written loose, as a zlib stream of stored
-  blocks (git reads it; the writer does not compress yet)
+  and with `-w` the object written loose, zlib-compressed
 - `cat-file (-t | -s | -p | -e) <object>` and `cat-file <type> <object>`
   on loose and packed objects (OFS and REF deltas applied); a tree printed
   as git prints one
@@ -182,9 +225,9 @@ the kernel and x are installed (x-os).
 - the repository found from the working directory or any parent
 - an unknown command or option, refused as git refuses it
 
-Not served yet: every other command.
-
 ## Install and test
+
+It needs x-lang at the release `lang.xon` declares.
 
     make install          # into <share>/langs/git
     make test             # the spec suite
@@ -225,6 +268,8 @@ DIR holds this tree as `git` and x-ssh as `ssh`.
     git/remote.x      fetch, push and ls-remote, by path or by wire
     git/protocol.x    the client side of git's pack protocol
     git/wire.x        a git service on two pipes, spoken in pkt-lines
+    git/http.x        git's smart http transport
+    git/quote.x       paths quoted as git quotes them
     git/serve.x       upload-pack and receive-pack, the services
     git/merge.x       merge and pull
     git/reset.x       reset
@@ -240,4 +285,4 @@ DIR holds this tree as `git` and x-ssh as `ssh`.
 
 ## Licence
 
-MIT No Attribution (MIT-0).
+MIT No Attribution (MIT-0). See [LICENSE](LICENSE).
