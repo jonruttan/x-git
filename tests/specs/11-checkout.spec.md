@@ -101,3 +101,27 @@ cumulative down the cases.
 ```
 ---
     ((1 . "error: pathspec 'nosuch' did not match any file(s) known to git\n") #t)
+
+### -q: a switch that works says nothing, a refusal is still told
+
+```git
+(def %co (git-fixture-refs))
+(write (list (git-text-in %co "checkout" "-q" "side")
+             (git-text-in %co "checkout" "-q" "side")
+             (git-text-in %co "checkout" "--quiet" "main")
+             (git-text-in %co "checkout" "-q" "HEAD~1")
+             (git-text-in %co "switch" "-q" "main")
+             (git-text-in %co "checkout" "-q" "-b" "hush")
+             (git-text-in %co "switch" "--quiet" "-c" "work2")
+             (git-text-in %co "switch" "-q" "-c" "work2")
+             (git-text-in %co "switch" "-q" "nosuch")
+             (git-text-in %co "checkout" "-q" "nosuch")
+             (Str8 trim (File read-all (Str8 append %co "/.git/HEAD")))))
+(File write-all (Str8 append %co "/f.txt") "dirty\n")
+(write (list (first (git-text-in %co "checkout" "-q" "main"))
+             (first (git-text-in %co "checkout" "-q" "side"))
+             (git-text-in %co "restore" "-q" "f.txt")
+             (File read-all (Str8 append %co "/f.txt"))))
+```
+---
+    ((0 . "") (0 . "") (0 . "") (0 . "") (0 . "") (0 . "") (0 . "") (128 . "fatal: a branch named 'work2' already exists\n") (128 . "fatal: invalid reference: nosuch\n") (1 . "error: pathspec 'nosuch' did not match any file(s) known to git\n") "ref: refs/heads/work2")(0 1 (0 . "") "hello\nmore\n")

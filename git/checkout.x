@@ -217,9 +217,15 @@
     (if (or (null? gitdir) (not (Str8 starts? "@{-" spec))) a
       (or (git-previous-branch gitdir spec) else))))
 
+; With -q a switch that works says nothing; a refusal is still told.
+(def %hush
+  (fn (_ o r)
+    (if (and (Opts on? o "-q") (= (first (rest (rest r))) 0)) (list (first r) "" 0) r)))
+
 (def git-checkout-options
-  (Opts declare "git checkout" "[-b <new-branch>] <branch> | <commit>\n   or: git checkout -- <path>..." ()
+  (Opts declare "git checkout" "[-q] [-b <new-branch>] <branch> | <commit>\n   or: git checkout [-q] -- <path>..." ()
     (list
+      (Opts flag "-q" "--quiet" "Say nothing when it works")
       (Opts arg "-b" "<new-branch>" "Make the branch at the start point (HEAD when none), then switch to it"))))
 
 (def git-checkout
@@ -235,17 +241,18 @@
       ((null? gitdir) (git-no-repo))
       (dashes? (%restore! wd gitdir operands))
       ((not (null? (Opts value o "-b" ())))
-        (%switch! wd gitdir (Opts value o "-b" ()) #t (if (null? operands) "HEAD" (first operands))))
+        (%hush o (%switch! wd gitdir (Opts value o "-b" ()) #t (if (null? operands) "HEAD" (first operands)))))
       ((null? operands) (list (lit err) (Opts usage git-checkout-options) 129))
       ((and (null? (git-ref-read gitdir (Str8 append "refs/heads/" (first operands))))
             (null? (git-commit-of gitdir (first operands)))
             (not (null? (List find (fn (_ e) (str=? (first e) (first operands))) (git-index-read gitdir)))))
         (%restore! wd gitdir operands))
-      (#t (%switch! wd gitdir (first operands) #f ())))))
+      (#t (%hush o (%switch! wd gitdir (first operands) #f ()))))))
 
 (def git-switch-options
-  (Opts declare "git switch" "[-c <new-branch>] <branch>" ()
+  (Opts declare "git switch" "[-q] [-c <new-branch>] <branch>" ()
     (list
+      (Opts flag "-q" "--quiet" "Say nothing when it works")
       (Opts arg "-c" "--create" "<new-branch>" "Make the branch at the start point (HEAD when none), then switch to it"))))
 
 (def git-switch
@@ -257,14 +264,15 @@
       ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-switch-options)))
       ((null? gitdir) (git-no-repo))
       ((not (null? (Opts value o "-c" ())))
-        (%switch! wd gitdir (Opts value o "-c" ()) #t (if (null? operands) "HEAD" (first operands))))
+        (%hush o (%switch! wd gitdir (Opts value o "-c" ()) #t (if (null? operands) "HEAD" (first operands)))))
       ((null? operands) (list (lit err) (Opts usage git-switch-options) 129))
       ((null? (git-ref-read gitdir (Str8 append "refs/heads/" (first operands))))
         (git-fatal (Str8 append "invalid reference: " (first operands))))
-      (#t (%switch! wd gitdir (first operands) #f ())))))
+      (#t (%hush o (%switch! wd gitdir (first operands) #f ()))))))
 
 (def git-restore-options
-  (Opts declare "git restore" "<path>..." () ()))
+  (Opts declare "git restore" "[-q] <path>..." ()
+    (list (Opts flag "-q" "--quiet" "Say nothing when it works"))))
 
 (def git-restore
   (fn (_ wd gitdir ops)
