@@ -21,7 +21,7 @@
 (import git/commands git-fatal git-no-repo git-unknown-option)
 (import git/refs git-ref-read git-rev-parse git-tree-of git-commit-of git-headers git-previous-branch)
 (import git/index git-index-read git-status-lists)
-(import git/stage git-index-write!)
+(import git/stage git-index-write! git-read-entries)
 (import git/reflog git-reflog-append!)
 
 (import x/core/doors int+ int- str->ptr)
@@ -100,26 +100,34 @@
 ; The working directory and index set to the tree of commit, from what
 ; HEAD's tree has now; answers () when done, or the paths that stop it.
 (def %move-to!
-  (fn (_ wd gitdir commit)
+  (fn (_ wd gitdir commit . fresh)
     (def target (%tree-files gitdir (git-tree-of gitdir commit) ""))
-    (def current (%tree-files gitdir (git-tree-of gitdir "HEAD") ""))
+    ; fresh, for clone: from nothing, whatever HEAD names
+    (def current (if (null? fresh) (%tree-files gitdir (git-tree-of gitdir "HEAD") "") ()))
     (def in (fn (_ files path) (List find (fn (_ f) (str=? (first f) path)) files)))
     (def differs?
       (fn (_ path)
         (let ((t (in target path)) (c (in current path)))
           (not (and (not (null? t)) (not (null? c)) (str=? (first (rest t)) (first (rest c))) (str=? (first (rest (rest t))) (first (rest (rest c)))))))))
-    (def dirty (%dirty wd gitdir))
-    (def blocked (List filter (fn (_ p) (differs? p)) dirty))
+    (def dirty (if (null? fresh) (%dirty wd gitdir) ()))
+    ; a path either tree has, the two disagreeing on it: the move's to set
+    (def moved? (fn (_ path) (and (or (not (null? (in target path))) (not (null? (in current path)))) (differs? path))))
+    (def blocked (List filter (fn (_ p) (moved? p)) dirty))
     (if (not (null? blocked)) (List sort (fn (_ a b) (Str8 <? a b)) blocked)
       (do
-        ; files the new tree lacks go; the rest are written where they differ
+        ; files the new tree lacks go; the rest are written where they
+        ; differ; a path the trees agree on keeps its changes, staged or
+        ; not, as does one neither tree has
         (List for-each (fn (_ c) (when (null? (in target (first c))) (%remove! wd (first c)))) current)
         (List for-each
           (fn (_ t)
-            (when (or (differs? (first t)) (not (File exists? (Str8 append wd "/" (first t)))))
+            (when (differs? (first t))
               (%write-blob! wd gitdir (first t) (first (rest t)) (first (rest (rest t))))))
           target)
-        (git-index-write! gitdir (List map (fn (_ t) (%entry-of wd (first t) (first (rest t)) (first (rest (rest t))))) target))
+        (git-index-write! gitdir
+          (List append
+            (List flat-map (fn (_ t) (if (differs? (first t)) (list (%entry-of wd (first t) (first (rest t)) (first (rest (rest t))))) ())) target)
+            (List filter (fn (_ e) (not (moved? (first e)))) (if (null? fresh) (git-read-entries gitdir) ()))))
         ()))))
 
 (def %overwritten
@@ -151,10 +159,42 @@
             "Turn off this advice by setting config variable advice.detachedHead to false" ""
             (Str8 append "HEAD is now at " (Str8 sub 0 7 sha) " " subject) ""))))
 
+; The paths whose working copy differs from HEAD, as git lists them after
+; a switch: "M\tPATH" and the like, one a line, () when none.  A path is
+; looked at through the index: gone from it, D; new to it, A, unless
+; gone from the working directory too; else D when gone from there, M
+; when changed in either.
+(def %changes
+  (fn (_ wd gitdir)
+    (def lists (git-status-lists wd gitdir))
+    (def code-in (fn (_ l p) (let ((c (List find (fn (_ c) (str=? (rest c) p)) l))) (if (null? c) () (first c)))))
+    (def paths (List sort (fn (_ a b) (Str8 <? a b))
+                 (List fold (fn (_ acc c) (if (List any? (fn (_ p) (str=? p (rest c))) acc) acc (pair (rest c) acc)))
+                   () (List append (first lists) (first (rest lists))))))
+    (def lines
+      (List flat-map
+        (fn (_ p)
+          (let ((s (code-in (first lists) p)) (u (code-in (first (rest lists)) p)))
+            (let ((code (match
+                          ((equal? s "D") "D")
+                          ((equal? s "A") (if (equal? u "D") () "A"))
+                          ((equal? u "D") "D")
+                          (#t "M"))))
+              (if (null? code) () (list (Str8 append code "\t" p "\n"))))))
+        paths))
+    (if (null? lines) () (Str8 join "" lines))))
+
+; A switch done: what it says on standard error, and after it on standard
+; output the changes it carried.
+(def %told
+  (fn (_ text changes) (if (null? changes) (list (lit err) text 0) (list (lit err) text 0 changes))))
+
 ; HEAD moved to a branch (made first at start when new? is set) or to a
 ; commit, the working directory following.
 (def %switch!
-  (fn (_ wd gitdir rev new? start)
+  (fn (_ wd gitdir rev new? given)
+    ; a new branch made at HEAD, no start given, lists no changes, as git
+    (def start (or given "HEAD"))
     (def current
       (let ((h (Str8 trim (File read-all (Str8 append gitdir "/HEAD")))))
         (if (Str8 starts? "ref: refs/heads/" h) (Str8 sub 16 (int- (Str8 length h) 16) h) ())))
@@ -174,15 +214,15 @@
                     (git-reflog-append! gitdir (Str8 append "refs/heads/" rev) () sha (Str8 append "branch: Created from " start))
                     (File write-all (Str8 append gitdir "/HEAD") (Str8 append "ref: refs/heads/" rev "\n"))
                     (moved! sha)
-                    (list (lit err) (Str8 append "Switched to a new branch '" rev "'\n") 0)))))))
+                    (%told (Str8 append "Switched to a new branch '" rev "'\n") (if (null? given) () (%changes wd gitdir)))))))))
       ((and (not (null? current)) (str=? current rev))
-        (do (moved! old) (list (lit err) (Str8 append "Already on '" rev "'\n") 0)))
+        (do (moved! old) (%told (Str8 append "Already on '" rev "'\n") (%changes wd gitdir))))
       ((not (null? branch-sha))
         (let ((blocked (%move-to! wd gitdir branch-sha)))
           (if (not (null? blocked)) (%overwritten blocked)
             (do (File write-all (Str8 append gitdir "/HEAD") (Str8 append "ref: refs/heads/" rev "\n"))
                 (moved! branch-sha)
-                (list (lit err) (Str8 append "Switched to branch '" rev "'\n") 0)))))
+                (%told (Str8 append "Switched to branch '" rev "'\n") (%changes wd gitdir))))))
       (#t
         (let ((sha (git-commit-of gitdir rev)))
           (if (null? sha)
@@ -191,7 +231,7 @@
               (if (not (null? blocked)) (%overwritten blocked)
                 (do (File write-all (Str8 append gitdir "/HEAD") (Str8 append sha "\n"))
                     (moved! sha)
-                    (list (lit err) (%detached-note rev gitdir sha) 0))))))))))
+                    (%told (%detached-note rev gitdir sha) (%changes wd gitdir)))))))))))
 
 ; Paths put back from the index; one the index lacks stops it all.
 (def %restore!
@@ -223,7 +263,7 @@
     (if (and (Opts on? o "-q") (= (first (rest (rest r))) 0)) (list (first r) "" 0) r)))
 
 (def git-checkout-options
-  (Opts declare "git checkout" "[-q] [-b <new-branch>] <branch> | <commit>\n   or: git checkout [-q] -- <path>..." ()
+  (Opts declare "git checkout" "[-q] [-b <new-branch>] [<branch> | <commit>]\n   or: git checkout [-q] -- <path>..." ()
     (list
       (Opts flag "-q" "--quiet" "Say nothing when it works")
       (Opts arg "-b" "<new-branch>" "Make the branch at the start point (HEAD when none), then switch to it"))))
@@ -241,8 +281,9 @@
       ((null? gitdir) (git-no-repo))
       (dashes? (%restore! wd gitdir operands))
       ((not (null? (Opts value o "-b" ())))
-        (%hush o (%switch! wd gitdir (Opts value o "-b" ()) #t (if (null? operands) "HEAD" (first operands)))))
-      ((null? operands) (list (lit err) (Opts usage git-checkout-options) 129))
+        (%hush o (%switch! wd gitdir (Opts value o "-b" ()) #t (if (null? operands) () (first operands)))))
+      ; no operand: nothing moves, the changes are listed
+      ((null? operands) (%hush o (list (lit out) (or (%changes wd gitdir) "") 0)))
       ((and (null? (git-ref-read gitdir (Str8 append "refs/heads/" (first operands))))
             (null? (git-commit-of gitdir (first operands)))
             (not (null? (List find (fn (_ e) (str=? (first e) (first operands))) (git-index-read gitdir)))))
@@ -264,7 +305,7 @@
       ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-switch-options)))
       ((null? gitdir) (git-no-repo))
       ((not (null? (Opts value o "-c" ())))
-        (%hush o (%switch! wd gitdir (Opts value o "-c" ()) #t (if (null? operands) "HEAD" (first operands)))))
+        (%hush o (%switch! wd gitdir (Opts value o "-c" ()) #t (if (null? operands) () (first operands)))))
       ((null? operands) (list (lit err) (Opts usage git-switch-options) 129))
       ((null? (git-ref-read gitdir (Str8 append "refs/heads/" (first operands))))
         (git-fatal (Str8 append "invalid reference: " (first operands))))
@@ -284,10 +325,16 @@
       ((null? (Opts operands o)) (list (lit err) "fatal: you must specify path(s) to restore\n" 128))
       (#t (%restore! wd gitdir (Opts operands o))))))
 
-; The working directory and index set to a commit's tree, for clone;
+; The working directory and index moved to a commit's tree from HEAD's,
+; for merge's fast-forward;
 ; answers () when done, or the paths whose own changes stop it.
 (def git-checkout-tree!
   (fn (_ wd gitdir commit) (%move-to! wd gitdir commit)))
+
+; The working directory and index made from a commit's tree, as from
+; nothing, for clone.
+(def git-checkout-new!
+  (fn (_ wd gitdir commit) (%move-to! wd gitdir commit #t)))
 
 ; A blob written to a path of the working directory, its mode set; a
 ; path's file removed with the directories it leaves empty; an index
@@ -298,4 +345,4 @@
 (def git-entry-of (fn (_ wd path sha mode) (%entry-of wd path sha mode)))
 
 (provide git/checkout git-checkout git-checkout-options git-switch git-switch-options
-  git-restore git-restore-options git-checkout-tree! git-write-blob! git-remove-file! git-entry-of)
+  git-restore git-restore-options git-checkout-tree! git-checkout-new! git-write-blob! git-remove-file! git-entry-of)
