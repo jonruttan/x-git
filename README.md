@@ -110,7 +110,9 @@ The detail of each command:
   `tag [-d] [<tag> [<object>]]` (lightweight tags only)
 - `checkout <branch> | <commit>`, `checkout -b <new> [<start>]`, `switch [-c <new>] <branch>`:
   the working directory and index set to the tree, a path with changes of
-  its own stopping the move in git's words; `checkout -- <path>...` and
+  its own stopping the move in git's words, one the move leaves alone
+  carried along and listed after, as git lists it (`checkout` alone only
+  lists); `checkout -- <path>...` and
   `restore <path>...` from the index; `-q` on each says nothing when it
   works, a refusal still told
 - a remote by path, or by url: `file:///path`, `ssh://[user@]host[:port]/path`

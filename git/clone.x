@@ -23,7 +23,7 @@
 (import git/commands git-fatal git-unknown-option git-strip-slash)
 (import git/refs git-ref-read)
 (import git/repo git-init-layout! git-refs-under)
-(import git/checkout git-checkout-tree!)
+(import git/checkout git-checkout-new!)
 (import git/packs git-pack-index!)
 (import git/protocol proto-url? proto-url-path proto-connect proto-advertise proto-cap proto-fetch! proto-unreadable)
 (import git/wire wire-close!)
@@ -125,7 +125,7 @@
                         (Str8 append (File read-all (Str8 append g "/config"))
                           "[remote \"origin\"]\n\turl = " url "\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n"
                           "[branch \"" branch "\"]\n\tremote = origin\n\tmerge = refs/heads/" branch "\n"))
-                      (unless (null? sha) (git-checkout-tree! dest g sha))
+                      (unless (null? sha) (git-checkout-new! dest g sha))
                       (list (lit err)
                         (Str8 append "Cloning into '" name "'...\n"
                           (if (null? refs) "warning: You appear to have cloned an empty repository.\n" ""))
@@ -182,7 +182,7 @@
                                     (Str8 append (File read-all (Str8 append g "/config"))
                                       "[remote \"origin\"]\n\turl = " src "\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n"
                                       "[branch \"" branch "\"]\n\tremote = origin\n\tmerge = refs/heads/" branch "\n"))
-                                  (unless (null? sha) (git-checkout-tree! dest g sha))
+                                  (unless (null? sha) (git-checkout-new! dest g sha))
                                   (list (lit err) (Str8 append "Cloning into '" name "'...\ndone.\n") 0))))))))))))))))
 
 ; The .git a path names, for the modules that read another repository.

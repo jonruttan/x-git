@@ -125,3 +125,33 @@ cumulative down the cases.
 ```
 ---
     ((0 . "") (0 . "") (0 . "") (0 . "") (0 . "") (0 . "") (0 . "") (128 . "fatal: a branch named 'work2' already exists\n") (128 . "fatal: invalid reference: nosuch\n") (1 . "error: pathspec 'nosuch' did not match any file(s) known to git\n") "ref: refs/heads/work2")(0 1 (0 . "") "hello\nmore\n")
+
+### changes carried by a switch, and listed after it, as git lists them
+
+A file staged as new and one deleted, neither touched by the move, go
+with HEAD to the other branch: the index keeps the new one and the
+working directory keeps the deletion.  Each switch lists them on standard
+output after what it says; a new branch made at HEAD lists nothing, and
+checkout with no operand only lists.
+
+```git
+(def %co (git-fixture-refs))
+(def %co-clean (git-text-in %co "checkout"))
+(File write-all (Str8 append %co "/n.txt") "new\n")
+(git-oracle-in %co "add" "n.txt")
+(File unlink (Str8 append %co "/sub/g"))
+(write (list %co-clean
+             (git-text-in %co "checkout")
+             (equal? (git-text-in %co "checkout") (git-oracle-in %co "checkout"))
+             (git-text-in %co "checkout" "-q")
+             (git-text-in %co "checkout" "side")
+             (File read-all (Str8 append %co "/f.txt"))
+             (File exists? (Str8 append %co "/sub/g"))
+             (git-oracle-in %co "status" "--porcelain")
+             (git-text-in %co "checkout" "-q" "main")
+             (git-text-in %co "checkout" "-b" "carry")
+             (git-text-in %co "switch" "-c" "carry2" "side")
+             (git-text-in %co "checkout" "carry2")))
+```
+---
+    ((0 . "") (0 . "A\tn.txt\nD\tsub/g\n") #t (0 . "") (0 . "Switched to branch 'side'\nA\tn.txt\nD\tsub/g\n") "hello\n" #f (0 . "A  n.txt\n D sub/g\n") (0 . "") (0 . "Switched to a new branch 'carry'\n") (0 . "Switched to a new branch 'carry2'\nA\tn.txt\nD\tsub/g\n") (0 . "Already on 'carry2'\nA\tn.txt\nD\tsub/g\n"))
