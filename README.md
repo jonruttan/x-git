@@ -113,7 +113,9 @@ The detail of each command:
   its own stopping the move in git's words, one the move leaves alone
   carried along and listed after, as git lists it (`checkout` alone only
   lists); `checkout -- <path>...` and
-  `restore <path>...` from the index; `-q` on each says nothing when it
+  `restore <path>...` from the index; paths in conflict refused, as git
+  refuses them (switch refusing while a merge, cherry-pick or revert is
+  under way), a switch that works giving up what was; `-q` on each says nothing when it
   works, a refusal still told
 - a remote by path, or by url: `file:///path`, `ssh://[user@]host[:port]/path`
   or scp's `[user@]host:path`.  Over ssh the service is run on the host
