@@ -319,6 +319,14 @@
       ((Opts help? git-merge-options ops) (list (lit out) (Opts usage git-merge-options) 0))
       ((null? gitdir) (git-no-repo))
       ((Opts on? o "--abort") (%answer (%abort! wd gitdir)))
+      ; unmerged paths are told first, a merge in progress or not
+      ((not (null? (first (rest (rest (rest (git-status-lists wd gitdir)))))))
+        (list (lit err)
+          (Str8 append "error: Merging is not possible because you have unmerged files.\n"
+            "hint: Fix them up in the work tree, and then use 'git add/rm <file>'\n"
+            "hint: as appropriate to mark resolution and make a commit.\n"
+            "fatal: Exiting because of an unresolved conflict.\n")
+          128))
       ((File exists? (Str8 append gitdir "/MERGE_HEAD"))
         (git-fatal "You have not concluded your merge (MERGE_HEAD exists).\nPlease, commit your changes before you merge."))
       ((null? target-name) (git-fatal "No remote for the current branch."))

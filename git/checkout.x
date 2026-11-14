@@ -21,7 +21,7 @@
 (import git/commands git-fatal git-no-repo git-unknown-option)
 (import git/refs git-ref-read git-rev-parse git-tree-of git-commit-of git-headers git-previous-branch)
 (import git/index git-index-read git-status-lists)
-(import git/stage git-index-write! git-read-entries)
+(import git/stage git-index-write! git-read-entries git-merge-state-clear!)
 (import git/reflog git-reflog-append!)
 
 (import x/core/doors int+ int- str->ptr)
@@ -184,10 +184,53 @@
         paths))
     (if (null? lines) () (Str8 join "" lines))))
 
+; A merge, cherry-pick or revert left unfinished is given up by a switch
+; that works, a pick's or a revert's with a warning; the warning's text.
+(def %settle!
+  (fn (_ gitdir)
+    (def warning
+      (match
+        ((File exists? (Str8 append gitdir "/CHERRY_PICK_HEAD")) "warning: cancelling a cherry picking in progress\n")
+        ((File exists? (Str8 append gitdir "/REVERT_HEAD")) "warning: cancelling a revert in progress\n")
+        (#t "")))
+    (git-merge-state-clear! gitdir)
+    warning))
+
 ; A switch done: what it says on standard error, and after it on standard
 ; output the changes it carried.
 (def %told
-  (fn (_ text changes) (if (null? changes) (list (lit err) text 0) (list (lit err) text 0 changes))))
+  (fn (_ gitdir text changes)
+    (def said (Str8 append text (%settle! gitdir)))
+    (if (null? changes) (list (lit err) said 0) (list (lit err) said 0 changes))))
+
+; The paths in conflict in the index, each once, in order.
+(def %unmerged-paths
+  (fn (_ gitdir)
+    (List reverse
+      (List fold (fn (_ acc e) (if (or (= (first (rest (rest (rest e)))) 0) (and (not (null? acc)) (str=? (first acc) (first e)))) acc (pair (first e) acc)))
+        () (git-index-read gitdir)))))
+
+; A switch refused while paths are in conflict: () when none are.
+(def %unresolved
+  (fn (_ gitdir)
+    (def paths (%unmerged-paths gitdir))
+    (if (null? paths) ()
+      (list (lit err) "error: you need to resolve your current index first\n" 1
+        (Str8 join "" (List map (fn (_ p) (Str8 append p ": needs merge\n")) paths))))))
+
+; switch refuses outright while a merge, cherry-pick or revert is under
+; way: () when none is.
+(def %under-way
+  (fn (_ gitdir)
+    (def doing
+      (match
+        ((File exists? (Str8 append gitdir "/MERGE_HEAD")) (pair "merging" "merge"))
+        ((File exists? (Str8 append gitdir "/CHERRY_PICK_HEAD")) (pair "cherry-picking" "cherry-pick"))
+        ((File exists? (Str8 append gitdir "/REVERT_HEAD")) (pair "reverting" "revert"))
+        (#t ())))
+    (if (null? doing) ()
+      (git-fatal (Str8 append "cannot switch branch while " (first doing)
+                   "\nConsider \"git " (rest doing) " --quit\" or \"git worktree add\".")))))
 
 ; HEAD moved to a branch (made first at start when new? is set) or to a
 ; commit, the working directory following.
@@ -205,6 +248,8 @@
     (match
       ((and new? (not (null? (git-ref-read gitdir (Str8 append "refs/heads/" rev)))))
         (git-fatal (Str8 append "a branch named '" rev "' already exists")))
+      ; paths in conflict stop a move; a new branch made at HEAD moves nothing
+      ((and (not (and new? (null? given))) (not (null? (%unresolved gitdir)))) (%unresolved gitdir))
       (new?
         (let ((sha (git-commit-of gitdir start)))
           (if (null? sha) (git-fatal (Str8 append "not a valid object name: '" start "'"))
@@ -214,15 +259,15 @@
                     (git-reflog-append! gitdir (Str8 append "refs/heads/" rev) () sha (Str8 append "branch: Created from " start))
                     (File write-all (Str8 append gitdir "/HEAD") (Str8 append "ref: refs/heads/" rev "\n"))
                     (moved! sha)
-                    (%told (Str8 append "Switched to a new branch '" rev "'\n") (if (null? given) () (%changes wd gitdir)))))))))
+                    (%told gitdir (Str8 append "Switched to a new branch '" rev "'\n") (if (null? given) () (%changes wd gitdir)))))))))
       ((and (not (null? current)) (str=? current rev))
-        (do (moved! old) (%told (Str8 append "Already on '" rev "'\n") (%changes wd gitdir))))
+        (do (moved! old) (%told gitdir (Str8 append "Already on '" rev "'\n") (%changes wd gitdir))))
       ((not (null? branch-sha))
         (let ((blocked (%move-to! wd gitdir branch-sha)))
           (if (not (null? blocked)) (%overwritten blocked)
             (do (File write-all (Str8 append gitdir "/HEAD") (Str8 append "ref: refs/heads/" rev "\n"))
                 (moved! branch-sha)
-                (%told (Str8 append "Switched to branch '" rev "'\n") (%changes wd gitdir))))))
+                (%told gitdir (Str8 append "Switched to branch '" rev "'\n") (%changes wd gitdir))))))
       (#t
         (let ((sha (git-commit-of gitdir rev)))
           (if (null? sha)
@@ -231,23 +276,39 @@
               (if (not (null? blocked)) (%overwritten blocked)
                 (do (File write-all (Str8 append gitdir "/HEAD") (Str8 append sha "\n"))
                     (moved! sha)
-                    (%told (%detached-note rev gitdir sha) (%changes wd gitdir)))))))))))
+                    (%told gitdir (%detached-note rev gitdir sha) (%changes wd gitdir)))))))))))
 
 ; Paths put back from the index; one the index lacks stops it all.
 (def %restore!
   (fn (_ wd gitdir paths)
     (def index (git-index-read gitdir))
     (def missing (List find (fn (_ p) (null? (List find (fn (_ e) (str=? (first e) p)) index))) paths))
-    (if (not (null? missing))
-      (%error (Str8 append "pathspec '" missing "' did not match any file(s) known to git"))
-      (do (List for-each
-            (fn (_ p)
-              (let ((e (List find (fn (_ x) (str=? (first x) p)) index)))
-                (%write-blob! wd gitdir p (first (rest (rest e))) (first (rest e)))))
-            paths)
-          (list (lit out) "" 0)))))
+    ; a path in conflict has no one blob to put back: each is told
+    (def unmerged (List filter (fn (_ p) (List any? (fn (_ u) (str=? u p)) (%unmerged-paths gitdir))) paths))
+    (match
+      ((not (null? missing))
+        (%error (Str8 append "pathspec '" missing "' did not match any file(s) known to git")))
+      ((not (null? unmerged))
+        (list (lit err) (Str8 join "" (List map (fn (_ p) (Str8 append "error: path '" p "' is unmerged\n")) unmerged)) 1))
+      (#t
+        (do (List for-each
+              (fn (_ p)
+                (let ((e (List find (fn (_ x) (str=? (first x) p)) index)))
+                  (%write-blob! wd gitdir p (first (rest (rest e))) (first (rest e)))))
+              paths)
+            (list (lit out) "" 0))))))
 
 ; --- the commands ---
+
+; checkout with no operand, or HEAD: nothing moves, the changes are
+; listed and what was under way given up, unless paths are in conflict.
+(def %stay
+  (fn (_ wd gitdir)
+    (def refused (%unresolved gitdir))
+    (if (not (null? refused)) refused
+      (let ((warning (%settle! gitdir)) (changes (or (%changes wd gitdir) "")))
+        (if (= (Str8 length warning) 0) (list (lit out) changes 0) (list (lit err) warning 0 changes))))))
+
 
 ; - and @{-N}: the branch checked out that many switches ago, or else
 ; when there was none.
@@ -282,8 +343,8 @@
       (dashes? (%restore! wd gitdir operands))
       ((not (null? (Opts value o "-b" ())))
         (%hush o (%switch! wd gitdir (Opts value o "-b" ()) #t (if (null? operands) () (first operands)))))
-      ; no operand: nothing moves, the changes are listed
-      ((null? operands) (%hush o (list (lit out) (or (%changes wd gitdir) "") 0)))
+      ; no operand, or HEAD: nothing moves
+      ((or (null? operands) (and (null? (rest operands)) (str=? (first operands) "HEAD"))) (%hush o (%stay wd gitdir)))
       ((and (null? (git-ref-read gitdir (Str8 append "refs/heads/" (first operands))))
             (null? (git-commit-of gitdir (first operands)))
             (not (null? (List find (fn (_ e) (str=? (first e) (first operands))) (git-index-read gitdir)))))
@@ -304,6 +365,7 @@
       ((Opts help? git-switch-options ops) (list (lit out) (Opts usage git-switch-options) 0))
       ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-switch-options)))
       ((null? gitdir) (git-no-repo))
+      ((not (null? (%under-way gitdir))) (%under-way gitdir))
       ((not (null? (Opts value o "-c" ())))
         (%hush o (%switch! wd gitdir (Opts value o "-c" ()) #t (if (null? operands) () (first operands)))))
       ((null? operands) (list (lit err) (Opts usage git-switch-options) 129))
