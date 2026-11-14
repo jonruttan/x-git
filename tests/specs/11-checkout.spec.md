@@ -155,3 +155,50 @@ checkout with no operand only lists.
 ```
 ---
     ((0 . "") (0 . "A\tn.txt\nD\tsub/g\n") #t (0 . "") (0 . "Switched to branch 'side'\nA\tn.txt\nD\tsub/g\n") "hello\n" #f (0 . "A  n.txt\n D sub/g\n") (0 . "") (0 . "Switched to a new branch 'carry'\n") (0 . "Switched to a new branch 'carry2'\nA\tn.txt\nD\tsub/g\n") (0 . "Already on 'carry2'\nA\tn.txt\nD\tsub/g\n"))
+
+## paths in conflict
+
+A merge left in conflict on two paths, `f` and `h`.  What is refused
+changes nothing, so git's answer is had in the same repository.
+
+### checkout, switch, restore and merge refuse, in git's words
+
+```git
+(def %cf-dir (let ((t (File temp "/tmp/x-git-cf-"))) (do (File close (first t)) (File unlink (rest t)) (File mkdir (rest t)) (rest t))))
+(def %cf-sh
+  (fn (_ script)
+    (Proc run! (list "/bin/sh" "-c"
+      (Str8 append "export GIT_AUTHOR_NAME=A GIT_AUTHOR_EMAIL=a@b.c GIT_COMMITTER_NAME=A GIT_COMMITTER_EMAIL=a@b.c; cd \"$0\" && " script) %cf-dir))))
+(%cf-sh (Str8 append "git init -q -b main && echo a>f && echo a>h && echo k>g && git add . && git commit -qm one"
+          " && git branch side && git branch other && echo main>f && echo main>h && git commit -qam two"
+          " && git checkout -q side && echo side>f && echo side>h && git commit -qam three && git checkout -q main"
+          " && { git merge -q side >/dev/null 2>&1; true; }"))
+(def %cf-same? (fn (_ . ops) (equal? (apply git-text-in (pair %cf-dir ops)) (apply git-oracle-in (pair %cf-dir ops)))))
+(write (list (git-text-in %cf-dir "checkout" "side")
+             (git-text-in %cf-dir "switch" "side")
+             (git-text-in %cf-dir "checkout" "--" "g" "f" "h")
+             (git-text-in %cf-dir "merge" "side")
+             (List map (fn (_ ops) (apply %cf-same? ops))
+               (list (list "checkout" "side") (list "checkout" "-q" "side") (list "checkout") (list "checkout" "HEAD")
+                     (list "checkout" "-b" "w" "side") (list "checkout" "HEAD~1")
+                     (list "switch" "other") (list "switch" "-c" "w")
+                     (list "checkout" "--" "f" "h") (list "checkout" "h" "g") (list "restore" "g" "f")))
+             (git-oracle-in %cf-dir "status" "--porcelain")))
+```
+---
+    ((1 . "error: you need to resolve your current index first\nf: needs merge\nh: needs merge\n") (128 . "fatal: cannot switch branch while merging\nConsider \"git merge --quit\" or \"git worktree add\".\n") (1 . "error: path 'f' is unmerged\nerror: path 'h' is unmerged\n") (128 . "error: Merging is not possible because you have unmerged files.\nhint: Fix them up in the work tree, and then use 'git add/rm <file>'\nhint: as appropriate to mark resolution and make a commit.\nfatal: Exiting because of an unresolved conflict.\n") (#t #t #t #t #t #t #t #t #t #t #t) (0 . "UU f\nUU h\n"))
+
+### a new branch at HEAD is made, and gives the merge up; a pick given up is warned of
+
+```git
+(write (list (git-text-in %cf-dir "checkout" "-b" "w")
+             (File exists? (Str8 append %cf-dir "/.git/MERGE_HEAD"))
+             (git-oracle-in %cf-dir "status" "--porcelain")
+             (git-text-in %cf-dir "checkout" "side")))
+(%cf-sh "git checkout -q -f main && { git cherry-pick side >/dev/null 2>&1; true; } && echo side>f && echo side>h && git add f h")
+(write (list (git-text-in %cf-dir "switch" "other")
+             (git-text-in %cf-dir "checkout" "-b" "cp")
+             (File exists? (Str8 append %cf-dir "/.git/CHERRY_PICK_HEAD"))))
+```
+---
+    ((0 . "Switched to a new branch 'w'\n") #f (0 . "UU f\nUU h\n") (1 . "error: you need to resolve your current index first\nf: needs merge\nh: needs merge\n"))((128 . "fatal: cannot switch branch while cherry-picking\nConsider \"git cherry-pick --quit\" or \"git worktree add\".\n") (0 . "Switched to a new branch 'cp'\nwarning: cancelling a cherry picking in progress\n") #f)
