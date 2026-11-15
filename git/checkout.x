@@ -138,26 +138,42 @@
         "Please commit your changes or stash them before you switch branches.\nAborting\n")
       1)))
 
-(def %detached-note
-  (fn (_ rev gitdir sha)
+; A commit's short name and subject, as git describes a detached HEAD.
+(def %described
+  (fn (_ gitdir sha)
     (def subject
       (let ((o (git-object-read gitdir sha)))
         (if (null? o) ""
           (let ((text ((eval (lit git-object-text) (module git/objects)) o)))
             (let ((i (Str8 index-of "\n\n" text)))
               (if (null? i) "" (first (Str8 split "\n" (Str8 sub (int+ i 2) (int- (Str8 length text) (int+ i 2)) text)))))))))
-    (Str8 join "\n"
-      (list (Str8 append "Note: switching to '" rev "'.") ""
-            "You are in 'detached HEAD' state. You can look around, make experimental"
-            "changes and commit them, and you can discard any commits you make in this"
-            "state without impacting any branches by switching back to a branch." ""
-            "If you want to create a new branch to retain commits you create, you may"
-            "do so (now or later) by using -c with the switch command. Example:" ""
-            "  git switch -c <new-branch-name>" ""
-            "Or undo this operation with:" ""
-            "  git switch -" ""
-            "Turn off this advice by setting config variable advice.detachedHead to false" ""
-            (Str8 append "HEAD is now at " (Str8 sub 0 7 sha) " " subject) ""))))
+    (Str8 append (Str8 sub 0 7 sha) " " subject)))
+
+; Leaving a detached HEAD for another commit: where it was, as git says
+; it first; "" otherwise.
+(def %previous
+  (fn (_ gitdir branch old new)
+    (if (or (not (null? branch)) (null? old) (str=? old new)) ""
+      (Str8 append "Previous HEAD position was " (%described gitdir old) "\n"))))
+
+; A HEAD detached at sha: git's advice first when it was on a branch and
+; --detach was not asked for, then where HEAD is now.
+(def %detached-note
+  (fn (_ rev gitdir sha advise?)
+    (Str8 append
+      (if (not advise?) ""
+        (Str8 join "\n"
+          (list (Str8 append "Note: switching to '" rev "'.") ""
+                "You are in 'detached HEAD' state. You can look around, make experimental"
+                "changes and commit them, and you can discard any commits you make in this"
+                "state without impacting any branches by switching back to a branch." ""
+                "If you want to create a new branch to retain commits you create, you may"
+                "do so (now or later) by using -c with the switch command. Example:" ""
+                "  git switch -c <new-branch-name>" ""
+                "Or undo this operation with:" ""
+                "  git switch -" ""
+                "Turn off this advice by setting config variable advice.detachedHead to false" "" "")))
+      "HEAD is now at " (%described gitdir sha) "\n")))
 
 ; The paths whose working copy differs from HEAD, as git lists them after
 ; a switch: "M\tPATH" and the like, one a line, () when none.  A path is
@@ -233,9 +249,11 @@
                    "\nConsider \"git " (rest doing) " --quit\" or \"git worktree add\".")))))
 
 ; HEAD moved to a branch (made first at start when new? is set) or to a
-; commit, the working directory following.
+; commit, the working directory following; with detach? to the commit rev
+; names, a branch's too.
 (def %switch!
-  (fn (_ wd gitdir rev new? given)
+  (fn (_ wd gitdir rev new? given . detach)
+    (def detach? (not (null? detach)))
     ; a new branch made at HEAD, no start given, lists no changes, as git
     (def start (or given "HEAD"))
     (def current
@@ -244,7 +262,7 @@
     (def old (git-rev-parse gitdir "HEAD"))
     ; HEAD's log: from the branch it named, or the commit it was at
     (def moved! (fn (_ new) (git-reflog-append! gitdir "HEAD" old new (Str8 append "checkout: moving from " (or current old) " to " rev))))
-    (def branch-sha (if new? () (git-ref-read gitdir (Str8 append "refs/heads/" rev))))
+    (def branch-sha (if (or new? detach?) () (git-ref-read gitdir (Str8 append "refs/heads/" rev))))
     (match
       ((and new? (not (null? (git-ref-read gitdir (Str8 append "refs/heads/" rev)))))
         (git-fatal (Str8 append "a branch named '" rev "' already exists")))
@@ -259,15 +277,15 @@
                     (git-reflog-append! gitdir (Str8 append "refs/heads/" rev) () sha (Str8 append "branch: Created from " start))
                     (File write-all (Str8 append gitdir "/HEAD") (Str8 append "ref: refs/heads/" rev "\n"))
                     (moved! sha)
-                    (%told gitdir (Str8 append "Switched to a new branch '" rev "'\n") (if (null? given) () (%changes wd gitdir)))))))))
-      ((and (not (null? current)) (str=? current rev))
+                    (%told gitdir (Str8 append (%previous gitdir current old sha) "Switched to a new branch '" rev "'\n") (if (null? given) () (%changes wd gitdir)))))))))
+      ((and (not detach?) (not (null? current)) (str=? current rev))
         (do (moved! old) (%told gitdir (Str8 append "Already on '" rev "'\n") (%changes wd gitdir))))
       ((not (null? branch-sha))
         (let ((blocked (%move-to! wd gitdir branch-sha)))
           (if (not (null? blocked)) (%overwritten blocked)
             (do (File write-all (Str8 append gitdir "/HEAD") (Str8 append "ref: refs/heads/" rev "\n"))
                 (moved! branch-sha)
-                (%told gitdir (Str8 append "Switched to branch '" rev "'\n") (%changes wd gitdir))))))
+                (%told gitdir (Str8 append (%previous gitdir current old branch-sha) "Switched to branch '" rev "'\n") (%changes wd gitdir))))))
       (#t
         (let ((sha (git-commit-of gitdir rev)))
           (if (null? sha)
@@ -275,8 +293,12 @@
             (let ((blocked (%move-to! wd gitdir sha)))
               (if (not (null? blocked)) (%overwritten blocked)
                 (do (File write-all (Str8 append gitdir "/HEAD") (Str8 append sha "\n"))
-                    (moved! sha)
-                    (%told gitdir (%detached-note rev gitdir sha) (%changes wd gitdir)))))))))))
+                    ; detached already at that commit, git logs nothing
+                    (unless (and (null? current) (str=? old sha)) (moved! sha))
+                    (%told gitdir
+                      (Str8 append (%previous gitdir current old sha)
+                        (%detached-note rev gitdir sha (and (not detach?) (not (null? current)))))
+                      (%changes wd gitdir)))))))))))
 
 ; Paths put back from the index; one the index lacks stops it all.
 (def %restore!
@@ -323,10 +345,32 @@
   (fn (_ o r)
     (if (and (Opts on? o "-q") (= (first (rest (rest r))) 0)) (list (first r) "" 0) r)))
 
+; --detach: HEAD at a commit, a branch's too, the start HEAD when none
+; is given.  checkout takes what is no commit as a path, which --detach
+; does not; switch takes it as no reference.
+(def %detach
+  (fn (_ wd gitdir o operands new-flag path-refusal?)
+    (def rev (if (null? operands) "HEAD" (first operands)))
+    (def stray
+      (match
+        ((not (null? (Opts value o new-flag ()))) (git-fatal "'--detach' cannot be used with '-b/-B/--orphan'"))
+        ((and (not (null? operands)) (null? (git-commit-of gitdir rev)))
+          (git-fatal (if path-refusal?
+                       (Str8 append "git checkout: --detach does not take a path argument '" rev "'")
+                       (Str8 append "invalid reference: " rev))))
+        ((and (not (null? operands)) (not (null? (rest operands))))
+          (git-fatal (if path-refusal?
+                       (Str8 append "git checkout: --detach does not take a path argument '" (first (rest operands)) "'")
+                       "only one reference expected")))
+        (#t ())))
+    (if (not (null? stray)) stray
+      (%hush o (%switch! wd gitdir rev #f () #t)))))
+
 (def git-checkout-options
-  (Opts declare "git checkout" "[-q] [-b <new-branch>] [<branch> | <commit>]\n   or: git checkout [-q] -- <path>..." ()
+  (Opts declare "git checkout" "[-q] [-b <new-branch>] [<branch> | <commit>]\n   or: git checkout [-q] --detach [<commit>]\n   or: git checkout [-q] -- <path>..." ()
     (list
       (Opts flag "-q" "--quiet" "Say nothing when it works")
+      (Opts flag "-d" "--detach" "Detach HEAD at the commit (HEAD when none), a branch's too")
       (Opts arg "-b" "<new-branch>" "Make the branch at the start point (HEAD when none), then switch to it"))))
 
 (def git-checkout
@@ -340,6 +384,7 @@
       ((Opts help? git-checkout-options ops) (list (lit out) (Opts usage git-checkout-options) 0))
       ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-checkout-options)))
       ((null? gitdir) (git-no-repo))
+      ((Opts on? o "-d") (%detach wd gitdir o operands "-b" #t))
       (dashes? (%restore! wd gitdir operands))
       ((not (null? (Opts value o "-b" ())))
         (%hush o (%switch! wd gitdir (Opts value o "-b" ()) #t (if (null? operands) () (first operands)))))
@@ -352,9 +397,10 @@
       (#t (%hush o (%switch! wd gitdir (first operands) #f ()))))))
 
 (def git-switch-options
-  (Opts declare "git switch" "[-q] [-c <new-branch>] <branch>" ()
+  (Opts declare "git switch" "[-q] [-c <new-branch>] <branch>\n   or: git switch [-q] --detach [<commit>]" ()
     (list
       (Opts flag "-q" "--quiet" "Say nothing when it works")
+      (Opts flag "-d" "--detach" "Detach HEAD at the commit (HEAD when none), a branch's too")
       (Opts arg "-c" "--create" "<new-branch>" "Make the branch at the start point (HEAD when none), then switch to it"))))
 
 (def git-switch
@@ -366,11 +412,20 @@
       ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-switch-options)))
       ((null? gitdir) (git-no-repo))
       ((not (null? (%under-way gitdir))) (%under-way gitdir))
+      ((Opts on? o "-d") (%detach wd gitdir o operands "-c" #f))
       ((not (null? (Opts value o "-c" ())))
         (%hush o (%switch! wd gitdir (Opts value o "-c" ()) #t (if (null? operands) () (first operands)))))
       ((null? operands) (list (lit err) (Opts usage git-switch-options) 129))
       ((null? (git-ref-read gitdir (Str8 append "refs/heads/" (first operands))))
-        (git-fatal (Str8 append "invalid reference: " (first operands))))
+        (let ((kind (match
+                      ((not (null? (git-ref-read gitdir (Str8 append "refs/tags/" (first operands))))) "tag")
+                      ((not (null? (git-commit-of gitdir (first operands)))) "commit")
+                      (#t ()))))
+          (if (null? kind) (git-fatal (Str8 append "invalid reference: " (first operands)))
+            (list (lit err)
+              (Str8 append "fatal: a branch is expected, got " kind " '" (first operands) "'\n"
+                "hint: If you want to detach HEAD at the commit, try again with the --detach option.\n")
+              128))))
       (#t (%hush o (%switch! wd gitdir (first operands) #f ()))))))
 
 (def git-restore-options

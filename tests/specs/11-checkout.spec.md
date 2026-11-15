@@ -88,10 +88,11 @@ cumulative down the cases.
              (= (Str8 length %co-head) 40)
              (equal? (pair 0 (Str8 append %co-head "\n")) (git-oracle-in %co "rev-parse" "main~1"))
              (git-oracle-in %co "status" "--porcelain")
-             (git-text-in %co "checkout" "main")))
+             (let ((r (git-text-in %co "checkout" "main")))
+               (list (first r) (Str8 starts? "Previous HEAD position was " (rest r)) (Str8 ends? " one\nSwitched to branch 'main'\n" (rest r))))))
 ```
 ---
-    (0 #t #t #t #t (0 . "") (0 . "Switched to branch 'main'\n"))
+    (0 #t #t #t #t (0 . "") (0 #t #t))
 
 ### a name that is neither branch nor commit nor path
 
@@ -202,3 +203,50 @@ changes nothing, so git's answer is had in the same repository.
 ```
 ---
     ((0 . "Switched to a new branch 'w'\n") #f (0 . "UU f\nUU h\n") (1 . "error: you need to resolve your current index first\nf: needs merge\nh: needs merge\n"))((128 . "fatal: cannot switch branch while cherry-picking\nConsider \"git cherry-pick --quit\" or \"git worktree add\".\n") (0 . "Switched to a new branch 'cp'\nwarning: cancelling a cherry picking in progress\n") #f)
+
+## detaching
+
+Twin repositories made alike, commit dates fixed so the two name the same
+objects; x-git acts in one and git in the other, step for step, and each
+step's answer is compared, then HEAD's log.
+
+### switch --detach and checkout --detach, git's refusals, and where HEAD was
+
+```git
+(def %dt-mk
+  (fn (_)
+    (def d (let ((t (File temp "/tmp/x-git-dt-"))) (do (File close (first t)) (File unlink (rest t)) (File mkdir (rest t)) (rest t))))
+    (Proc run! (list "/bin/sh" "-c"
+      (Str8 append "export GIT_AUTHOR_DATE='2026-01-01T00:00:00Z' GIT_COMMITTER_DATE='2026-01-01T00:00:00Z'"
+        " GIT_AUTHOR_NAME=A GIT_AUTHOR_EMAIL=a@b.c GIT_COMMITTER_NAME=A GIT_COMMITTER_EMAIL=a@b.c; cd \"$0\""
+        " && git init -q -b main && echo a>f && echo k>g && git add . && git commit -qm one && git tag v1"
+        " && git tag -a v1a -m ann && git branch side && echo b>f && git commit -qam two")
+      d))
+    d))
+(def %dt-x (%dt-mk))
+(def %dt-g (%dt-mk))
+(def %dt-steps
+  (list (list "switch" "--detach") (list "switch" "--detach") (list "switch" "main")
+        (list "switch" "--detach" "HEAD~1") (list "switch" "main") (list "switch" "-d" "side")
+        (list "switch" "--detach" "v1") (list "switch" "-q" "--detach" "v1a") (list "switch" "main")
+        (list "switch" "HEAD~1") (list "switch" "v1") (list "switch" "nosuch") (list "switch" "--detach" "nosuch")
+        (list "switch" "--detach" "main" "side") (list "switch" "-c" "x" "--detach")
+        (list "checkout" "--detach") (list "checkout" "-q" "main") (list "checkout" "--detach" "main")
+        (list "checkout" "HEAD~1") (list "checkout" "HEAD~0") (list "checkout" "main")
+        (list "checkout" "-b" "z" "--detach") (list "checkout" "--detach" "g") (list "checkout" "--detach" "nosuch")
+        (list "checkout" "--detach" "main" "side") (list "checkout" "--detach" "--" "f")
+        (list "switch" "-d") (list "switch" "-") (list "switch" "-")))
+(def %dt-diff
+  (List filter (fn (_ x) (not (null? x)))
+    (List map
+      (fn (_ ops)
+        (let ((x (apply git-text-in (pair %dt-x ops))) (g (apply git-oracle-in (pair %dt-g (List append (list "-c" "advice.detachedHead=true" "-c" "advice.suggestDetachingHead=true") ops)))))
+          (if (equal? x g) () (list ops x g))))
+      %dt-steps)))
+(write (list %dt-diff
+             (equal? (git-oracle-in %dt-x "log" "-g" "--format=%gs" "HEAD") (git-oracle-in %dt-g "log" "-g" "--format=%gs" "HEAD"))
+             (git-text-in %dt-x "switch" "--detach" "HEAD~1")
+             (git-text-in %dt-x "switch" "main")))
+```
+---
+    (() #t (0 . "HEAD is now at da3ac03 one\n") (0 . "Previous HEAD position was da3ac03 one\nSwitched to branch 'main'\n"))
