@@ -219,7 +219,7 @@ step's answer is compared, then HEAD's log.
     (Proc run! (list "/bin/sh" "-c"
       (Str8 append "export GIT_AUTHOR_DATE='2026-01-01T00:00:00Z' GIT_COMMITTER_DATE='2026-01-01T00:00:00Z'"
         " GIT_AUTHOR_NAME=A GIT_AUTHOR_EMAIL=a@b.c GIT_COMMITTER_NAME=A GIT_COMMITTER_EMAIL=a@b.c; cd \"$0\""
-        " && git init -q -b main && echo a>f && echo k>g && git add . && git commit -qm one && git tag v1"
+        " && git init -q -b main && git config user.name A && git config user.email a@b.c && echo a>f && echo k>g && git add . && git commit -qm one && git tag v1"
         " && git tag -a v1a -m ann && git branch side && echo b>f && git commit -qam two")
       d))
     d))
