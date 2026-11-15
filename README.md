@@ -108,7 +108,9 @@ The detail of each command:
   when no `-b` is given (the hints git prints for an unnamed first branch
   are not printed), `branch [-d] [<branch> [<start>]]`,
   `tag [-d] [<tag> [<object>]]` (lightweight tags only)
-- `checkout <branch> | <commit>`, `checkout -b <new> [<start>]`, `switch [-c <new>] <branch>`:
+- `checkout <branch> | <commit>`, `checkout -b <new> [<start>]`, `switch [-c <new>] <branch>`,
+  `checkout --detach` and `switch --detach [<commit>]` (`-d`; switch asks a
+  commit or a tag for it, as git; leaving a detached HEAD says where it was):
   the working directory and index set to the tree, a path with changes of
   its own stopping the move in git's words, one the move leaves alone
   carried along and listed after, as git lists it (`checkout` alone only
