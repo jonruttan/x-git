@@ -71,14 +71,16 @@
 
 (def %env (fn (_ name) (let ((v (Sys getenv name))) (if (or (null? v) (= (Str8 length v) 0)) () v))))
 
-; A role's `NAME <EMAIL> WHEN`, role AUTHOR or COMMITTER: the name and the
-; email from GIT_<ROLE>_NAME and _EMAIL, else user.name and user.email;
-; the time from GIT_<ROLE>_DATE, else the clock.  () when there is no
-; name or no email.
+; A role's `NAME <EMAIL> WHEN`, role AUTHOR or COMMITTER, found as git
+; finds them: the name from GIT_<ROLE>_NAME, else <role>.name, else
+; user.name; the email from GIT_<ROLE>_EMAIL, else <role>.email, else
+; user.email, else EMAIL; the time from GIT_<ROLE>_DATE, else the clock.
+; () when there is no name or no email.
 (def %signature
   (fn (_ gitdir role)
-    (def name (or (%env (Str8 append "GIT_" role "_NAME")) (git-config-value gitdir "user.name")))
-    (def email (or (%env (Str8 append "GIT_" role "_EMAIL")) (git-config-value gitdir "user.email")))
+    (def key (fn (_ k) (Str8 append (Str8 downcase role) "." k)))
+    (def name (or (%env (Str8 append "GIT_" role "_NAME")) (git-config-value gitdir (key "name")) (git-config-value gitdir "user.name")))
+    (def email (or (%env (Str8 append "GIT_" role "_EMAIL")) (git-config-value gitdir (key "email")) (git-config-value gitdir "user.email") (%env "EMAIL")))
     (def date (let ((d (%env (Str8 append "GIT_" role "_DATE")))) (if (null? d) () (%parse-date d))))
     (if (or (null? name) (null? email)) ()
       (Str8 append name " <" email "> " (if (null? date) (%timestamp) date)))))
