@@ -1,5 +1,7 @@
 # x-git
 
+<p align="center"><img src="docs/bitwise-banner.svg" alt="x-git, with Bitwise the owl" width="100%"></p>
+
 git, written in [x-lang](https://github.com/jonruttan/x-lang) and loaded as
 a lang.
 
