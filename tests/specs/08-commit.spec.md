@@ -109,3 +109,40 @@ cumulative down the cases.
 ```
 ---
     ((" 2 files changed, 2 insertions(+), 1 deletion(-)" " create mode 100644 deep/one" "") #t #t (0 . ""))
+
+## who
+
+### the author and committer found as git finds them: <role>.name and .email, then user.*, then EMAIL
+
+Twin repositories, x-git committing in one and git in the other, the
+user's and the system's config set aside and the dates fixed, so the two
+commits and their reflog lines are compared byte for byte.
+
+```git
+(def %who-env
+  (list (pair "GIT_CONFIG_GLOBAL" "/dev/null") (pair "GIT_CONFIG_NOSYSTEM" "1")
+        (pair "GIT_AUTHOR_DATE" "2026-01-01T00:00:00Z") (pair "GIT_COMMITTER_DATE" "2026-01-01T00:00:00Z")
+        (pair "EMAIL" "e@mail.x")))
+(List for-each (fn (_ e) (Sys setenv (first e) (rest e))) %who-env)
+(def %who-mk
+  (fn (_ config)
+    (def d (let ((t (File temp "/tmp/x-git-who-"))) (do (File close (first t)) (File unlink (rest t)) (File mkdir (rest t)) (rest t))))
+    (Proc run! (list "/bin/sh" "-c" (Str8 append "cd \"$0\" && git init -q -b main && echo a>f && git add f" config) d))
+    d))
+(def %who
+  (fn (_ config)
+    (def x (%who-mk config))
+    (def g (%who-mk config))
+    (def xr (git-text-in x "commit" "-q" "-m" "one"))
+    (def gr (git-oracle-in g "commit" "-q" "-m" "one"))
+    (list xr (equal? xr gr)
+          (equal? (git-oracle-in x "cat-file" "-p" "HEAD") (git-oracle-in g "cat-file" "-p" "HEAD"))
+          (equal? (File read-all (Str8 append x "/.git/logs/HEAD")) (File read-all (Str8 append g "/.git/logs/HEAD")))
+          (List filter (fn (_ l) (or (Str8 starts? "author " l) (Str8 starts? "committer " l)))
+            (Str8 split "\n" (rest (git-oracle-in x "cat-file" "-p" "HEAD")))))))
+(write (list (%who " && git config user.name U && git config user.email u@x && git config author.name AN && git config committer.email ce@x")
+             (%who " && git config user.name U && git config committer.name CN")))
+(List for-each (fn (_ e) (Sys unsetenv (first e))) %who-env)
+```
+---
+    (((0 . "") #t #t #t ("author AN <u@x> 1767225600 +0000" "committer U <ce@x> 1767225600 +0000")) ((0 . "") #t #t #t ("author U <e@mail.x> 1767225600 +0000" "committer CN <e@mail.x> 1767225600 +0000")))

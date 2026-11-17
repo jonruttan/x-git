@@ -92,8 +92,10 @@ The detail of each command:
 - `add [-A] <pathspec>...`: the blobs written, the index written (version 2)
 - `commit -m <message> [-q] [--no-edit]`: the trees from the index, the
   commit with the identity and time git takes -- `GIT_AUTHOR_*` and
-  `GIT_COMMITTER_*`, then `user.name` and `user.email` from the
-  configuration, and the clock -- the branch moved; the summary as git prints it, its
+  `GIT_COMMITTER_*`, then `author.*` or `committer.*`, then `user.name` and
+  `user.email` from the configuration, then `EMAIL` for the address,
+  and the clock (git's guess from the account and host is not made yet)
+  -- the branch moved; the summary as git prints it, its
   line counts from a line diff.  A merge in progress is concluded: its
   second parent from `MERGE_HEAD`, its message from `MERGE_MSG` when no
   `-m` is given; a path still in conflict refuses it.  So is a revert or
