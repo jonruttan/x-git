@@ -30,7 +30,7 @@
 (import git/ignore git-ignorer)
 (import git/diff git-commit-summary)
 (import git/config git-config-value)
-(import git/ident git-signature)
+(import git/ident git-signature git-ident-refusal git-ident-note)
 (import git/reflog git-ref-log!)
 (import git/history git-ident-date)
 
@@ -324,7 +324,8 @@
     (def committer (rest (List find (fn (_ kv) (str=? (first kv) "committer")) hs)))
     (Str8 append
       (if (str=? (%who author) (%who committer)) "" (Str8 append " Author: " (%who author) "\n"))
-      (if dated? (Str8 append " Date: " (git-ident-date author) "\n") ""))))
+      (if dated? (Str8 append " Date: " (git-ident-date author) "\n") "")
+      (git-ident-note gitdir))))
 
 ; The commit a cherry-pick in progress picks, or ().
 (def git-picking
@@ -375,17 +376,6 @@
       128
       (Str8 join "" (List map (fn (_ p) (Str8 append "U\t" p "\n")) paths)))))
 
-(def %identity-unknown
-  (list (lit err)
-    (Str8 join "\n"
-      (list "Author identity unknown" "" "*** Please tell me who you are." "" "Run" ""
-            "  git config --global user.email \"you@example.com\""
-            "  git config --global user.name \"Your Name\"" ""
-            "to set your account's default identity."
-            "Omit --global to set the identity only in this repository." ""
-            "fatal: unable to auto-detect email address" ""))
-    128))
-
 (def git-commit
   (fn (_ wd gitdir ops)
     (def o (Opts parse git-commit-options ops))
@@ -409,13 +399,15 @@
              (if (and (> (%entry-stage (first es)) 0) (not (List any? (fn (_ p) (str=? p (first (first es)))) acc)))
                (pair (first (first es)) acc) acc))))
        entries ()))
+    ; who git will not commit as, asked once
+    (def refusal (if (null? gitdir) () (git-ident-refusal gitdir)))
     (match
       ((Opts help? git-commit-options ops) (list (lit out) (Opts usage git-commit-options) 0))
       ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-commit-options)))
       ((null? gitdir) (git-no-repo))
       ((not (null? unmerged)) (%unmerged-refusal unmerged))
       ((null? msg) (git-fatal "no message given: this git takes -m <message>"))
-      ((null? (git-signature gitdir "COMMITTER")) %identity-unknown)
+      ((not (null? refusal)) refusal)
       (#t
         (let ((parent (git-commit-of gitdir "HEAD"))
               (head (Str8 trim (File read-all (Str8 append gitdir "/HEAD")))))
