@@ -94,7 +94,9 @@ The detail of each command:
   commit with the identity and time git takes -- `GIT_AUTHOR_*` and
   `GIT_COMMITTER_*`, then `author.*` or `committer.*`, then `user.name` and
   `user.email` from the configuration, then `EMAIL` for the address,
-  and the clock (git's guess from the account and host is not made yet)
+  else git's guess from the account and the host, and the clock; a guess
+  noted after the summary's first line as git notes it, one git cannot
+  trust refused
   -- the branch moved; the summary as git prints it, its
   line counts from a line diff.  A merge in progress is concluded: its
   second parent from `MERGE_HEAD`, its message from `MERGE_MSG` when no

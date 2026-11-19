@@ -18,7 +18,7 @@
 
 (import x/sys/file File)
 (import git/config git-config-value)
-(import git/ident git-signature)
+(import git/ident git-signature-loose)
 
 (import x/core/doors int+ int- str-byte-len)
 
@@ -79,13 +79,14 @@
             (#t (or (str=? ref "HEAD")
                     (List any? (fn (_ p) (Str8 starts? p ref)) (list "refs/heads/" "refs/remotes/" "refs/notes/")))))))))
 
-; One line appended to ref's log, when it is logged and the committer is
-; known.  old () for a ref that did not exist.
+; One line appended to ref's log, when it is logged, the committer as git
+; finds it or guesses it.  old () for a ref that did not exist.
 (def git-reflog-append!
   (fn (_ gitdir ref old new msg)
-    (def who (git-signature gitdir "COMMITTER"))
-    (when (and (not (null? who)) (%logged? gitdir ref))
-      (do (%log-dirs! gitdir ref)
+    ; the committer found only for a ref that is logged
+    (when (%logged? gitdir ref)
+      (do (def who (git-signature-loose gitdir "COMMITTER"))
+          (%log-dirs! gitdir ref)
           (def line (Str8 append (if (null? old) %zero old) " " (if (null? new) %zero new) " " who "\t" (%squeeze msg) "\n"))
           (def fd (File open (%log-path gitdir ref) (list (lit wronly) (lit creat) (lit append)) 420))
           (when (>= fd 0)

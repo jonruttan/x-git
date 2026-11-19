@@ -146,3 +146,75 @@ commits and their reflog lines are compared byte for byte.
 ```
 ---
     (((0 . "") #t #t #t ("author AN <u@x> 1767225600 +0000" "committer U <ce@x> 1767225600 +0000")) ((0 . "") #t #t #t ("author U <e@mail.x> 1767225600 +0000" "committer CN <e@mail.x> 1767225600 +0000")))
+
+### a name or email not given is guessed from the account and the host, as git guesses it
+
+With no name or no email given, git guesses: the name from the account's
+full name, the email from the login and the host's full name.  A commit
+made with a guessed email says so after its first line (a guessed name
+alone passes); a guess git cannot use (a host name with no domain, an
+account with no full name) refuses the commit; the reflog takes the
+guess either way.  What the guess comes to is this machine's, so each
+case answers whether x-git and git agree -- the report, the commit, the
+reflog -- and whether git said what the case expects of it.  HOME is a
+directory of the case's, since the note's wording turns on whether a
+~/.gitconfig is there.
+
+```git
+(def %gx-env
+  (list (pair "GIT_CONFIG_GLOBAL" "/dev/null") (pair "GIT_CONFIG_NOSYSTEM" "1")
+        (pair "GIT_AUTHOR_DATE" "2026-01-01T00:00:00Z") (pair "GIT_COMMITTER_DATE" "2026-01-01T00:00:00Z")))
+(def %gx-home (Sys getenv "HOME"))
+(def %gx-mail (Sys getenv "EMAIL"))
+(List for-each (fn (_ e) (Sys setenv (first e) (rest e))) %gx-env)
+(Sys unsetenv "EMAIL")
+(def %gx-dir
+  (fn (_ p)
+    (let ((t (File temp p))) (do (File close (first t)) (File unlink (rest t)) (File mkdir (rest t)) (rest t)))))
+(def %gx-mk
+  (fn (_ setup)
+    (def d (%gx-dir "/tmp/x-git-guess-"))
+    (Proc run! (list "/bin/sh" "-c" (Str8 append "cd \"$0\" && git init -q -b main && echo a>f && git add f" setup) d))
+    d))
+(def %gx-log (fn (_ d) (let ((p (Str8 append d "/.git/logs/HEAD"))) (if (File exists? p) (File read-all p) ()))))
+; the commit made with the note, or refused for a guess git cannot use:
+; a host with no domain, an account with no full name
+(def %gx-refused
+  (fn (_ s) (or (Str8 includes? "fatal: unable to auto-detect email address" s)
+                (Str8 includes? "fatal: empty ident name" s))))
+(def %gx-noted
+  (fn (_ s) (or (Str8 includes? "were configured automatically" s) (%gx-refused s))))
+(def %gx-plain (fn (_ s) (or (not (Str8 includes? " Committer: " s)) (%gx-refused s))))
+(def %gx-quiet
+  (fn (_ s) (or (and (Str8 includes? " Committer: " s) (not (Str8 includes? "were configured automatically" s)))
+                (%gx-refused s))))
+(def %gx-switched (fn (_ s) (Str8 includes? "Switched to a new branch 'side'" s)))
+; the setup's shell steps, a ~/.gitconfig or not, what git must say
+(def %gx
+  (fn (_ setup gitconfig? said? . ops)
+    (def home (%gx-dir "/tmp/x-git-home-"))
+    (when gitconfig? (Proc run! (list "/bin/sh" "-c" "touch \"$0/.gitconfig\"" home)))
+    (Sys setenv "HOME" home)
+    (def x (%gx-mk setup))
+    (def g (%gx-mk setup))
+    (def xr (apply git-text-in (pair x ops)))
+    (def gr (apply git-oracle-in (pair g ops)))
+    (def r (list (equal? (rest xr) (rest gr))
+                 (equal? (git-oracle-in x "cat-file" "-p" "HEAD") (git-oracle-in g "cat-file" "-p" "HEAD"))
+                 (equal? (%gx-log x) (%gx-log g))
+                 (said? (rest gr))))
+    (if (List all? (fn (_ b) (eq? b #t)) r) #t (list r (rest xr) (rest gr)))))
+(write (list
+  (%gx "" #f %gx-noted "commit" "-m" "one")
+  (%gx "" #t %gx-noted "commit" "-m" "one")
+  (%gx " && git config user.name U" #f %gx-noted "commit" "-m" "one")
+  (%gx " && git config user.name U" #t %gx-noted "commit" "-m" "one")
+  (%gx " && git config user.email u@x" #f %gx-plain "commit" "-m" "one")
+  (%gx " && git config advice.implicitIdentity false" #f %gx-quiet "commit" "-m" "one")
+  (%gx " && git -c user.name=A -c user.email=a@b.c commit -q -m one" #f %gx-switched "checkout" "-b" "side")))
+(List for-each (fn (_ e) (Sys unsetenv (first e))) %gx-env)
+(Sys setenv "HOME" %gx-home)
+(when (not (null? %gx-mail)) (Sys setenv "EMAIL" %gx-mail))
+```
+---
+    (#t #t #t #t #t #t #t)
