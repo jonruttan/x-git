@@ -17,6 +17,7 @@
 (import x/sys/posix Sys)
 (import x/sys/date Date)
 (import x/sys/file File)
+(import x/sys/socket Socket)
 (import git/config git-config-value git-config-reader)
 
 (import x/core/doors int+ int- int* int/ int%)
@@ -99,16 +100,6 @@
 (def %login
   (fn (_) (let ((pw (%passwd))) (if (null? pw) "unknown" (or (Assoc get (lit name) pw) "")))))
 
-; x-lang's Socket, loaded the first time a host's canonical name is
-; looked up and not before: loaded with this module, it leaves the state
-; image words it cannot name on Linux, and the image is not kept.
-(def %Socket ())
-(def %load-socket!
-  (fn (_)
-    (when (null? %Socket)
-      (do (import x/sys/socket Socket)
-          (set! %Socket Socket)))))
-
 ; git's guess at an email, (EMAIL . BOGUS?): login@host, the host the
 ; host name when it has a dot, else its canonical name when that has
 ; one; else login@host.(none), bogus.
@@ -116,7 +107,7 @@
   (fn (_)
     (def login (%login))
     (def host (guard (e ()) (Sys gethostname)))
-    (def canon (fn (_) (guard (e ()) (do (%load-socket!) (%Socket canonical-name host)))))
+    (def canon (fn (_) (guard (e ()) (Socket canonical-name host))))
     (match
       ((null? host) (pair (Str8 append login "@(none)") #t))
       ((Str8 includes? "." host) (pair (Str8 append login "@" host) #f))
