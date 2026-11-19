@@ -13,6 +13,7 @@
 (module git/repo)
 
 (import x/sys/opts Opts)
+(import git/opts git-opts-parse)
 (import x/sys/file File)
 (import x/sys/posix Sys)
 (import git/objects git-write-file!)
@@ -55,7 +56,7 @@
 
 (def git-init
   (fn (_ wd gitdir ops)
-    (def o (Opts parse git-init-options ops))
+    (def o (git-opts-parse git-init-options ops))
     (def operands (Opts operands o))
     (match
       ((Opts help? git-init-options ops) (list (lit out) (Opts usage git-init-options) 0))
@@ -157,7 +158,7 @@
 
 (def git-branch
   (fn (_ wd gitdir ops)
-    (def o (Opts parse git-branch-options ops))
+    (def o (git-opts-parse git-branch-options ops))
     (match
       ((Opts help? git-branch-options ops) (list (lit out) (Opts usage git-branch-options) 0))
       ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-branch-options)))
@@ -170,7 +171,7 @@
 
 (def git-tag
   (fn (_ wd gitdir ops)
-    (def o (Opts parse git-tag-options ops))
+    (def o (git-opts-parse git-tag-options ops))
     (match
       ((Opts help? git-tag-options ops) (list (lit out) (Opts usage git-tag-options) 0))
       ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-tag-options)))

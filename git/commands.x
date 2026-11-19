@@ -14,6 +14,7 @@
 (module git/commands)
 
 (import x/sys/opts Opts)
+(import git/opts git-opts-parse)
 (import x/sys/file File)
 (import x/sys/posix Sys)
 (import git/objects git-hash git-object-write! git-object-read git-tree-pretty git-read-file)
@@ -25,16 +26,20 @@
 
 ; git's refusal of an option it does not know: a long one is an "option",
 ; a short one a "switch", each named without its dashes, then the usage.
+; A flag given a value, as git-opts-parse reports it, (no-value . NAME),
+; is refused alone: "option `NAME' takes no value".
 (def git-unknown-option
   (fn (_ w usage)
-    (def n (Str8 length w))
-    (list (lit err)
-      (Str8 append
-        (if (Str8 starts? "--" w)
-          (Str8 append "error: unknown option `" (Str8 sub 2 (- n 2) w))
-          (Str8 append "error: unknown switch `" (Str8 sub 1 (- n 1) w)))
-        "'\n" usage)
-      129)))
+    (if (pair? w)
+      (list (lit err) (Str8 append "error: option `" (rest w) "' takes no value\n") 129)
+      (let ((n (Str8 length w)))
+        (list (lit err)
+          (Str8 append
+            (if (Str8 starts? "--" w)
+              (Str8 append "error: unknown option `" (Str8 sub 2 (- n 2) w))
+              (Str8 append "error: unknown switch `" (Str8 sub 1 (- n 1) w)))
+            "'\n" usage)
+          129)))))
 (def git-no-repo
   (fn (_) (git-fatal "not a git repository (or any of the parent directories): .git")))
 
@@ -61,7 +66,7 @@
 
 (def git-cat-file
   (fn (_ wd gitdir ops)
-    (def o (Opts parse git-cat-file-options ops))
+    (def o (git-opts-parse git-cat-file-options ops))
     (def mode (%cat-file-mode o))
     (def operands (Opts operands o))
     (match
@@ -185,7 +190,7 @@
 
 (def git-hash-object
   (fn (_ wd gitdir ops)
-    (def o (Opts parse git-hash-object-options ops))
+    (def o (git-opts-parse git-hash-object-options ops))
     (def type (Opts value o "-t" "blob"))
     (def write? (Opts on? o "-w"))
     (def files (Opts operands o))

@@ -20,7 +20,8 @@
 (module git/pick)
 
 (import x/sys/opts Opts)
-(import git/commands git-no-repo)
+(import git/opts git-opts-parse)
+(import git/commands git-no-repo git-unknown-option)
 (import git/sequencer git-sequence! git-sequence-continue! git-sequence-skip! git-sequence-abort! git-sequence-quit!)
 
 (def git-cherry-pick-options
@@ -49,7 +50,7 @@
 
 (def git-cherry-pick
   (fn (_ wd gitdir ops)
-    (def o (Opts parse git-cherry-pick-options ops))
+    (def o (git-opts-parse git-cherry-pick-options ops))
     (def operands (Opts operands o))
     ; what --ff cannot be used with, the first git finds
     (def clash
@@ -57,6 +58,7 @@
            (match ((Opts on? o "-n") "--no-commit") ((Opts on? o "-x") "-x") ((Opts on? o "-e") "--edit") (#t #f))))
     (match
       ((Opts help? git-cherry-pick-options ops) (list (lit out) (Opts usage git-cherry-pick-options) 0))
+      ((pair? (Opts unknown o)) (git-unknown-option (Opts unknown o) ""))
       ((not (null? (Opts unknown o)))
         (list (lit err) (Str8 append "error: unknown option `" (Opts unknown o) "'\n" (Opts usage git-cherry-pick-options)) 129))
       ((null? gitdir) (git-no-repo))

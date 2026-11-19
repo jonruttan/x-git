@@ -18,9 +18,10 @@
 (module git/reset)
 
 (import x/sys/opts Opts)
+(import git/opts git-opts-parse)
 (import x/sys/file File)
 (import git/objects git-subject)
-(import git/commands git-fatal git-no-repo)
+(import git/commands git-fatal git-no-repo git-unknown-option)
 (import git/refs git-rev-parse git-commit-of git-tree-of)
 (import git/index git-status-lists)
 (import git/stage git-read-entries git-index-write! git-merge-state-clear!)
@@ -114,12 +115,13 @@
     (def cut ((fn (self l k) (match ((null? l) ()) ((str=? (first l) "--") k) (#t (self (rest l) (int+ k 1))))) ops 0))
     (def before (if (null? cut) ops (List take cut ops)))
     (def after (if (null? cut) () (List drop (int+ cut 1) ops)))
-    (def o (Opts parse git-reset-options before))
+    (def o (git-opts-parse git-reset-options before))
     (def operands (Opts operands o))
     (def quiet? (Opts on? o "-q"))
     (def mode (match ((Opts on? o "--hard") "hard") ((Opts on? o "--soft") "soft") (#t "mixed")))
     (match
       ((Opts help? git-reset-options ops) (list (lit out) (Opts usage git-reset-options) 0))
+      ((pair? (Opts unknown o)) (git-unknown-option (Opts unknown o) ""))
       ((not (null? (Opts unknown o)))
         (list (lit err) (Str8 append "error: unknown option `" (Str8 sub 2 (int- (Str8 length (Opts unknown o)) 2) (Opts unknown o)) "'\n"
                           (Opts usage git-reset-options)) 129))

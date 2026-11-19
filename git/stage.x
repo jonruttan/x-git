@@ -19,6 +19,7 @@
 (module git/stage)
 
 (import x/sys/opts Opts)
+(import git/opts git-opts-parse)
 (import x/sys/file File)
 (import x/sys/posix Sys)
 (import x/codec/sha1 Sha1)
@@ -175,7 +176,7 @@
 
 (def git-add
   (fn (_ wd gitdir ops)
-    (def o (Opts parse git-add-options ops))
+    (def o (git-opts-parse git-add-options ops))
     (def specs (List map (fn (_ s) (git-strip-slash s)) (Opts operands o)))
     ; with -f nothing is ignored
     (def ignored?
@@ -378,7 +379,7 @@
 
 (def git-commit
   (fn (_ wd gitdir ops)
-    (def o (Opts parse git-commit-options ops))
+    (def o (git-opts-parse git-commit-options ops))
     (def merging (if (null? gitdir) () (%merge-heads gitdir)))
     (def merge-msg-path (if (null? gitdir) () (Str8 append gitdir "/MERGE_MSG")))
     ; a cherry-pick in progress concludes with the picked commit's author

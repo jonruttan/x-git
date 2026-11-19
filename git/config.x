@@ -30,6 +30,7 @@
 
 (import x/sys/file File)
 (import x/sys/opts Opts)
+(import git/opts git-opts-parse)
 
 (import x/core/doors int+ int- int< int->char)
 
@@ -539,7 +540,7 @@
 
 (def git-config
   (fn (_ wd gitdir ops)
-    (def o (Opts parse git-config-options ops))
+    (def o (git-opts-parse git-config-options ops))
     (def args (Opts operands o))
     (def sub (if (and (not (null? args)) (List any? (fn (_ s) (str=? s (first args))) %subcommands)) (first args) ()))
     (def operands (if (null? sub) args (rest args)))

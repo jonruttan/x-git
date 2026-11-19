@@ -16,6 +16,7 @@
 (module git/index)
 
 (import x/sys/opts Opts)
+(import git/opts git-opts-parse)
 (import x/sys/file File)
 (import git/objects git-object-read git-tree-entries git-hash git-read-file)
 (import git/commands git-fatal git-no-repo git-unknown-option)
@@ -393,7 +394,7 @@
 (def git-status
   (fn (_ wd gitdir ops)
     (def mode (%ignored-mode ops))
-    (def o (Opts parse git-status-options (List filter (fn (_ w) (not (Str8 starts? "--ignored" w))) ops)))
+    (def o (git-opts-parse git-status-options (List filter (fn (_ w) (not (Str8 starts? "--ignored" w))) ops)))
     (match
       ((Opts help? git-status-options ops) (list (lit out) (Opts usage git-status-options) 0))
       ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-status-options)))
@@ -433,7 +434,7 @@
 
 (def git-ls-files
   (fn (_ wd gitdir ops)
-    (def o (Opts parse git-ls-files-options ops))
+    (def o (git-opts-parse git-ls-files-options ops))
     (def on? (fn (_ f) (Opts on? o f)))
     ; the others, then the tracked, as git lists them; with -i only what
     ; is ignored, without it, under --exclude-standard, only what is not

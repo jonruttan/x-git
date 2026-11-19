@@ -27,6 +27,7 @@
 (module git/remote)
 
 (import x/sys/opts Opts)
+(import git/opts git-opts-parse)
 (import x/sys/file File)
 (import x/sys/posix Sys)
 (import git/objects git-object-read git-object-text git-tree-entries)
@@ -333,7 +334,7 @@
 
 (def %fetch
   (fn (_ wd gitdir ops action)
-    (def o (Opts parse git-fetch-options ops))
+    (def o (git-opts-parse git-fetch-options ops))
     (def remote (if (null? (Opts operands o)) "origin" (first (Opts operands o))))
     (def url (if (null? gitdir) () (git-config-value gitdir (Str8 append "remote." remote ".url"))))
     (def src (if (null? gitdir) () (%source wd gitdir url)))
@@ -432,7 +433,7 @@
 ; named, or a url or path given.
 (def git-ls-remote
   (fn (_ wd gitdir ops)
-    (def o (Opts parse git-ls-remote-options ops))
+    (def o (git-opts-parse git-ls-remote-options ops))
     (def operand (if (null? (Opts operands o)) "origin" (first (Opts operands o))))
     (def configured (if (null? gitdir) () (git-config-value gitdir (Str8 append "remote." operand ".url"))))
     (def url (if (null? configured) operand configured))
@@ -853,7 +854,7 @@
 
 (def git-push
   (fn (_ wd gitdir ops)
-    (def o (Opts parse git-push-options ops))
+    (def o (git-opts-parse git-push-options ops))
     (def operands (Opts operands o))
     (def current (if (null? gitdir) () (%current-branch gitdir)))
     (def tracked (fn (_ key) (if (or (null? gitdir) (null? current)) () (git-config-value gitdir (Str8 append "branch." current "." key)))))

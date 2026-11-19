@@ -14,6 +14,7 @@
 (module git/history)
 
 (import x/sys/opts Opts)
+(import git/opts git-opts-parse)
 (import x/sys/date Date)
 (import x/sys/file File)
 (import git/objects git-object-read git-tree-entries git-object-text git-mode-type)
@@ -98,7 +99,7 @@
 
 (def git-ls-tree
   (fn (_ wd gitdir ops)
-    (def o (Opts parse git-ls-tree-options ops))
+    (def o (git-opts-parse git-ls-tree-options ops))
     (def operands (Opts operands o))
     (match
       ((Opts help? git-ls-tree-options ops) (list (lit out) (Opts usage git-ls-tree-options) 0))
