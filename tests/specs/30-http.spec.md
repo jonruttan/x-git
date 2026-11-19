@@ -30,15 +30,20 @@ plain server, and the handshake's failure is refused in git's form.
     " && git checkout -qb side && printf 's\\n' > s && git add s && git commit -qm side && git checkout -q main"
     " && git clone -q --bare . ../srv/repo.git"))
 ; the server started as a process of its own, from x's root, as a
-; checkout's x needs, and not waited for; then its port awaited
+; checkout's x needs, and not waited for; then its port awaited.  The
+; fork and the child's exec are one form, and the server's input is
+; /dev/null: the spec runner reads a snippet's forms one at a time from
+; the input the child would share.
 (Sys setenv "HT_ROOT" (Str8 append %ht-d "/srv"))
 (Sys setenv "HT_DIR" (Str8 append %ht-d "/srvd"))
-(def %ht-server (Sys fork))
-(when (= %ht-server 0)
-  (guard (e (Sys exit 125))
-    (Sys exec "/bin/sh"
-      (list "-c" "cd \"$X_ROOT\" && exec \"$X\" -f \"$X_GIT_BUNDLE/tests/http-server.x\" >/dev/null 2>&1")))
-  (Sys exit 127))
+(def %ht-server
+  (let ((pid (Sys fork)))
+    (do (when (= pid 0)
+          (guard (e (Sys exit 125))
+            (Sys exec "/bin/sh"
+              (list "-c" "cd \"$X_ROOT\" && exec \"$X\" -f \"$X_GIT_BUNDLE/tests/http-server.x\" </dev/null >/dev/null 2>&1")))
+          (Sys exit 127))
+        pid)))
 (%ht-sh %ht-d "i=0; while [ ! -s srvd/port ] && [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done")
 (def %ht-url (Str8 append "http://127.0.0.1:" (Str8 trim (File read-all (Str8 append %ht-d "/srvd/port"))) "/repo.git"))
 (def %ht-x
