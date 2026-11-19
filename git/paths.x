@@ -25,6 +25,7 @@
 (module git/paths)
 
 (import x/sys/opts Opts)
+(import git/opts git-opts-parse)
 (import x/sys/file File)
 (import git/objects git-hash git-read-file)
 (import git/commands git-fatal git-no-repo git-unknown-option git-strip-slash git-stdin git-records git-nul-joined)
@@ -84,7 +85,7 @@
 
 (def git-rm
   (fn (_ wd gitdir ops)
-    (def o (Opts parse git-rm-options ops))
+    (def o (git-opts-parse git-rm-options ops))
     (def specs (List map (fn (_ s) (git-strip-slash s)) (Opts operands o)))
     (match
       ((Opts help? git-rm-options ops) (list (lit out) (Opts usage git-rm-options) 0))
@@ -190,7 +191,7 @@
 
 (def git-mv
   (fn (_ wd gitdir ops)
-    (def o (Opts parse git-mv-options ops))
+    (def o (git-opts-parse git-mv-options ops))
     (def operands (List map (fn (_ s) (git-strip-slash s)) (Opts operands o)))
     (match
       ((Opts help? git-mv-options ops) (list (lit out) (Opts usage git-mv-options) 0))
@@ -299,7 +300,7 @@
 
 (def git-check-ignore
   (fn (_ wd gitdir ops)
-    (def o (Opts parse git-check-ignore-options ops))
+    (def o (git-opts-parse git-check-ignore-options ops))
     (def on? (fn (_ f) (Opts on? o f)))
     (def paths (Opts operands o))
     (match
@@ -402,7 +403,7 @@
 
 (def git-clean
   (fn (_ wd gitdir ops)
-    (def o (Opts parse git-clean-options ops))
+    (def o (git-opts-parse git-clean-options ops))
     (def on? (fn (_ f) (Opts on? o f)))
     (def forced (List length (List filter (fn (_ f) (str=? f "-f")) (rest (Assoc entry (lit on) o)))))
     (def specs (List map (fn (_ s) (git-strip-slash s)) (Opts operands o)))

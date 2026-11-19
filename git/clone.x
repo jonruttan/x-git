@@ -18,6 +18,7 @@
 (module git/clone)
 
 (import x/sys/opts Opts)
+(import git/opts git-opts-parse)
 (import x/sys/file File)
 (import git/objects git-dir git-write-file! git-object-read)
 (import git/commands git-fatal git-unknown-option git-strip-slash)
@@ -133,7 +134,7 @@
 
 (def git-clone
   (fn (_ wd gitdir ops)
-    (def o (Opts parse git-clone-options ops))
+    (def o (git-opts-parse git-clone-options ops))
     (def operands (Opts operands o))
     (match
       ((Opts help? git-clone-options ops) (list (lit out) (Opts usage git-clone-options) 0))

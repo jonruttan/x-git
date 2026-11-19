@@ -16,6 +16,7 @@
 (module git/checkout)
 
 (import x/sys/opts Opts)
+(import git/opts git-opts-parse)
 (import x/sys/file File)
 (import git/objects git-object-read git-tree-entries git-write-file! git-read-file git-hash)
 (import git/commands git-fatal git-no-repo git-unknown-option)
@@ -378,7 +379,7 @@
     ; a "--" is Opts's own end of options; a path after it is a restore,
     ; which the operands carry, so it is looked for in ops as given
     (def dashes? (List any? (fn (_ a) (str=? a "--")) ops))
-    (def o (Opts parse git-checkout-options ops))
+    (def o (git-opts-parse git-checkout-options ops))
     (def operands (List map (fn (_ a) (%prior gitdir a a)) (Opts operands o)))
     (match
       ((Opts help? git-checkout-options ops) (list (lit out) (Opts usage git-checkout-options) 0))
@@ -405,7 +406,7 @@
 
 (def git-switch
   (fn (_ wd gitdir ops)
-    (def o (Opts parse git-switch-options ops))
+    (def o (git-opts-parse git-switch-options ops))
     (def operands (List map (fn (_ a) (%prior gitdir a (if (str=? a "-") "@{-1}" a))) (Opts operands o)))
     (match
       ((Opts help? git-switch-options ops) (list (lit out) (Opts usage git-switch-options) 0))
@@ -434,7 +435,7 @@
 
 (def git-restore
   (fn (_ wd gitdir ops)
-    (def o (Opts parse git-restore-options ops))
+    (def o (git-opts-parse git-restore-options ops))
     (match
       ((Opts help? git-restore-options ops) (list (lit out) (Opts usage git-restore-options) 0))
       ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-restore-options)))

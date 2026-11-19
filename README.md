@@ -236,7 +236,10 @@ The detail of each command:
   the branch checked out N switches ago, as `checkout -` and `switch -`
   take it
 - the repository found from the working directory or any parent
-- an unknown command or option, refused as git refuses it
+- an unknown command or option, refused as git refuses it; a command's
+  options read as git's option parser reads them, `--no-<option>` taking
+  back the option before it and a flag given a value refused (log, show,
+  reflog, diff and rev-parse read theirs as git's revision parser does)
 
 ## Install and test
 
@@ -267,6 +270,7 @@ DIR holds this tree as `git` and x-ssh as `ssh`.
     git/delta.x       deltas made, as git's diff-delta makes them
     git/refs.x        refs, loose and packed; revision names to objects
     git/reflog.x      the reflog: moves appended, entries read
+    git/opts.x        a command's options read as git reads them
     git/commands.x    cat-file, hash-object, rev-parse
     git/history.x     ls-tree, log, show, reflog
     git/index.x       the index read; ls-files, status

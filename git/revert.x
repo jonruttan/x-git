@@ -19,7 +19,8 @@
 (module git/revert)
 
 (import x/sys/opts Opts)
-(import git/commands git-no-repo)
+(import git/opts git-opts-parse)
+(import git/commands git-no-repo git-unknown-option)
 (import git/sequencer git-sequence! git-sequence-continue! git-sequence-skip! git-sequence-abort! git-sequence-quit!)
 
 (def git-revert-options
@@ -42,10 +43,11 @@
 
 (def git-revert
   (fn (_ wd gitdir ops)
-    (def o (Opts parse git-revert-options ops))
+    (def o (git-opts-parse git-revert-options ops))
     (def operands (Opts operands o))
     (match
       ((Opts help? git-revert-options ops) (list (lit out) (Opts usage git-revert-options) 0))
+      ((pair? (Opts unknown o)) (git-unknown-option (Opts unknown o) ""))
       ((not (null? (Opts unknown o)))
         (list (lit err) (Str8 append "error: unknown option `" (Opts unknown o) "'\n" (Opts usage git-revert-options)) 129))
       ((null? gitdir) (git-no-repo))

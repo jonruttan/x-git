@@ -34,6 +34,7 @@
 (module git/merge)
 
 (import x/sys/opts Opts)
+(import git/opts git-opts-parse)
 (import x/sys/file File)
 (import x/sys/posix Sys)
 (import git/objects git-object-write!)
@@ -306,7 +307,7 @@
 
 (def git-merge
   (fn (_ wd gitdir ops)
-    (def o (Opts parse git-merge-options ops))
+    (def o (git-opts-parse git-merge-options ops))
     (def operands (Opts operands o))
     (def branch (if (null? gitdir) () (git-current-branch gitdir)))
     (def target-name
@@ -380,7 +381,7 @@
 
 (def git-pull
   (fn (_ wd gitdir ops)
-    (def o (Opts parse git-pull-options ops))
+    (def o (git-opts-parse git-pull-options ops))
     (def operands (Opts operands o))
     (def branch (if (null? gitdir) () (git-current-branch gitdir)))
     (def named (if (or (null? operands) (null? (rest operands))) () (first (rest operands))))
