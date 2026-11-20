@@ -110,6 +110,24 @@ cumulative down the cases.
 ---
     ((" 2 files changed, 2 insertions(+), 1 deletion(-)" " create mode 100644 deep/one" "") #t #t (0 . ""))
 
+### commit -a stages each tracked file's change, removal and mode, leaves untracked ones, and refuses paths
+
+```git
+(def %cm (git-fixture))
+(File write-all (Str8 append %cm "/f.txt") "all\n")
+(File unlink (Str8 append %cm "/deep/two"))
+(File chmod (Str8 append %cm "/deep/one") 493)
+(File write-all (Str8 append %cm "/u") "untracked\n")
+(def %cm-paths (git-text "commit" "-a" "-m" "some" "f.txt"))
+(def %cm-r (git-text "commit" "-a" "-m" "all"))
+(write (list %cm-paths (rest (Str8 split "\n" (rest %cm-r)))
+             (git-oracle "status" "--porcelain")
+             (equal? (git-text "ls-tree" "-r" "HEAD") (git-oracle "ls-tree" "-r" "HEAD"))
+             (first (git-text "commit" "-a" "-m" "again"))))
+```
+---
+    ((128 . "fatal: paths 'f.txt ...' with -a does not make sense\n") (" 3 files changed, 1 insertion(+), 2 deletions(-)" " mode change 100644 => 100755 deep/one" " delete mode 100644 deep/two" "") (0 . "?? u\n") #t 1)
+
 ## who
 
 ### the author and committer found as git finds them: <role>.name and .email, then user.*, then EMAIL

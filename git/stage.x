@@ -360,9 +360,51 @@
        kept))
     (if (null? trimmed) "" (Str8 append (Str8 join "\n" trimmed) "\n"))))
 
+; commit -a's index: each tracked path once, as the working tree has it --
+; the entry kept when the file's mode and content are what it records, a
+; fresh one (its blob written) when they changed or the path was in
+; conflict, none when the file is gone.  A symbolic link or a submodule
+; is kept as it is.  Answers (ENTRIES . CHANGED?).
+(def %entries-all
+  (fn (_ wd gitdir entries)
+    ((fn (self es acc changed?)
+       (match
+         ((null? es) (pair (List reverse acc) changed?))
+         ; a conflict's later stages: the path is done
+         ((and (not (null? acc)) (str=? (first (first es)) (first (first acc))))
+           (self (rest es) acc changed?))
+         (#t
+           (let ((e (first es)) (full (Str8 append wd "/" (first (first es)))))
+             (match
+               ((or (= (first (rest e)) 40960) (= (first (rest e)) 57344)) (self (rest es) (pair e acc) changed?))
+               ((or (not (File exists? full)) (eq? (File type full) (lit dir))) (self (rest es) acc #t))
+               (#t
+                 (let ((st (File stat full)) (f (git-read-file full)))
+                   (if (and (= (%entry-stage e) 0) (= (%file-mode st) (first (rest e)))
+                            (str=? (git-hash "blob" (first f) 0 (rest f)) (first (rest (rest e)))))
+                     (self (rest es) (pair e acc) changed?)
+                     (self (rest es)
+                       (pair (list (first e) (%file-mode st) (git-object-write! gitdir "blob" (first f) 0 (rest f))
+                                   (rest f) (Assoc get (lit mtime) st))
+                             acc)
+                       #t)))))))))
+     (List sort (fn (_ a b) (if (str=? (first a) (first b)) (< (%entry-stage a) (%entry-stage b)) (Str8 <? (first a) (first b))))
+       entries)
+     () #f)))
+
+; The index replaced by entries; answers (WAS) -- WAS the old file's
+; (REGION . N), or () when there was none.
+(def %index-swap!
+  (fn (_ gitdir entries)
+    (def path (Str8 append gitdir "/index"))
+    (def was (if (File exists? path) (git-read-file path) ()))
+    (%index-write! gitdir entries)
+    (list was)))
+
 (def git-commit-options
-  (Opts declare "git commit" "-m <message> [-q] [--no-edit]" ()
+  (Opts declare "git commit" "-m <message> [-a] [-q] [--no-edit]" ()
     (list
+      (Opts flag "-a" "--all" "Stage every tracked file's change and removal first")
       (Opts arg "-m" "--message" "<message>" "The commit message")
       (Opts flag "-q" "--quiet" "Print nothing on success")
       (Opts flag "--no-edit" "Take the message a merge in progress left, unedited"))))
@@ -392,7 +434,11 @@
                           (or (not (null? picking)) (File exists? (Str8 append gitdir "/REVERT_HEAD")))
                           (File exists? merge-msg-path))
                    (git-message-strip (File read-all merge-msg-path)) ())))
-    (def entries (if (null? gitdir) () (%read-entries gitdir)))
+    ; with -a, the index as the working tree has it: written only for the
+    ; commit, as git puts it back when there is none
+    (def all? (Opts on? o "-a"))
+    (def staged (if (or (null? gitdir) (not all?)) () (%entries-all wd gitdir (%read-entries gitdir))))
+    (def entries (match ((null? gitdir) ()) (all? (first staged)) (#t (%read-entries gitdir))))
     (def unmerged
       ((fn (self es acc)
          (if (null? es) (List reverse acc)
@@ -406,17 +452,26 @@
       ((Opts help? git-commit-options ops) (list (lit out) (Opts usage git-commit-options) 0))
       ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-commit-options)))
       ((null? gitdir) (git-no-repo))
+      ((and all? (not (null? (Opts operands o))))
+        (git-fatal (Str8 append "paths '" (first (Opts operands o)) " ...' with -a does not make sense")))
       ((not (null? unmerged)) (%unmerged-refusal unmerged))
       ((null? msg) (git-fatal "no message given: this git takes -m <message>"))
       ((not (null? refusal)) refusal)
       (#t
         (let ((parent (git-commit-of gitdir "HEAD"))
-              (head (Str8 trim (File read-all (Str8 append gitdir "/HEAD")))))
+              (head (Str8 trim (File read-all (Str8 append gitdir "/HEAD"))))
+              (index-path (Str8 append gitdir "/index"))
+              ; with -a's changes, the index written; what it was, for
+              ; nothing to commit to put back
+              (saved (if (and all? (rest staged)) (%index-swap! gitdir entries) ())))
           (let ((tree (%write-tree! gitdir entries ""))
                 (parent-tree (if (null? parent) () (git-tree-of gitdir parent))))
             ; a merge commit may record the tree it had; any other must change it
             (if (and (null? merging) (not (null? parent-tree)) (str=? tree parent-tree))
-              (list (lit out) (git-long-status gitdir (git-status-lists wd gitdir)) 1)
+              (let ((report (git-long-status gitdir (git-status-lists wd gitdir))))
+                (do (when (and all? (rest staged))
+                      (if (null? (first saved)) (File unlink index-path) (git-write-file! index-path (first (first saved)) (rest (first saved)))))
+                    (list (lit out) report 1)))
               (let ((sha (git-commit-write-by! gitdir tree (List append (if (null? parent) () (list parent)) merging) msg
                            (if (null? picking) ()
                              (rest (List find (fn (_ kv) (str=? (first kv) "author")) (git-headers gitdir picking))))))
@@ -438,7 +493,7 @@
                           (first (Str8 split "\n" msg)) "\n"
                           (git-commit-report-idents gitdir sha (not (null? picking)))
                           ; a merge commit's line says what it is and nothing more
-                          (if (null? merging) (git-commit-summary gitdir (git-tree-files gitdir parent-tree) (git-tree-files gitdir tree)) ""))
+                          (if (null? merging) (git-commit-summary gitdir parent-tree tree) ""))
                         0)))))))))))
 
 ; The index written from entries (PATH MODE-NUMBER SHA SIZE MTIME), for

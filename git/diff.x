@@ -809,14 +809,15 @@
       (%summary-line (List length counts) ins del))))
 
 ; commit's lines after its header: the summary, then a line a file
-; created or deleted, in path order, from two trees' flat files ((PATH .
-; SHA) ...).
+; created, deleted or changed in mode, in path order, from two trees (the
+; first () for a root commit).
 (def git-commit-summary
-  (fn (_ gitdir before after)
-    (def side (fn (_ files) (List map (fn (_ f) (list (first f) (rest f) "100644")) files)))
-    (def changes (%changed "" gitdir (side before) (side after) #f))
+  (fn (_ gitdir old-tree new-tree)
+    (def old-side (%tree-side gitdir old-tree))
+    (def new-side (%tree-side gitdir new-tree))
+    (def changes (%changed "" gitdir old-side new-side #f))
     (def counts (%change-counts changes))
-    (def mode-of (fn (_ path) (let ((e (List find (fn (_ x) (str=? (first x) path)) (git-index-read gitdir)))) (if (null? e) "100644" (first (rest e))))))
+    (def mode-in (fn (_ side path) (first (rest (rest (List find (fn (_ x) (str=? (first x) path)) side))))))
     (Str8 append
       (%summary-line (List length counts)
         (List fold (fn (_ a c) (int+ a (first (rest c)))) 0 counts)
@@ -824,10 +825,13 @@
       (Str8 join ""
         (List map
           (fn (_ c)
-            (match
-              ((null? (first (rest c))) (Str8 append " create mode " (mode-of (first c)) " " (git-quote-path (first c)) "\n"))
-              ((null? (first (rest (rest c)))) (Str8 append " delete mode 100644 " (git-quote-path (first c)) "\n"))
-              (#t "")))
+            (let ((path (first c)))
+              (match
+                ((null? (first (rest c))) (Str8 append " create mode " (mode-in new-side path) " " (git-quote-path path) "\n"))
+                ((null? (first (rest (rest c)))) (Str8 append " delete mode " (mode-in old-side path) " " (git-quote-path path) "\n"))
+                ((not (str=? (mode-in old-side path) (mode-in new-side path)))
+                  (Str8 append " mode change " (mode-in old-side path) " => " (mode-in new-side path) " " (git-quote-path path) "\n"))
+                (#t ""))))
           changes)))))
 
 ; What merge prints after "Fast-forward" or a merge commit: the --stat of
