@@ -275,7 +275,7 @@
         (git-commit-report-idents gitdir sha #t)
         ; a commit that changes nothing has no summary line
         (if (str=? tree (git-tree-of gitdir head)) ""
-          (git-commit-summary gitdir (git-tree-files gitdir (git-tree-of gitdir head)) (git-tree-files gitdir tree))))
+          (git-commit-summary gitdir (git-tree-of gitdir head) tree)))
       0)))
 
 ; One commit picked or reverted onto HEAD, with the options opts: as git

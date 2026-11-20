@@ -90,7 +90,10 @@ The detail of each command:
   the index, the untracked paths as `.gitignore` leaves them and, when
   asked, the ignored ones
 - `add [-A] <pathspec>...`: the blobs written, the index written (version 2)
-- `commit -m <message> [-q] [--no-edit]`: the trees from the index, the
+- `commit -m <message> [-a] [-q] [--no-edit]`: the trees from the index
+  (with `-a`, the index first takes each tracked file as the working tree
+  has it -- changed, removed, its mode, a conflict resolved -- and is put
+  back when nothing is committed; paths with `-a` are refused), the
   commit with the identity and time git takes -- `GIT_AUTHOR_*` and
   `GIT_COMMITTER_*`, then `author.*` or `committer.*`, then `user.name` and
   `user.email` from the configuration, then `EMAIL` for the address,
@@ -98,7 +101,8 @@ The detail of each command:
   noted after the summary's first line as git notes it, one git cannot
   trust refused
   -- the branch moved; the summary as git prints it, its
-  line counts from a line diff.  A merge in progress is concluded: its
+  line counts from a line diff, a file created, deleted or changed in
+  mode on a line of its own.  A merge in progress is concluded: its
   second parent from `MERGE_HEAD`, its message from `MERGE_MSG` when no
   `-m` is given; a path still in conflict refuses it.  So is a revert or
   a cherry-pick, a cherry-pick by the picked commit's author
