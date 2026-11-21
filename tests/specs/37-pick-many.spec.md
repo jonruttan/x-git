@@ -55,13 +55,13 @@ Each line's garbage is collected after it.
                     (List filter (fn (_ l) (not (or (= (Str8 length l) 0) (Str8 starts? "hint:" l)))) (Str8 split "\n" s))))))
 (def %sq-x
   (fn (_ ops)
-    (def r (git-run (git-plan (pair "-C" (pair (Str8 append %sq-d "/x/r") ops)))))
+    (def r (git-run (git-plan (pair "-C" (pair (Str8 append %sq-d "/x/r") (pair "-c" (pair "advice.statusHints=true" (pair "-c" (pair "advice.commitBeforeMerge=true" ops)))))))))
     (def text (first (rest r)))
     (def more (rest (rest (rest r))))
     (if (eq? (first r) (lit out)) (list (first (rest (rest r))) text "")
       (list (first (rest (rest r))) (if (null? more) "" (first more)) (%sq-plain text)))))
-; git, asked for the hints x-git always gives, which the macOS runners
-; turn off
+; git, asked for the hints, which the macOS runners turn off -- x-git
+; asked the same
 (def %sq-g
   (fn (_ ops)
     (def r (Proc capture (pair "/bin/sh" (pair "-c" (pair "cd \"$0\" && exec git -c advice.statusHints=true -c advice.commitBeforeMerge=true \"$@\" 2>../git.err" (pair (Str8 append %sq-d "/g/r") ops))))))

@@ -23,6 +23,7 @@
 (import git/refs git-ref-read git-tree-of git-rev-parse)
 (import git/ignore git-ignorer)
 (import git/quote git-quote-path git-quote-path-sp)
+(import git/config git-config-value)
 
 (import x/core/doors int+ int- int* ptr-ref str-make str->ptr ptr->int int->ptr mem-copy)
 (def %cvt (prim-ref (lit convert) (lit to)))
@@ -103,6 +104,46 @@
   (fn (_ gitdir)
     (def tree (git-tree-of gitdir "HEAD"))
     (if (null? tree) () (%flat-tree gitdir tree ""))))
+
+; Every blob under HEAD's tree as (PATH SHA MODE), MODE as the index
+; spells it: what status sets the index against.
+(def %head-entries
+  (fn (_ gitdir)
+    (def tree (git-tree-of gitdir "HEAD"))
+    (if (null? tree) ()
+      ((fn (self t prefix)
+         (def o (git-object-read gitdir t))
+         (if (or (null? o) (not (str=? (first o) "tree"))) ()
+           (List flat-map
+             (fn (_ e)
+               (let ((path (Str8 append prefix (first (rest e)))))
+                 (if (str=? (first e) "40000")
+                   (self (first (rest (rest e))) (Str8 append path "/"))
+                   (list (list path (first (rest (rest e))) (Str8 pad-left 6 #\0 (first e)))))))
+             (git-tree-entries o))))
+       tree ""))))
+
+; Is a boolean setting given as false (false, no, off, 0 or empty, any
+; case)?  Unset is not.
+(def %config-false?
+  (fn (_ gitdir name)
+    (def v (git-config-value gitdir name))
+    (and (not (null? v))
+         (List any? (fn (_ f) (str=? (Str8 downcase (Str8 trim v)) f)) (list "false" "no" "off" "0" "")))))
+
+; Does git keep a file's execute bit here?  Unless core.fileMode says not.
+(def git-modes-kept?
+  (fn (_ gitdir) (not (%config-false? gitdir "core.filemode"))))
+
+; The mode git sees for the working file at full, the index recording
+; mode: 100755 when an execute bit is set, else 100644 -- the recorded
+; mode itself when modes are not kept, or for a link or a submodule,
+; whose mode is not the file's to change.
+(def git-work-mode
+  (fn (_ full mode kept?)
+    (if (and kept? (or (str=? mode "100644") (str=? mode "100755")))
+      (if (= (& (Assoc get (lit mode) (File stat full)) 73) 0) "100644" "100755")
+      mode)))
 
 ; Every blob under a tree, (PATH . SHA) each, for the commands that set
 ; a tree against the index.
@@ -207,7 +248,9 @@
     (def unmerged (%unmerged all))
     ; a path in conflict is shown as unmerged and nowhere else
     (def index (List filter (fn (_ e) (not (List any? (fn (_ u) (str=? (rest u) (first e))) unmerged))) all))
-    (def head (List filter (fn (_ h) (not (List any? (fn (_ u) (str=? (rest u) (first h))) unmerged))) (%head-files gitdir)))
+    (def head (List filter (fn (_ h) (not (List any? (fn (_ u) (str=? (rest u) (first h))) unmerged))) (%head-entries gitdir)))
+    ; a file's execute bit counts, unless core.fileMode says it is not kept
+    (def modes? (git-modes-kept? gitdir))
     (def in-index (fn (_ path) (List find (fn (_ e) (str=? (first e) path)) index)))
     (def in-head (fn (_ path) (List find (fn (_ h) (str=? (first h) path)) head)))
     (def staged
@@ -217,7 +260,8 @@
             (let ((h (in-head (first e))))
               (match
                 ((null? h) (list (pair "A" (first e))))
-                ((not (str=? (rest h) (first (rest (rest e))))) (list (pair "M" (first e))))
+                ((not (and (str=? (first (rest h)) (first (rest (rest e)))) (str=? (first (rest (rest h))) (first (rest e)))))
+                  (list (pair "M" (first e))))
                 (#t ()))))
           index)
         (List flat-map (fn (_ h) (if (null? (in-index (first h))) (list (pair "D" (first h))) ())) head)))
@@ -227,7 +271,9 @@
           (let ((full (Str8 append wd "/" (first e))))
             (if (not (File exists? full)) (list (pair "D" (first e)))
               (let ((f (git-read-file full)))
-                (if (str=? (git-hash "blob" (first f) 0 (rest f)) (first (rest (rest e)))) ()
+                (if (and (str=? (git-hash "blob" (first f) 0 (rest f)) (first (rest (rest e))))
+                         (str=? (git-work-mode full (first (rest e)) modes?) (first (rest e))))
+                  ()
                   (list (pair "M" (first e))))))))
         index))
     (def others (%walk wd (List map (fn (_ e) (first e)) all) (git-ignorer wd gitdir) mode))
@@ -313,14 +359,16 @@
         (#t ())))
     ; git's hints to unstage are left out while it concludes a merge or a
     ; cherry-pick's commit, not a revert's
+    ; advice.statusHints false: no hint at all
+    (def hints? (not (%config-false? gitdir "advice.statushints")))
     (def quiet?
-      (or merging?
+      (or (not hints?) merging?
           (and (not (null? picking)) (str=? (first (rest picking)) "cherry-pick") (not (null? (first (rest (rest picking))))))))
     (def section
       (fn (_ title hints items)
         (if (null? items) ""
           (Str8 append title "\n"
-            (Str8 join "" (List map (fn (_ h) (Str8 append "  (use \"" (first h) "\" " (rest h) ")\n")) hints))
+            (if hints? (Str8 join "" (List map (fn (_ h) (Str8 append "  (use \"" (first h) "\" " (rest h) ")\n")) hints)) "")
             (Str8 join "" (List map (fn (_ c) (Str8 append "\t" (%code-word (first c)) (git-quote-path (rest c)) "\n")) items))
             "\n"))))
     (Str8 append
@@ -328,46 +376,49 @@
       (match
         ((not merging?) "")
         ((not (null? unmerged))
-          "You have unmerged paths.\n  (fix conflicts and run \"git commit\")\n  (use \"git merge --abort\" to abort the merge)\n\n")
-        (#t "All conflicts fixed but you are still merging.\n  (use \"git commit\" to conclude merge)\n\n"))
+          (if hints? "You have unmerged paths.\n  (fix conflicts and run \"git commit\")\n  (use \"git merge --abort\" to abort the merge)\n\n" "You have unmerged paths.\n\n"))
+        (#t (if hints? "All conflicts fixed but you are still merging.\n  (use \"git commit\" to conclude merge)\n\n" "All conflicts fixed but you are still merging.\n\n")))
       (if (null? picking) ""
         (let ((cmd (first (rest picking))) (sha (first (rest (rest picking)))))
           (Str8 append
             (if (null? sha)
               (Str8 append (if (str=? cmd "revert") "Revert" "Cherry-pick") " currently in progress.\n")
               (Str8 append "You are currently " (first picking) " commit " (Str8 sub 0 7 sha) ".\n"))
-            (match
+            (if (not hints?) "" (Str8 append (match
               ((not (null? unmerged)) (Str8 append "  (fix conflicts and run \"git " cmd " --continue\")\n"))
               ((null? sha) (Str8 append "  (run \"git " cmd " --continue\" to continue)\n"))
               (#t (Str8 append "  (all conflicts fixed: run \"git " cmd " --continue\")\n")))
             "  (use \"git " cmd " --skip\" to skip this patch)\n"
-            "  (use \"git " cmd " --abort\" to cancel the " cmd " operation)\n\n")))
+            "  (use \"git " cmd " --abort\" to cancel the " cmd " operation)\n"))
+            "\n")))
       (section "Changes to be committed:" (if quiet? () (list (pair "git restore --staged <file>..." "to unstage"))) staged)
       (if (null? unmerged) ""
         (Str8 append "Unmerged paths:\n"
           (if quiet? "" "  (use \"git restore --staged <file>...\" to unstage)\n")
-          (if (List all? (fn (_ u) (or (str=? (first u) "UU") (str=? (first u) "AA"))) unmerged)
-            "  (use \"git add <file>...\" to mark resolution)\n"
-            "  (use \"git add/rm <file>...\" as appropriate to mark resolution)\n")
+          (match ((not hints?) "") ((List all? (fn (_ u) (or (str=? (first u) "UU") (str=? (first u) "AA"))) unmerged)
+            "  (use \"git add <file>...\" to mark resolution)\n")
+            (#t "  (use \"git add/rm <file>...\" as appropriate to mark resolution)\n"))
           (Str8 join "" (List map (fn (_ u) (Str8 append "\t" (%unmerged-word (first u)) (git-quote-path (rest u)) "\n")) unmerged))
           "\n"))
       (section "Changes not staged for commit:"
-        (list (pair "git add <file>..." "to update what will be committed")
+        ; a file gone is staged by rm, as the hint says when one is
+        (list (pair (if (List any? (fn (_ c) (str=? (first c) "D")) unstaged) "git add/rm <file>..." "git add <file>...")
+                    "to update what will be committed")
               (pair "git restore <file>..." "to discard changes in working directory"))
         unstaged)
       (if (null? untracked) ""
-        (Str8 append "Untracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n"
+        (Str8 append "Untracked files:\n" (if hints? "  (use \"git add <file>...\" to include in what will be committed)\n" "")
           (Str8 join "" (List map (fn (_ p) (Str8 append "\t" (git-quote-path p) "\n")) untracked))
           "\n"))
       (let ((ignored (%ignored-of lists)))
         (if (null? ignored) ""
-          (Str8 append "Ignored files:\n  (use \"git add -f <file>...\" to include in what will be committed)\n"
+          (Str8 append "Ignored files:\n" (if hints? "  (use \"git add -f <file>...\" to include in what will be committed)\n" "")
             (Str8 join "" (List map (fn (_ p) (Str8 append "\t" (git-quote-path p) "\n")) ignored))
             "\n")))
       (match
         ((not (null? staged)) "")
-        ((or (not (null? unstaged)) (not (null? unmerged))) "no changes added to commit (use \"git add\" and/or \"git commit -a\")\n")
-        ((not (null? untracked)) "nothing added to commit but untracked files present (use \"git add\" to track)\n")
+        ((or (not (null? unstaged)) (not (null? unmerged))) (if hints? "no changes added to commit (use \"git add\" and/or \"git commit -a\")\n" "no changes added to commit\n"))
+        ((not (null? untracked)) (if hints? "nothing added to commit but untracked files present (use \"git add\" to track)\n" "nothing added to commit but untracked files present\n"))
         (#t "nothing to commit, working tree clean\n")))))
 
 (def git-status-options
@@ -476,4 +527,4 @@
   (fn (_ wd tracked ignored?) (%untracked wd tracked ignored?)))
 
 (provide git/index git-index-read git-status-lists git-status git-ls-files git-tree-files git-untracked
-  git-untracked-with git-long-status)
+  git-untracked-with git-long-status git-modes-kept? git-work-mode)
