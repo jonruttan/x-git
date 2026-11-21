@@ -6,7 +6,7 @@ receive-pack as the services of a file:// url, the way it runs its own,
 and what it prints and leaves is set beside what it does with its own
 services.  x-git is started as a process of its own, through the x under
 test and from this tree (`X` and `X_GIT_BUNDLE`, set by the runner), with
-`X_LANG_DIR` naming a directory that holds this tree as `git`, and from
+`X_BUNDLE_DIR` naming a directory that holds this tree as `git`, and from
 x's own root (`X_ROOT`), where a checkout's x finds its library.  A first
 launch writes x-git's state image, with its words thrown away; the
 services are then started with `X_IMAGE_NO_WRITE`, which uses that image
@@ -24,7 +24,7 @@ Commits carry a fixed date, so twin repositories name the same objects.
 (def %sv-d (%sv-dir))
 (def %sv-langs (Str8 append %sv-d "/langs"))
 (%sv-sh %sv-d (Str8 append "mkdir langs && ln -s '" (Sys getenv "X_GIT_BUNDLE") "' langs/git"))
-(def %sv-launch (fn (_ env cmd) (Str8 append "unset X_IMG_DIR; cd '" (Sys getenv "X_ROOT") "' && " env " X_LANG_DIR=" %sv-langs "/ '" (Sys getenv "X") "' -l git -- " cmd)))
+(def %sv-launch (fn (_ env cmd) (Str8 append "unset X_IMG_DIR; cd '" (Sys getenv "X_ROOT") "' && " env " X_BUNDLE_DIR=" %sv-langs "/ '" (Sys getenv "X") "' -l git -- " cmd)))
 (%sv-sh %sv-d (Str8 append (%sv-launch "" "version") " >/dev/null 2>&1"))
 (def %sv-up (Str8 append "--upload-pack=" (%sv-launch "X_IMAGE_NO_WRITE=1" "upload-pack")))
 (def %sv-rp (Str8 append "--receive-pack=" (%sv-launch "X_IMAGE_NO_WRITE=1" "receive-pack")))

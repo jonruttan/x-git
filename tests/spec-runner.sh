@@ -48,7 +48,7 @@ export X X_ROOT X_GIT_BUNDLE
 
 # The suite boots from a state image of the harness when the platform can write
 # one. tools/dev/image-build.sh images a child that loaded the harness, keyed on
-# what it depends on (the harness, the platform's lib/, its engine, and git/), so
+# what it depends on (the harness, the platform's lib/, its engine, and lib/git/), so
 # an edit to any of them rewrites the image and a current one is reused.
 #
 # The image writer is a checkout tool: an installed tree has none, and a library
@@ -61,7 +61,7 @@ else
 	_builder="$X_ROOT/tools/dev/image-build.sh"
 	if [ ! -f "$_builder" ]; then
 		echo "x-git: no image writer at $_builder (not a checkout) -- the suite boots from source" >&2
-	elif X_BIN="$X_BIN" sh "$_builder" "$LANG_LIB" "$BUNDLE/tests/lib/.images" "$BUNDLE/git"; then
+	elif X_BIN="$X_BIN" sh "$_builder" "$LANG_LIB" "$BUNDLE/tests/lib/.images" "$BUNDLE/lib/git"; then
 		X_IMG_DIR="$BUNDLE/tests/lib/.images"; export X_IMG_DIR
 	else
 		echo "x-git: no state image -- the suite boots from source" >&2

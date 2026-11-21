@@ -68,7 +68,7 @@ as git's own repack leaves them.
 ```git
 (def %dl-langs (Str8 append %dl-d "/langs"))
 (%dl-sh %dl-d (Str8 append "mkdir langs && ln -s '" (Sys getenv "X_GIT_BUNDLE") "' langs/git"))
-(def %dl-launch (fn (_ env cmd) (Str8 append "unset X_IMG_DIR; cd '" (Sys getenv "X_ROOT") "' && " env " X_LANG_DIR=" %dl-langs "/ '" (Sys getenv "X") "' -l git -- " cmd)))
+(def %dl-launch (fn (_ env cmd) (Str8 append "unset X_IMG_DIR; cd '" (Sys getenv "X_ROOT") "' && " env " X_BUNDLE_DIR=" %dl-langs "/ '" (Sys getenv "X") "' -l git -- " cmd)))
 (%dl-sh %dl-d (Str8 append (%dl-launch "" "version") " >/dev/null 2>&1"))
 (def %dl-up (Str8 append "--upload-pack=" (%dl-launch "X_IMAGE_NO_WRITE=1" "upload-pack")))
 (def %dl-rp (Str8 append "--receive-pack=" (%dl-launch "X_IMAGE_NO_WRITE=1" "receive-pack")))

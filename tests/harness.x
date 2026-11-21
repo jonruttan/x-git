@@ -6,8 +6,8 @@
 ; @copyright 2026 Jon Ruttan
 ; @license MIT No Attribution (MIT-0)
 ;
-; The lang kit's generator writes tests/lib/harness.gen.x: the dialect
-; lang.xon declares, the bundle's root on the import path, then this file.
+; The bundle kit's generator writes tests/lib/harness.gen.x: the dialect
+; bundle.xon declares, the bundle's lib/ on the import path, then this file.
 ;
 ; The reference is git itself.  git-fixture makes a repository with the
 ; system git, once a process: a blob, a tree with a subdirectory, and a
