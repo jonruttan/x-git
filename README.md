@@ -35,6 +35,8 @@ Not served: `rebase`, `stash`, `blame`, `bisect`, `grep`, `describe`,
 `format-patch`, `archive`, `notes`, and annotated or signed tags (`tag`
 makes lightweight ones).  Repositories are SHA-1; the index is written at
 version 2.  Any other command is refused as git refuses an unknown one.
+A symbolic link is kept as git keeps one: the text it holds, mode
+120000, whatever it points at, and written back as a link.
 
 ## Security
 
@@ -90,7 +92,8 @@ The detail of each command:
   the index, the untracked paths as `.gitignore` leaves them and, when
   asked, the ignored ones; a file's execute bit a change, as in `diff`,
   unless `core.fileMode` is false; git's hints left out when
-  `advice.statusHints` is false
+  `advice.statusHints` is false; a path turned from a link to a file or
+  back a typechange (`T`)
 - `add [-A] <pathspec>...`: the blobs written, the index written (version 2)
 - `commit -m <message> [-a] [-q] [--no-edit]`: the trees from the index
   (with `-a`, the index first takes each tracked file as the working tree
@@ -117,7 +120,8 @@ The detail of each command:
   its sliding of each change, by the indent heuristic where nothing else
   decides); `--stat` fitted to 80 columns (or `COLUMNS`) as git fits it;
   a mode changed alone, its `old mode` and `new mode` lines and nothing
-  more.  A symbolic link is followed, not read as a link
+  more; a path turned from a link to a file or back, a deletion and a
+  creation, as git draws a typechange
 - `init [-b <branch>] [<directory>]`, the first branch `init.defaultBranch`
   when no `-b` is given (the hints git prints for an unnamed first branch
   are not printed), `branch [-d] [<branch> [<start>]]`,
@@ -285,6 +289,7 @@ DIR holds this tree and x-ssh, each found by the name its bundle.xon gives.
     lib/git/stage.x       the index written; add, commit
     lib/git/ident.x       who and when, for commits and the reflog
     lib/git/when.x        dates read as approxidate reads them, and written
+    lib/git/work.x        the working tree as git sees it: a link as itself
     lib/git/config.x      configuration read and written; config
     lib/git/diff.x        lines compared: diff, and the summary commit prints
     lib/git/repo.x        init, branch, tag

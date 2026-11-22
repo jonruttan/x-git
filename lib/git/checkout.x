@@ -24,6 +24,7 @@
 (import git/index git-index-read git-status-lists)
 (import git/stage git-index-write! git-read-entries git-merge-state-clear!)
 (import git/reflog git-reflog-append!)
+(import git/work git-work-write! git-work-exists? git-work-stat)
 
 (import x/core/doors int+ int- str->ptr)
 (def %at (fn (_ p off) ((prim-ref (lit int) (lit ->ptr)) (int+ ((prim-ref (lit ptr) (lit ->int)) p) off))))
@@ -66,15 +67,14 @@
     (def body ((prim-ref (lit str) (lit make)) (if (= (first (rest o)) 0) 1 (first (rest o)))))
     (when (> (first (rest o)) 0)
       ((prim-ref (lit mem) (lit copy)) (str->ptr body) (%at (str->ptr (first (rest (rest o)))) (first (rest (rest (rest o))))) (first (rest o))))
-    (git-write-file! full body (first (rest o)))
-    (File chmod full (if (str=? mode "100755") 493 420))
+    (git-work-write! full body (first (rest o)) mode)
     ()))
 
 ; A file removed, and the directories it leaves empty, up to the root.
 (def %remove!
   (fn (_ wd path)
     (def full (Str8 append wd "/" path))
-    (when (File exists? full) (File unlink full))
+    (when (git-work-exists? full) (File unlink full))
     ((fn (self p)
        (let ((i (Str8 last-index-of "/" p)))
          (unless (null? i)
@@ -87,8 +87,8 @@
 ; An index entry for a path just written: (PATH MODE-NUMBER SHA SIZE MTIME).
 (def %entry-of
   (fn (_ wd path sha mode)
-    (def st (File stat (Str8 append wd "/" path)))
-    (list path (if (str=? mode "100755") 33261 33188) sha (Assoc get (lit size) st) (Assoc get (lit mtime) st))))
+    (def st (git-work-stat (Str8 append wd "/" path)))
+    (list path (match ((str=? mode "100755") 33261) ((str=? mode "120000") 40960) (#t 33188)) sha (Assoc get (lit size) st) (Assoc get (lit mtime) st))))
 
 ; --- the move ---
 
