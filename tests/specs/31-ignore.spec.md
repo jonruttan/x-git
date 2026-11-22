@@ -113,7 +113,7 @@ compared byte for byte, with the statuses.
 ```git
 (%ci-sh (Str8 append "mkdir langs && ln -s '" (Sys getenv "X_GIT_BUNDLE") "' langs/git"))
 (def %ci-launch
-  (Str8 append "unset X_IMG_DIR; cd '" (Sys getenv "X_ROOT") "' && X_LANG_DIR=" %ci-d "/langs/ '" (Sys getenv "X") "' -l git --"))
+  (Str8 append "unset X_IMG_DIR; cd '" (Sys getenv "X_ROOT") "' && X_BUNDLE_DIR=" %ci-d "/langs/ '" (Sys getenv "X") "' -l git --"))
 (%ci-sh (Str8 append "(" %ci-launch " version) >/dev/null 2>&1"))
 ; "same" or what each said, for the input and the options given
 (def %ci-in-out

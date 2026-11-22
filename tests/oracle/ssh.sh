@@ -1,7 +1,7 @@
 #!/bin/sh
 # tests/oracle/ssh.sh -- x-git over x-ssh, x at every hop.
 #
-# Usage: X=/path/to/x X_LANG_DIR=DIR/ sh tests/oracle/ssh.sh [PORT]
+# Usage: X=/path/to/x X_BUNDLE_DIR=DIR/ sh tests/oracle/ssh.sh [PORT]
 #
 # DIR holds this tree as `git` and x-ssh as `ssh`.  x-ssh's server is
 # started on 127.0.0.1:PORT for the run, with git-upload-pack and
@@ -21,8 +21,8 @@
 set -u
 port=${1:-22233}
 X=${X:-x}
-: "${X_LANG_DIR:?a directory holding this tree as git and x-ssh as ssh}"
-export X_LANG_DIR
+: "${X_BUNDLE_DIR:?a directory holding this tree as git and x-ssh as ssh}"
+export X_BUNDLE_DIR
 fx=$(mktemp -d "${TMPDIR:-/tmp}/x-git-ssh-oracle.XXXXXX")
 user=$(id -un)
 fails=0

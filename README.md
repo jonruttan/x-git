@@ -251,9 +251,9 @@ The detail of each command:
 
 ## Install and test
 
-It needs x-lang at the release `lang.xon` declares.
+It needs x-lang at the release `bundle.xon` declares.
 
-    make install          # into <share>/langs/git
+    make install          # into <share>/bundles/git
     make test             # the spec suite
     make check            # the suite against tests/contract/known-failures.txt
 
@@ -264,49 +264,49 @@ path for its fixture and as the reference.
 clones, fetches and pushes through x-ssh's client and server, with
 x-git's own services on the far side, and git checks what lands.
 
-    X=/path/to/x X_LANG_DIR=DIR/ sh tests/oracle/ssh.sh [PORT]
+    X=/path/to/x X_BUNDLE_DIR=DIR/ sh tests/oracle/ssh.sh [PORT]
 
-DIR holds this tree as `git` and x-ssh as `ssh`.
+DIR holds this tree and x-ssh, each found by the name its bundle.xon gives.
 
 ## Layout
 
-    lang.xon          what the bundle is: lang, dialect, required release, entry
-    run.x             the entry
-    git/base.x        the parts, assembled
-    git/objects.x     the object store: loose objects read and written, names, trees
-    git/packs.x       packed objects: the index, entries, deltas
-    git/delta.x       deltas made, as git's diff-delta makes them
-    git/refs.x        refs, loose and packed; revision names to objects
-    git/reflog.x      the reflog: moves appended, entries read
-    git/opts.x        a command's options read as git reads them
-    git/commands.x    cat-file, hash-object, rev-parse
-    git/history.x     ls-tree, log, show, reflog
-    git/index.x       the index read; ls-files, status
-    git/stage.x       the index written; add, commit
-    git/ident.x       who and when, for commits and the reflog
-    git/when.x        dates read as approxidate reads them, and written
-    git/config.x      configuration read and written; config
-    git/diff.x        lines compared: diff, and the summary commit prints
-    git/repo.x        init, branch, tag
-    git/checkout.x    the working directory set to a tree: checkout, switch, restore
-    git/clone.x       a repository copied from a path or fetched by url
-    git/remote.x      fetch, push and ls-remote, by path or by wire
-    git/protocol.x    the client side of git's pack protocol
-    git/wire.x        a git service on two pipes, spoken in pkt-lines
-    git/http.x        git's smart http transport
-    git/quote.x       paths quoted as git quotes them
-    git/serve.x       upload-pack and receive-pack, the services
-    git/merge.x       merge and pull
-    git/reset.x       reset
-    git/sequencer.x   what revert and cherry-pick share: the steps, and the sequencer
-    git/revert.x      revert
-    git/pick.x        cherry-pick
-    git/threeway.x    the merge base, files and trees merged three ways
-    git/renames.x     renames, as git finds them
-    git/paths.x       rm, mv
-    git/ignore.x      gitignore(5)
-    git/cli.x         the command line: git-options, git-plan, git-run, git-main
-    tests/            the spec suite and its runner, gate and harness
+    bundle.xon            what the bundle is: name, dialect, required release, entry
+    lib/git/run.x         the entry, git/run
+    lib/git/base.x        the parts, assembled
+    lib/git/objects.x     the object store: loose objects read and written, names, trees
+    lib/git/packs.x       packed objects: the index, entries, deltas
+    lib/git/delta.x       deltas made, as git's diff-delta makes them
+    lib/git/refs.x        refs, loose and packed; revision names to objects
+    lib/git/reflog.x      the reflog: moves appended, entries read
+    lib/git/opts.x        a command's options read as git reads them
+    lib/git/commands.x    cat-file, hash-object, rev-parse
+    lib/git/history.x     ls-tree, log, show, reflog
+    lib/git/index.x       the index read; ls-files, status
+    lib/git/stage.x       the index written; add, commit
+    lib/git/ident.x       who and when, for commits and the reflog
+    lib/git/when.x        dates read as approxidate reads them, and written
+    lib/git/config.x      configuration read and written; config
+    lib/git/diff.x        lines compared: diff, and the summary commit prints
+    lib/git/repo.x        init, branch, tag
+    lib/git/checkout.x    the working directory set to a tree: checkout, switch, restore
+    lib/git/clone.x       a repository copied from a path or fetched by url
+    lib/git/remote.x      fetch, push and ls-remote, by path or by wire
+    lib/git/protocol.x    the client side of git's pack protocol
+    lib/git/wire.x        a git service on two pipes, spoken in pkt-lines
+    lib/git/http.x        git's smart http transport
+    lib/git/quote.x       paths quoted as git quotes them
+    lib/git/serve.x       upload-pack and receive-pack, the services
+    lib/git/merge.x       merge and pull
+    lib/git/reset.x       reset
+    lib/git/sequencer.x   what revert and cherry-pick share: the steps, and the sequencer
+    lib/git/revert.x      revert
+    lib/git/pick.x        cherry-pick
+    lib/git/threeway.x    the merge base, files and trees merged three ways
+    lib/git/renames.x     renames, as git finds them
+    lib/git/paths.x       rm, mv
+    lib/git/ignore.x      gitignore(5)
+    lib/git/cli.x         the command line: git-options, git-plan, git-run, git-main
+    tests/                the spec suite and its runner, gate and harness
 
 ## Licence
 
