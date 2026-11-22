@@ -433,7 +433,7 @@
       ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-checkout-options)))
       ((null? gitdir) (git-no-repo))
       ((Opts on? o "-d") (%detach wd gitdir o operands "-b" #t))
-      (dashes? (%restore! wd gitdir operands))
+      (dashes? (%restore! wd gitdir operands () #f #t))
       ((not (null? (Opts value o "-b" ())))
         (%hush o (%switch! wd gitdir (Opts value o "-b" ()) #t (if (null? operands) () (first operands)))))
       ; no operand, or HEAD: nothing moves
@@ -441,7 +441,7 @@
       ((and (null? (git-ref-read gitdir (Str8 append "refs/heads/" (first operands))))
             (null? (git-commit-of gitdir (first operands)))
             (not (null? (List find (fn (_ e) (str=? (first e) (first operands))) (git-index-read gitdir)))))
-        (%restore! wd gitdir operands))
+        (%restore! wd gitdir operands () #f #t))
       (#t (%hush o (%switch! wd gitdir (first operands) #f ()))))))
 
 (def git-switch-options
