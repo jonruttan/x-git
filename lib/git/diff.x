@@ -25,6 +25,7 @@
 (import git/commands git-fatal git-no-repo git-unknown-option)
 (import git/refs git-tree-of git-rev-parse)
 (import git/index git-index-read git-tree-files git-modes-kept? git-work-mode)
+(import git/work git-work-exists? git-work-read)
 (import git/renames git-find-renames git-rename-name git-max-score)
 (import git/quote git-quote-path)
 
@@ -612,10 +613,20 @@
 ; A side of a file in a diff: (SHA MODE TEXT), or () for no file.
 (def %side-text (fn (_ side) (first (rest (rest side)))))
 
-; One file's diff as git prints it: the header, the modes and index line,
-; then the hunks.  a/PATH and b/PATH are quoted whole when the path needs
-; it, and on the ---/+++ lines a tab follows a name with a space in it.
+; One file's diff as git prints it.  A path that turned from a link to a
+; file or back -- a typechange -- is two: the old one deleted, the new one
+; created.
 (def %file-diff
+  (fn (_ path old new)
+    (if (and (not (null? old)) (not (null? new))
+             (not (eq? (str=? (first (rest old)) "120000") (str=? (first (rest new)) "120000"))))
+      (Str8 append (%file-diff-one path old ()) (%file-diff-one path () new))
+      (%file-diff-one path old new))))
+
+; One side's diff: the header, the modes and index line, then the hunks.
+; a/PATH and b/PATH are quoted whole when the path needs it, and on the
+; ---/+++ lines a tab follows a name with a space in it.
+(def %file-diff-one
   (fn (_ path old new)
     (def short (fn (_ sha) (Str8 sub 0 7 sha)))
     (def a-name (git-quote-path (Str8 append "a/" path)))
@@ -677,8 +688,8 @@
     (List flat-map
       (fn (_ e)
         (let ((full (Str8 append wd "/" (first e))))
-          (if (not (File exists? full)) ()
-            (let ((f (git-read-file full)))
+          (if (not (git-work-exists? full)) ()
+            (let ((f (git-work-read full)))
               (list (list (first e) (git-hash "blob" (first f) 0 (rest f))
                           (git-work-mode full (first (rest e)) kept?)))))))
       (git-index-read gitdir))))
@@ -691,7 +702,7 @@
     (if (null? e) ()
       (list (first (rest e)) (first (rest (rest e)))
         (if work?
-          (let ((f (git-read-file (Str8 append wd "/" path)))) (Str8 sub 0 (rest f) (first f)))
+          (let ((f (git-work-read (Str8 append wd "/" path)))) (Str8 sub 0 (rest f) (first f)))
           (let ((o (git-object-read gitdir (first (rest e))))) (if (null? o) "" (git-object-text o))))))))
 
 ; The paths that differ between two sides, in order, with their entries:

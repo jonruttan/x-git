@@ -28,6 +28,7 @@
 (import git/opts git-opts-parse)
 (import x/sys/file File)
 (import git/objects git-hash git-read-file)
+(import git/work git-work-exists? git-work-dir? git-work-read)
 (import git/commands git-fatal git-no-repo git-unknown-option git-strip-slash git-stdin git-records git-nul-joined)
 (import git/quote git-quote-path git-unquote-path)
 (import git/index git-tree-files)
@@ -49,8 +50,8 @@
 (def %clean?
   (fn (_ wd e)
     (def full (Str8 append wd "/" (first e)))
-    (if (not (File exists? full)) #t
-      (do (def f (git-read-file full))
+    (if (not (git-work-exists? full)) #t
+      (do (def f (git-work-read full))
           (str=? (git-hash "blob" (first f) 0 (rest f)) (first (rest (rest e))))))))
 
 ; Is a path's index entry the blob HEAD holds for it?
@@ -126,7 +127,7 @@
                       (git-index-write! gitdir
                         (List filter (fn (_ e) (not (List any? (fn (_ g) (str=? g (first e))) gone))) index))
                       (if (Opts on? o "--cached") ()
-                        (List for-each (fn (_ p) (if (File exists? (Str8 append wd "/" p)) (%remove-file! wd p) ())) gone))
+                        (List for-each (fn (_ p) (if (git-work-exists? (Str8 append wd "/" p)) (%remove-file! wd p) ())) gone))
                       (list (lit out)
                         (if (Opts on? o "-q") ""
                           (Str8 join "" (List map (fn (_ p) (Str8 append "rm '" p "'\n"))
@@ -142,7 +143,8 @@
       (Opts flag "-k" "Skip a source that cannot be moved, rather than refusing")
       (Opts flag "-v" "--verbose" "Name each move"))))
 
-(def %dir? (fn (_ p) (if (File exists? p) (eq? (File type p) (lit dir)) #f)))
+; A directory of its own -- a link to one is a path like a file.
+(def %dir? (fn (_ p) (git-work-dir? p)))
 
 ; A directory's files made under another: each file renamed, the
 ; directories above it made on the way; the emptied directory removed.
@@ -164,12 +166,12 @@
     (def entries (%entries-under index src))
     (def tracked-file? (not (null? (List find (fn (_ e) (str=? (first e) src)) index))))
     (match
-      ((not (File exists? full-src)) (git-fatal (Str8 append "bad source, source=" src ", destination=" dst)))
+      ((not (git-work-exists? full-src)) (git-fatal (Str8 append "bad source, source=" src ", destination=" dst)))
       ((if (%dir? full-src) (null? entries) (not tracked-file?))
         (git-fatal (Str8 append "not under version control, source=" src ", destination=" dst)))
       ((or (str=? src dst) (Str8 starts? (Str8 append src "/") dst))
         (git-fatal (Str8 append "can not move directory into itself, source=" src ", destination=" dst)))
-      ((and (File exists? full-dst) (not force?))
+      ((and (git-work-exists? full-dst) (not force?))
         (git-fatal (Str8 append "destination exists, source=" src ", destination=" dst)))
       ; git 2.56 looks at the destination's directory before renaming.
       ((not (File exists? (Str8 append wd "/" (%parent dst))))
@@ -229,7 +231,7 @@
                     (List for-each
                       (fn (_ m)
                         (do (%make-dirs! wd (rest m))
-                            (if (File exists? (Str8 append wd "/" (rest m))) (File unlink (Str8 append wd "/" (rest m))) ())
+                            (if (git-work-exists? (Str8 append wd "/" (rest m))) (File unlink (Str8 append wd "/" (rest m))) ())
                             (File rename (Str8 append wd "/" (first m)) (Str8 append wd "/" (rest m)))))
                       moves)
                     ; a directory moved whole is left behind empty

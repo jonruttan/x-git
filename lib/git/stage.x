@@ -34,6 +34,7 @@
 (import git/ident git-signature git-ident-refusal git-ident-note)
 (import git/reflog git-ref-log!)
 (import git/history git-ident-date)
+(import git/work git-work-exists? git-work-dir? git-work-read git-work-stat git-work-mode-of)
 
 (import x/core/doors int+ int- int* ptr-set! str-make str->ptr ptr->int int->ptr mem-copy str-byte-len int/ int%)
 
@@ -62,11 +63,12 @@
 
 ; --- the index written ---
 
-; A file's mode as git records it: 100755 when any execute bit is set,
-; else 100644.
+; The mode git records for the path at full, as the index keeps it: a
+; link's 120000; 100755 when any execute bit is set, else 100644.
 (def %file-mode
-  (fn (_ stat)
-    (if (= (& (Assoc get (lit mode) stat) 73) 0) 33188 33261)))
+  (fn (_ full)
+    (def m (git-work-mode-of full))
+    (match ((str=? m "120000") 40960) ((str=? m "100755") 33261) (#t 33188))))
 
 ; An entry's stage: 0, or the 1, 2 or 3 of a path a merge left in
 ; conflict (the base, ours, theirs), carried as the sixth item.
@@ -126,9 +128,9 @@
 (def %entry-for
   (fn (_ wd gitdir path)
     (def full (Str8 append wd "/" path))
-    (def st (File stat full))
-    (def f (git-read-file full))
-    (list path (%file-mode st) (git-object-write! gitdir "blob" (first f) 0 (rest f))
+    (def st (git-work-stat full))
+    (def f (git-work-read full))
+    (list path (%file-mode full) (git-object-write! gitdir "blob" (first f) 0 (rest f))
           (rest f) (Assoc get (lit mtime) st))))
 
 ; The read index's entries in the written shape: the mode text back to a
@@ -150,7 +152,7 @@
         (let ((full (Str8 append dir "/" name)) (path (Str8 append prefix name)))
           (match
             ((str=? name ".git") ())
-            ((eq? (File type full) (lit dir))
+            ((git-work-dir? full)
               (if (ignored? path #t) () (self full (Str8 append path "/") ignored?)))
             ((ignored? path #f) ())
             (#t (list path)))))
@@ -186,7 +188,7 @@
         (fn (_ s)
           (if (str=? s ".") #f
             (do (def full (Str8 append wd "/" s))
-                (if (File exists? full) (ignored? s (eq? (File type full) (lit dir))) #f))))
+                (if (git-work-exists? full) (ignored? s (git-work-dir? full)) #f))))
         specs))
     (match
       ((Opts help? git-add-options ops) (list (lit out) (Opts usage git-add-options) 0))
@@ -204,7 +206,7 @@
             (let ((missing (List find
                              (fn (_ s)
                                (and (not (str=? s "."))
-                                    (not (File exists? (Str8 append wd "/" s)))
+                                    (not (git-work-exists? (Str8 append wd "/" s)))
                                     (not (List any? (fn (_ t) (or (str=? t s) (Str8 starts? (Str8 append s "/") t))) tracked))))
                              specs)))
               (if (not (null? missing))
@@ -217,9 +219,9 @@
                               (fn (_ s)
                                 (let ((full (Str8 append wd "/" s)))
                                   (match
-                                    ((not (File exists? full))
+                                    ((not (git-work-exists? full))
                                       (List filter (fn (_ t) (or (str=? t s) (Str8 starts? (Str8 append s "/") t))) tracked))
-                                    ((eq? (File type full) (lit dir))
+                                    ((git-work-dir? full)
                                       (List append (%files-under full (Str8 append s "/") ignored?)
                                         (List filter (fn (_ t) (Str8 starts? (Str8 append s "/") t)) tracked)))
                                     (#t (list s)))))
@@ -236,7 +238,7 @@
                                     named ()))))
                       (let ((kept (List filter (fn (_ e) (not (List any? (fn (_ p) (str=? p (first e))) paths))) index))
                             (fresh (List flat-map
-                                     (fn (_ p) (if (File exists? (Str8 append wd "/" p)) (list (%entry-for wd gitdir p)) ()))
+                                     (fn (_ p) (if (git-work-exists? (Str8 append wd "/" p)) (list (%entry-for wd gitdir p)) ()))
                                      paths)))
                         (do (%index-write! gitdir (List append kept fresh))
                             (list (lit out) "" 0))))))))))))))
@@ -363,8 +365,9 @@
 ; commit -a's index: each tracked path once, as the working tree has it --
 ; the entry kept when the file's mode and content are what it records, a
 ; fresh one (its blob written) when they changed or the path was in
-; conflict, none when the file is gone.  A symbolic link or a submodule
-; is kept as it is.  Answers (ENTRIES . CHANGED?).
+; conflict, none when the file is gone.  A link is read as itself, its
+; text and mode 120000; a submodule is kept as it is.  Answers (ENTRIES
+; . CHANGED?).
 (def %entries-all
   (fn (_ wd gitdir entries)
     ((fn (self es acc changed?)
@@ -376,15 +379,15 @@
          (#t
            (let ((e (first es)) (full (Str8 append wd "/" (first (first es)))))
              (match
-               ((or (= (first (rest e)) 40960) (= (first (rest e)) 57344)) (self (rest es) (pair e acc) changed?))
-               ((or (not (File exists? full)) (eq? (File type full) (lit dir))) (self (rest es) acc #t))
+               ((= (first (rest e)) 57344) (self (rest es) (pair e acc) changed?))
+               ((or (not (git-work-exists? full)) (git-work-dir? full)) (self (rest es) acc #t))
                (#t
-                 (let ((st (File stat full)) (f (git-read-file full)))
-                   (if (and (= (%entry-stage e) 0) (= (%file-mode st) (first (rest e)))
+                 (let ((st (git-work-stat full)) (f (git-work-read full)))
+                   (if (and (= (%entry-stage e) 0) (= (%file-mode full) (first (rest e)))
                             (str=? (git-hash "blob" (first f) 0 (rest f)) (first (rest (rest e)))))
                      (self (rest es) (pair e acc) changed?)
                      (self (rest es)
-                       (pair (list (first e) (%file-mode st) (git-object-write! gitdir "blob" (first f) 0 (rest f))
+                       (pair (list (first e) (%file-mode full) (git-object-write! gitdir "blob" (first f) 0 (rest f))
                                    (rest f) (Assoc get (lit mtime) st))
                              acc)
                        #t)))))))))

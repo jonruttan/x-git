@@ -24,6 +24,7 @@
 (import git/ignore git-ignorer)
 (import git/quote git-quote-path git-quote-path-sp)
 (import git/config git-config-value)
+(import git/work git-work-exists? git-work-dir? git-work-link? git-work-read)
 
 (import x/core/doors int+ int- int* ptr-ref str-make str->ptr ptr->int int->ptr mem-copy)
 (def %cvt (prim-ref (lit convert) (lit to)))
@@ -135,15 +136,19 @@
 (def git-modes-kept?
   (fn (_ gitdir) (not (%config-false? gitdir "core.filemode"))))
 
-; The mode git sees for the working file at full, the index recording
-; mode: 100755 when an execute bit is set, else 100644 -- the recorded
-; mode itself when modes are not kept, or for a link or a submodule,
-; whose mode is not the file's to change.
+; The mode git sees for the working path at full, the index recording
+; mode: 120000 for a link; for a file, 100755 when an execute bit is set,
+; else 100644 -- the recorded mode itself when modes are not kept (100644
+; for what was a link), or for a submodule, whose mode is not the file's
+; to change.
 (def git-work-mode
   (fn (_ full mode kept?)
-    (if (and kept? (or (str=? mode "100644") (str=? mode "100755")))
-      (if (= (& (Assoc get (lit mode) (File stat full)) 73) 0) "100644" "100755")
-      mode)))
+    (match
+      ((git-work-link? full) "120000")
+      ((and kept? (or (str=? mode "100644") (str=? mode "100755") (str=? mode "120000")))
+        (if (= (& (Assoc get (lit mode) (File stat full)) 73) 0) "100644" "100755"))
+      ((str=? mode "120000") "100644")
+      (#t mode))))
 
 ; Every blob under a tree, (PATH . SHA) each, for the commands that set
 ; a tree against the index.
@@ -159,7 +164,7 @@
     (List any?
       (fn (_ name)
         (let ((full (Str8 append dir "/" name)))
-          (if (eq? (File type full) (lit dir)) (self full) #t)))
+          (if (git-work-dir? full) (self full) #t)))
       (File list-dir dir))))
 
 (def %sorted (fn (_ paths) (List sort (fn (_ a b) (Str8 <? a b)) paths)))
@@ -187,7 +192,7 @@
              (let ((full (Str8 append dir "/" name)) (path (Str8 append prefix name)))
                (match
                  ((str=? name ".git") acc)
-                 ((eq? (File type full) (lit dir))
+                 ((git-work-dir? full)
                    (match
                      ((tracked-under? path) (both acc (self full (Str8 append path "/"))))
                      ((ignored? path #t)
@@ -241,6 +246,12 @@
           p))
       paths)))
 
+; The code for a path whose two sides differ, by their modes: T when one is
+; a link and the other is not, as git tells a typechange, else M.
+(def %change-code
+  (fn (_ old-mode new-mode)
+    (if (eq? (str=? old-mode "120000") (str=? new-mode "120000")) "M" "T")))
+
 (def git-status-lists
   (fn (_ wd gitdir . ignored-mode)
     (def mode (if (null? ignored-mode) (lit no) (first ignored-mode)))
@@ -261,7 +272,7 @@
               (match
                 ((null? h) (list (pair "A" (first e))))
                 ((not (and (str=? (first (rest h)) (first (rest (rest e)))) (str=? (first (rest (rest h))) (first (rest e)))))
-                  (list (pair "M" (first e))))
+                  (list (pair (%change-code (first (rest (rest h))) (first (rest e))) (first e))))
                 (#t ()))))
           index)
         (List flat-map (fn (_ h) (if (null? (in-index (first h))) (list (pair "D" (first h))) ())) head)))
@@ -269,12 +280,12 @@
       (List flat-map
         (fn (_ e)
           (let ((full (Str8 append wd "/" (first e))))
-            (if (not (File exists? full)) (list (pair "D" (first e)))
-              (let ((f (git-read-file full)))
+            (if (not (git-work-exists? full)) (list (pair "D" (first e)))
+              (let ((f (git-work-read full)))
                 (if (and (str=? (git-hash "blob" (first f) 0 (rest f)) (first (rest (rest e))))
                          (str=? (git-work-mode full (first (rest e)) modes?) (first (rest e))))
                   ()
-                  (list (pair "M" (first e))))))))
+                  (list (pair (%change-code (first (rest e)) (git-work-mode full (first (rest e)) modes?)) (first e))))))))
         index))
     (def others (%walk wd (List map (fn (_ e) (first e)) all) (git-ignorer wd gitdir) mode))
     (list (List sort (fn (_ a b) (Str8 <? (rest a) (rest b))) staged)
@@ -292,7 +303,7 @@
 
 (def %code-word
   (fn (_ code)
-    (match ((str=? code "A") "new file:   ") ((str=? code "D") "deleted:    ") (#t "modified:   "))))
+    (match ((str=? code "A") "new file:   ") ((str=? code "D") "deleted:    ") ((str=? code "T") "typechange: ") (#t "modified:   "))))
 
 ; status --porcelain: `XY PATH`, X the staged code, Y the unstaged, then
 ; `?? PATH` for the untracked and `!! PATH` for the ignored.
@@ -477,7 +488,7 @@
              (let ((full (Str8 append dir "/" name)) (path (Str8 append prefix name)))
                (match
                  ((str=? name ".git") ())
-                 ((eq? (File type full) (lit dir)) (self full (Str8 append path "/")))
+                 ((git-work-dir? full) (self full (Str8 append path "/")))
                  ((List any? (fn (_ t) (str=? t path)) tracked) ())
                  (#t (list path)))))
            (File list-dir dir)))
