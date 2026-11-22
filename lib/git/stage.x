@@ -1,0 +1,514 @@
+; # x-git -- git on x-lang
+;
+; ## lib/git/stage.x -- the index written: add and commit
+;
+; @author [Jon Ruttan](jonruttan@gmail.com)
+; @copyright 2026 Jon Ruttan
+; @license MIT No Attribution (MIT-0)
+;
+; add writes blobs for the files named and the index that lists them, as
+; git/index.x reads it: version 2, the entries in name order, the stat
+; fields a file's size, mode and modification time with the rest zero
+; (git treats such an entry as one to re-check, and finds it clean), and
+; the file's own SHA-1 last.  commit builds the trees the index describes,
+; writes the commit with the identity .git/config holds and the clock's
+; time in the local offset, moves the branch HEAD names, and prints what
+; git prints: the branch and the new name, how many files changed and by
+; how many lines, and the modes created or deleted.
+
+(module git/stage)
+
+(import x/sys/opts Opts)
+(import git/opts git-opts-parse)
+(import x/sys/file File)
+(import x/sys/posix Sys)
+(import x/codec/sha1 Sha1)
+(import x/codec/hex Hex)
+(import git/objects git-hash git-object-write! git-object-read git-object-text git-read-file git-write-file!)
+(import git/commands git-fatal git-no-repo git-unknown-option git-strip-slash)
+(import git/refs git-ref-read git-rev-parse git-tree-of git-commit-of git-headers)
+(import git/index git-index-read git-status-lists git-tree-files git-untracked-with git-long-status)
+(import git/ignore git-ignorer)
+(import git/diff git-commit-summary)
+(import git/config git-config-value)
+(import git/ident git-signature git-ident-refusal git-ident-note)
+(import git/reflog git-ref-log!)
+(import git/history git-ident-date)
+
+(import x/core/doors int+ int- int* ptr-set! str-make str->ptr ptr->int int->ptr mem-copy str-byte-len int/ int%)
+
+(def %at (fn (_ p off) (int->ptr (int+ (ptr->int p) off))))
+
+; --- bytes ---
+
+(def %put-u32!
+  (fn (_ p i v)
+    (ptr-set! p i (& (>> v 24) 255) 1)
+    (ptr-set! p (int+ i 1) (& (>> v 16) 255) 1)
+    (ptr-set! p (int+ i 2) (& (>> v 8) 255) 1)
+    (ptr-set! p (int+ i 3) (& v 255) 1)))
+
+; A hex name's 20 raw bytes written at i of p.
+(def %put-sha!
+  (fn (_ p i hex)
+    ((fn (self k l) (unless (null? l) (do (ptr-set! p (int+ i k) (first l) 1) (self (int+ k 1) (rest l)))))
+     0 (Hex decode-bytes hex))))
+
+(def %put-str!
+  (fn (_ p i s)
+    (def n (str-byte-len s))
+    (when (> n 0) (mem-copy (%at p i) (str->ptr s) n))
+    n))
+
+; --- the index written ---
+
+; A file's mode as git records it: 100755 when any execute bit is set,
+; else 100644.
+(def %file-mode
+  (fn (_ stat)
+    (if (= (& (Assoc get (lit mode) stat) 73) 0) 33188 33261)))
+
+; An entry's stage: 0, or the 1, 2 or 3 of a path a merge left in
+; conflict (the base, ours, theirs), carried as the sixth item.
+(def %entry-stage
+  (fn (_ e) (if (null? (rest (rest (rest (rest (rest e)))))) 0 (first (rest (rest (rest (rest (rest e)))))))))
+
+; Entries (PATH MODE-NUMBER SHA SIZE MTIME [STAGE]) to the index file's
+; bytes: (REGION . N).
+(def %index-bytes
+  (fn (_ entries)
+    (def sizes (List map (fn (_ e) (& (int+ (int+ 62 (str-byte-len (first e))) 8) (~ 7))) entries))
+    (def total (int+ (int+ 12 (List fold (fn (_ a b) (int+ a b)) 0 sizes)) 20))
+    (def r (str-make total))
+    (def p (str->ptr r))
+    (%put-str! p 0 "DIRC")
+    (%put-u32! p 4 2)
+    (%put-u32! p 8 (List length entries))
+    ((fn (self es i)
+       (unless (null? es)
+         (let ((e (first es)))
+           (do (%put-u32! p i (first (rest (rest (rest (rest e))))))          ; ctime: the mtime
+               (%put-u32! p (int+ i 4) 0)
+               (%put-u32! p (int+ i 8) (first (rest (rest (rest (rest e))))))  ; mtime
+               (%put-u32! p (int+ i 12) 0)
+               (%put-u32! p (int+ i 16) 0)                                    ; dev
+               (%put-u32! p (int+ i 20) 0)                                    ; ino
+               (%put-u32! p (int+ i 24) (first (rest e)))                     ; mode
+               (%put-u32! p (int+ i 28) 0)                                    ; uid
+               (%put-u32! p (int+ i 32) 0)                                    ; gid
+               (%put-u32! p (int+ i 36) (first (rest (rest (rest e)))))        ; size
+               (%put-sha! p (int+ i 40) (first (rest (rest e))))
+               ; the flags: the stage in bits 12-13, the name's length below
+               (ptr-set! p (int+ i 60) (| (<< (%entry-stage e) 4) (>> (str-byte-len (first e)) 8)) 1)
+               (ptr-set! p (int+ i 61) (& (str-byte-len (first e)) 255) 1)
+               (%put-str! p (int+ i 62) (first e))
+               ; the name's NUL and the padding to eight: a fresh region is
+               ; not zeroed, and git reads the name to its NUL
+               (let ((next (int+ i (& (int+ (int+ 62 (str-byte-len (first e))) 8) (~ 7)))))
+                 (do ((fn (zero j) (when (< j next) (do (ptr-set! p j 0 1) (zero (int+ j 1)))))
+                      (int+ (int+ i 62) (str-byte-len (first e))))
+                     (self (rest es) next)))))))
+     entries 12)
+    (%put-sha! p (int- total 20) (Sha1 hex-n r (int- total 20)))
+    (pair r total)))
+
+; The index written from entries, replacing what is there.
+(def %index-write!
+  (fn (_ gitdir entries)
+    (def b (%index-bytes
+             (List sort (fn (_ a b) (if (str=? (first a) (first b)) (< (%entry-stage a) (%entry-stage b)) (Str8 <? (first a) (first b))))
+               entries)))
+    (git-write-file! (Str8 append gitdir "/index") (first b) (rest b))
+    (File chmod (Str8 append gitdir "/index") 420)
+    ()))
+
+; An index entry for the file at path (relative to wd), its blob written.
+(def %entry-for
+  (fn (_ wd gitdir path)
+    (def full (Str8 append wd "/" path))
+    (def st (File stat full))
+    (def f (git-read-file full))
+    (list path (%file-mode st) (git-object-write! gitdir "blob" (first f) 0 (rest f))
+          (rest f) (Assoc get (lit mtime) st))))
+
+; The read index's entries in the written shape: the mode text back to a
+; number, the stage last.
+(def %read-entries
+  (fn (_ gitdir)
+    (List map
+      (fn (_ e) (list (first e) (%str->number (first (rest e)) 8) (first (rest (rest e)))
+                      (first (rest (rest (rest (rest e))))) (first (rest (rest (rest (rest (rest e))))))
+                      (first (rest (rest (rest e))))))
+      (git-index-read gitdir))))
+
+; Every file under a directory, by path from prefix; .git skipped, and
+; what ignored? says to.
+(def %files-under
+  (fn (self dir prefix ignored?)
+    (List flat-map
+      (fn (_ name)
+        (let ((full (Str8 append dir "/" name)) (path (Str8 append prefix name)))
+          (match
+            ((str=? name ".git") ())
+            ((eq? (File type full) (lit dir))
+              (if (ignored? path #t) () (self full (Str8 append path "/") ignored?)))
+            ((ignored? path #f) ())
+            (#t (list path)))))
+      (File list-dir dir))))
+
+; --- add ---
+
+(def git-add-options
+  (Opts declare "git add" "[-A | --all] [-f | --force] [--] <pathspec>..." ()
+    (list
+      (Opts flag "-A" "--all" "Stage every change in the working tree: additions, modifications, removals")
+      (Opts flag "-f" "--force" "Add a path .gitignore says to leave"))))
+
+; What git says of a path named outright that .gitignore covers.
+(def %ignored-refusal
+  (fn (_ paths)
+    (list (lit err)
+      (Str8 append "The following paths are ignored by one of your .gitignore files:\n"
+        (Str8 join "" (List map (fn (_ p) (Str8 append p "\n")) paths))
+        "hint: Use -f if you really want to add them.\n"
+        "hint: Disable this message with \"git config set advice.addIgnoredFile false\"\n")
+      1)))
+
+(def git-add
+  (fn (_ wd gitdir ops)
+    (def o (git-opts-parse git-add-options ops))
+    (def specs (List map (fn (_ s) (git-strip-slash s)) (Opts operands o)))
+    ; with -f nothing is ignored
+    (def ignored?
+      (if (or (null? gitdir) (Opts on? o "-f")) (fn (_ path dir?) #f) (git-ignorer wd gitdir)))
+    (def refused
+      (List filter
+        (fn (_ s)
+          (if (str=? s ".") #f
+            (do (def full (Str8 append wd "/" s))
+                (if (File exists? full) (ignored? s (eq? (File type full) (lit dir))) #f))))
+        specs))
+    (match
+      ((Opts help? git-add-options ops) (list (lit out) (Opts usage git-add-options) 0))
+      ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-add-options)))
+      ((null? gitdir) (git-no-repo))
+      ((and (null? specs) (not (Opts on? o "-A")))
+        (list (lit out) "Nothing specified, nothing added.\nhint: Maybe you wanted to say 'git add .'?\n" 0))
+      ((not (null? refused)) (%ignored-refusal refused))
+      (#t
+        (let ((index (%read-entries gitdir)))
+          (let ((tracked (List map (fn (_ e) (first e)) index)))
+            ; the paths each spec names: a file, every file under a directory,
+            ; or a tracked path now gone (its removal is what is staged);
+            ; nothing at all is the refusal
+            (let ((missing (List find
+                             (fn (_ s)
+                               (and (not (str=? s "."))
+                                    (not (File exists? (Str8 append wd "/" s)))
+                                    (not (List any? (fn (_ t) (or (str=? t s) (Str8 starts? (Str8 append s "/") t))) tracked))))
+                             specs)))
+              (if (not (null? missing))
+                (git-fatal (Str8 append "pathspec '" missing "' did not match any files"))
+                (let ((all? (or (Opts on? o "-A") (List any? (fn (_ s) (str=? s ".")) specs))))
+                  (let ((named
+                          (if all?
+                            (List append tracked (git-untracked-with wd tracked ignored?))
+                            (List flat-map
+                              (fn (_ s)
+                                (let ((full (Str8 append wd "/" s)))
+                                  (match
+                                    ((not (File exists? full))
+                                      (List filter (fn (_ t) (or (str=? t s) (Str8 starts? (Str8 append s "/") t))) tracked))
+                                    ((eq? (File type full) (lit dir))
+                                      (List append (%files-under full (Str8 append s "/") ignored?)
+                                        (List filter (fn (_ t) (Str8 starts? (Str8 append s "/") t)) tracked)))
+                                    (#t (list s)))))
+                              specs))))
+                    ; a path named twice is one; a directory listed as DIR/ by the
+                    ; untracked walk is its files
+                    (let ((paths (List flat-map
+                                   (fn (_ p)
+                                     (if (Str8 ends? "/" p)
+                                       (%files-under (Str8 append wd "/" (git-strip-slash p)) p ignored?)
+                                       (list p)))
+                                   ((fn (self ps acc) (if (null? ps) (List reverse acc)
+                                                        (self (rest ps) (if (List any? (fn (_ a) (str=? a (first ps))) acc) acc (pair (first ps) acc)))))
+                                    named ()))))
+                      (let ((kept (List filter (fn (_ e) (not (List any? (fn (_ p) (str=? p (first e))) paths))) index))
+                            (fresh (List flat-map
+                                     (fn (_ p) (if (File exists? (Str8 append wd "/" p)) (list (%entry-for wd gitdir p)) ()))
+                                     paths)))
+                        (do (%index-write! gitdir (List append kept fresh))
+                            (list (lit out) "" 0))))))))))))))
+
+; --- commit ---
+
+; git's tree order: names compared as bytes, a subtree's with "/" after it.
+(def %tree-name<?
+  (fn (_ a b)
+    (Str8 <? (if (str=? (first a) "40000") (Str8 append (first (rest a)) "/") (first (rest a)))
+             (if (str=? (first b) "40000") (Str8 append (first (rest b)) "/") (first (rest b))))))
+
+; A tree object written from index entries whose paths begin with prefix,
+; subtrees first; answers its name.  Entries are (PATH MODE-NUMBER SHA ...).
+(def %write-tree!
+  (fn (self gitdir entries prefix)
+    (def plen (Str8 length prefix))
+    (def here (List filter (fn (_ e) (Str8 starts? prefix (first e))) entries))
+    ; the direct names: a file's, or a subdirectory's first component
+    (def names
+      ((fn (walk es acc)
+         (if (null? es) (List reverse acc)
+           (let ((rel (Str8 sub plen (int- (Str8 length (first (first es))) plen) (first (first es)))))
+             (let ((i (Str8 index-of "/" rel)))
+               (let ((item (if (null? i)
+                             (list (%cvt-mode (first (rest (first es)))) rel (first (rest (rest (first es)))))
+                             (list "40000" (Str8 sub 0 i rel) ()))))
+                 (walk (rest es)
+                   (if (List any? (fn (_ a) (str=? (first (rest a)) (first (rest item)))) acc) acc (pair item acc))))))))
+       here ()))
+    (def resolved
+      (List map
+        (fn (_ item)
+          (if (str=? (first item) "40000")
+            (list "40000" (first (rest item)) (self gitdir entries (Str8 append prefix (first (rest item)) "/")))
+            item))
+        names))
+    (def sorted (List sort %tree-name<? resolved))
+    (def size (List fold (fn (_ a it) (int+ a (int+ (int+ (int+ (Str8 length (first it)) 1) (int+ (Str8 length (first (rest it))) 1)) 20))) 0 sorted))
+    (def r (str-make (if (= size 0) 1 size)))
+    (def p (str->ptr r))
+    ((fn (walk its i)
+       (unless (null? its)
+         (let ((it (first its)))
+           (let ((j (int+ i (%put-str! p i (first it)))))
+             (do (ptr-set! p j 32 1)
+                 (let ((k (int+ (int+ j 1) (%put-str! p (int+ j 1) (first (rest it))))))
+                   (do (ptr-set! p k 0 1)
+                       (%put-sha! p (int+ k 1) (first (rest (rest it))))
+                       (walk (rest its) (int+ k 21)))))))))
+     sorted 0)
+    (git-object-write! gitdir "tree" r 0 size)))
+
+; A mode number as a tree spells it: 100644, 100755, 120000.
+(def %cvt-mode
+  (fn (_ n) ((prim-ref (lit convert) (lit to)) n (Type named STRING) 8)))
+
+
+; A commit object written: its tree, its parents, its message, the author
+; given (a commit's `NAME <EMAIL> WHEN`, as a cherry-pick keeps it) or ()
+; for the one git finds, and the committer git finds.  Answers its name,
+; or () when the identity is unknown.
+(def git-commit-write-by!
+  (fn (_ gitdir tree parents message by)
+    (def author (if (null? by) (git-signature gitdir "AUTHOR") by))
+    (def committer (git-signature gitdir "COMMITTER"))
+    (if (or (null? author) (null? committer)) ()
+      (let ((body (Str8 append "tree " tree "\n"
+                    (Str8 join "" (List map (fn (_ p) (Str8 append "parent " p "\n")) parents))
+                    "author " author "\n"
+                    "committer " committer "\n"
+                    "\n" message (if (Str8 ends? "\n" message) "" "\n"))))
+        (git-object-write! gitdir "commit" body 0 (str-byte-len body))))))
+
+(def git-commit-write!
+  (fn (_ gitdir tree parents message) (git-commit-write-by! gitdir tree parents message ())))
+
+; The lines git's report of a commit it made carries after the first:
+; " Author: " when the author is not the committer, " Date: " (the
+; author's) when dated? -- as a pick's report always is.
+(def %who (fn (_ line) (Str8 sub 0 (int+ (Str8 last-index-of ">" line) 1) line)))
+(def git-commit-report-idents
+  (fn (_ gitdir sha dated?)
+    (def hs (git-headers gitdir sha))
+    (def author (rest (List find (fn (_ kv) (str=? (first kv) "author")) hs)))
+    (def committer (rest (List find (fn (_ kv) (str=? (first kv) "committer")) hs)))
+    (Str8 append
+      (if (str=? (%who author) (%who committer)) "" (Str8 append " Author: " (%who author) "\n"))
+      (if dated? (Str8 append " Date: " (git-ident-date author) "\n") "")
+      (git-ident-note gitdir))))
+
+; The commit a cherry-pick in progress picks, or ().
+(def git-picking
+  (fn (_ gitdir)
+    (def path (Str8 append gitdir "/CHERRY_PICK_HEAD"))
+    (if (File exists? path) (Str8 trim (File read-all path)) ())))
+
+; The merge in progress: the commits MERGE_HEAD names, or () when none.
+(def %merge-heads
+  (fn (_ gitdir)
+    (def path (Str8 append gitdir "/MERGE_HEAD"))
+    (if (not (File exists? path)) ()
+      (List filter (fn (_ l) (= (Str8 length l) 40)) (Str8 split "\n" (File read-all path))))))
+
+; The files a merge, a revert or a cherry-pick in progress leaves, removed
+; once it is concluded or abandoned.
+(def git-merge-state-clear!
+  (fn (_ gitdir)
+    (List for-each
+      (fn (_ f) (let ((p (Str8 append gitdir "/" f))) (when (File exists? p) (File unlink p))))
+      (list "MERGE_HEAD" "MERGE_MSG" "MERGE_MODE" "AUTO_MERGE" "REVERT_HEAD" "CHERRY_PICK_HEAD"))))
+
+; A message with git's comment lines (those starting #) taken out and its
+; trailing blank lines dropped, as git cleans one that was edited; "" when
+; nothing is left.
+(def git-message-strip
+  (fn (_ text)
+    (def kept (List filter (fn (_ l) (not (Str8 starts? "#" l))) (Str8 split "\n" text)))
+    (def trimmed
+      ((fn (self ls) (if (and (not (null? ls)) (= (Str8 length (Str8 trim (List last ls))) 0)) (self (List take (int- (List length ls) 1) ls)) ls))
+       kept))
+    (if (null? trimmed) "" (Str8 append (Str8 join "\n" trimmed) "\n"))))
+
+; commit -a's index: each tracked path once, as the working tree has it --
+; the entry kept when the file's mode and content are what it records, a
+; fresh one (its blob written) when they changed or the path was in
+; conflict, none when the file is gone.  A symbolic link or a submodule
+; is kept as it is.  Answers (ENTRIES . CHANGED?).
+(def %entries-all
+  (fn (_ wd gitdir entries)
+    ((fn (self es acc changed?)
+       (match
+         ((null? es) (pair (List reverse acc) changed?))
+         ; a conflict's later stages: the path is done
+         ((and (not (null? acc)) (str=? (first (first es)) (first (first acc))))
+           (self (rest es) acc changed?))
+         (#t
+           (let ((e (first es)) (full (Str8 append wd "/" (first (first es)))))
+             (match
+               ((or (= (first (rest e)) 40960) (= (first (rest e)) 57344)) (self (rest es) (pair e acc) changed?))
+               ((or (not (File exists? full)) (eq? (File type full) (lit dir))) (self (rest es) acc #t))
+               (#t
+                 (let ((st (File stat full)) (f (git-read-file full)))
+                   (if (and (= (%entry-stage e) 0) (= (%file-mode st) (first (rest e)))
+                            (str=? (git-hash "blob" (first f) 0 (rest f)) (first (rest (rest e)))))
+                     (self (rest es) (pair e acc) changed?)
+                     (self (rest es)
+                       (pair (list (first e) (%file-mode st) (git-object-write! gitdir "blob" (first f) 0 (rest f))
+                                   (rest f) (Assoc get (lit mtime) st))
+                             acc)
+                       #t)))))))))
+     (List sort (fn (_ a b) (if (str=? (first a) (first b)) (< (%entry-stage a) (%entry-stage b)) (Str8 <? (first a) (first b))))
+       entries)
+     () #f)))
+
+; The index replaced by entries; answers (WAS) -- WAS the old file's
+; (REGION . N), or () when there was none.
+(def %index-swap!
+  (fn (_ gitdir entries)
+    (def path (Str8 append gitdir "/index"))
+    (def was (if (File exists? path) (git-read-file path) ()))
+    (%index-write! gitdir entries)
+    (list was)))
+
+(def git-commit-options
+  (Opts declare "git commit" "-m <message> [-a] [-q] [--no-edit]" ()
+    (list
+      (Opts flag "-a" "--all" "Stage every tracked file's change and removal first")
+      (Opts arg "-m" "--message" "<message>" "The commit message")
+      (Opts flag "-q" "--quiet" "Print nothing on success")
+      (Opts flag "--no-edit" "Take the message a merge in progress left, unedited"))))
+
+(def %unmerged-refusal
+  (fn (_ paths)
+    (list (lit err)
+      (Str8 append "error: Committing is not possible because you have unmerged files.\n"
+        "hint: Fix them up in the work tree, and then use 'git add/rm <file>'\n"
+        "hint: as appropriate to mark resolution and make a commit.\n"
+        "fatal: Exiting because of an unresolved conflict.\n")
+      128
+      (Str8 join "" (List map (fn (_ p) (Str8 append "U\t" p "\n")) paths)))))
+
+(def git-commit
+  (fn (_ wd gitdir ops)
+    (def o (git-opts-parse git-commit-options ops))
+    (def merging (if (null? gitdir) () (%merge-heads gitdir)))
+    (def merge-msg-path (if (null? gitdir) () (Str8 append gitdir "/MERGE_MSG")))
+    ; a cherry-pick in progress concludes with the picked commit's author
+    (def picking (if (null? gitdir) () (git-picking gitdir)))
+    ; a merge in progress concludes with the message it left, as --no-edit
+    ; takes it; a revert's or a cherry-pick's, its comment lines taken out
+    (def msg (or (Opts value o "-m" ())
+                 (if (and (not (null? merging)) (File exists? merge-msg-path)) (File read-all merge-msg-path) ())
+                 (if (and (not (null? gitdir))
+                          (or (not (null? picking)) (File exists? (Str8 append gitdir "/REVERT_HEAD")))
+                          (File exists? merge-msg-path))
+                   (git-message-strip (File read-all merge-msg-path)) ())))
+    ; with -a, the index as the working tree has it: written only for the
+    ; commit, as git puts it back when there is none
+    (def all? (Opts on? o "-a"))
+    (def staged (if (or (null? gitdir) (not all?)) () (%entries-all wd gitdir (%read-entries gitdir))))
+    (def entries (match ((null? gitdir) ()) (all? (first staged)) (#t (%read-entries gitdir))))
+    (def unmerged
+      ((fn (self es acc)
+         (if (null? es) (List reverse acc)
+           (self (rest es)
+             (if (and (> (%entry-stage (first es)) 0) (not (List any? (fn (_ p) (str=? p (first (first es)))) acc)))
+               (pair (first (first es)) acc) acc))))
+       entries ()))
+    ; who git will not commit as, asked once
+    (def refusal (if (null? gitdir) () (git-ident-refusal gitdir)))
+    (match
+      ((Opts help? git-commit-options ops) (list (lit out) (Opts usage git-commit-options) 0))
+      ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-commit-options)))
+      ((null? gitdir) (git-no-repo))
+      ((and all? (not (null? (Opts operands o))))
+        (git-fatal (Str8 append "paths '" (first (Opts operands o)) " ...' with -a does not make sense")))
+      ((not (null? unmerged)) (%unmerged-refusal unmerged))
+      ((null? msg) (git-fatal "no message given: this git takes -m <message>"))
+      ((not (null? refusal)) refusal)
+      (#t
+        (let ((parent (git-commit-of gitdir "HEAD"))
+              (head (Str8 trim (File read-all (Str8 append gitdir "/HEAD"))))
+              (index-path (Str8 append gitdir "/index"))
+              ; with -a's changes, the index written; what it was, for
+              ; nothing to commit to put back
+              (saved (if (and all? (rest staged)) (%index-swap! gitdir entries) ())))
+          (let ((tree (%write-tree! gitdir entries ""))
+                (parent-tree (if (null? parent) () (git-tree-of gitdir parent))))
+            ; a merge commit may record the tree it had; any other must change it
+            (if (and (null? merging) (not (null? parent-tree)) (str=? tree parent-tree))
+              (let ((report (git-long-status gitdir (git-status-lists wd gitdir))))
+                (do (when (and all? (rest staged))
+                      (if (null? (first saved)) (File unlink index-path) (git-write-file! index-path (first (first saved)) (rest (first saved)))))
+                    (list (lit out) report 1)))
+              (let ((sha (git-commit-write-by! gitdir tree (List append (if (null? parent) () (list parent)) merging) msg
+                           (if (null? picking) ()
+                             (rest (List find (fn (_ kv) (str=? (first kv) "author")) (git-headers gitdir picking))))))
+                    (branch (if (Str8 starts? "ref: refs/heads/" head) (Str8 sub 16 (int- (Str8 length head) 16) head) ())))
+                (do (def ref-path (if (null? branch) (Str8 append gitdir "/HEAD") (Str8 append gitdir "/" (Str8 sub 5 (int- (Str8 length head) 5) head))))
+                    ; replaced, not rewritten: the file before it may be read-only
+                    (when (File exists? ref-path) (File unlink ref-path))
+                    (git-write-file! ref-path (Str8 append sha "\n") 41)
+                    (git-ref-log! gitdir (if (null? branch) "HEAD" (Str8 append "refs/heads/" branch)) parent sha
+                      (Str8 append (or (Sys getenv "GIT_REFLOG_ACTION")
+                                       (match ((null? parent) "commit (initial)") ((not (null? merging)) "commit (merge)")
+                                              ((not (null? picking)) "commit (cherry-pick)") (#t "commit")))
+                        ": " (first (Str8 split "\n" msg))))
+                    (git-merge-state-clear! gitdir)
+                    (if (Opts on? o "-q") (list (lit out) "" 0)
+                      (list (lit out)
+                        (Str8 append
+                          "[" (if (null? branch) "detached HEAD" branch) (if (null? parent) " (root-commit) " " ") (Str8 sub 0 7 sha) "] "
+                          (first (Str8 split "\n" msg)) "\n"
+                          (git-commit-report-idents gitdir sha (not (null? picking)))
+                          ; a merge commit's line says what it is and nothing more
+                          (if (null? merging) (git-commit-summary gitdir parent-tree tree) ""))
+                        0)))))))))))
+
+; The index written from entries (PATH MODE-NUMBER SHA SIZE MTIME), for
+; checkout, which sets it to a tree.
+(def git-index-write!
+  (fn (_ gitdir entries) (%index-write! gitdir entries)))
+
+; The index's entries in the shape git-index-write! takes, for the
+; commands that change the index: (PATH MODE-NUMBER SHA SIZE MTIME).
+(def git-read-entries
+  (fn (_ gitdir) (%read-entries gitdir)))
+
+; A tree written from index entries (PATH MODE-NUMBER SHA ...); its name.
+(def git-write-tree! (fn (_ gitdir entries) (%write-tree! gitdir entries "")))
+
+(provide git/stage git-add git-add-options git-commit git-commit-options git-index-write!
+  git-read-entries git-commit-write! git-commit-write-by! git-commit-report-idents git-picking
+  git-write-tree! git-merge-state-clear! git-message-strip)
