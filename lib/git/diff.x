@@ -24,7 +24,7 @@
 (import git/objects git-object-read git-object-text git-read-file git-hash)
 (import git/commands git-fatal git-no-repo git-unknown-option)
 (import git/refs git-tree-of git-rev-parse)
-(import git/index git-index-read git-tree-files)
+(import git/index git-index-read git-tree-files git-modes-kept? git-work-mode)
 (import git/renames git-find-renames git-rename-name git-max-score)
 (import git/quote git-quote-path)
 
@@ -634,13 +634,18 @@
                          "index " (short (first old)) ".." (short (first new)) "\n"))))
     (def a-text (if (null? old) "" (%side-text old)))
     (def b-text (if (null? new) "" (%side-text new)))
-    (if (or (%binary? a-text) (%binary? b-text))
+    (match
+      ; the mode alone changed: its two lines are the whole of it
+      ((and (not (null? old)) (not (null? new)) (str=? (first old) (first new)))
+        (Str8 append header "old mode " (first (rest old)) "\nnew mode " (first (rest new)) "\n"))
+      ((or (%binary? a-text) (%binary? b-text))
       (Str8 append header modes "Binary files " (if (null? old) "/dev/null" a-name)
-                   " and " (if (null? new) "/dev/null" b-name) " differ\n")
-      (Str8 append header modes
-        "--- " (if (null? old) "/dev/null" (Str8 append a-name tab)) "\n"
-        "+++ " (if (null? new) "/dev/null" (Str8 append b-name tab)) "\n"
-        (git-hunks a-text b-text)))))
+                   " and " (if (null? new) "/dev/null" b-name) " differ\n"))
+      (#t
+        (Str8 append header modes
+          "--- " (if (null? old) "/dev/null" (Str8 append a-name tab)) "\n"
+          "+++ " (if (null? new) "/dev/null" (Str8 append b-name tab)) "\n"
+          (git-hunks a-text b-text))))))
 
 ; --- the sides ---
 
@@ -668,13 +673,14 @@
 ; is, named by its hash, or () when gone.
 (def %work-side
   (fn (_ wd gitdir)
+    (def kept? (git-modes-kept? gitdir))
     (List flat-map
       (fn (_ e)
         (let ((full (Str8 append wd "/" (first e))))
           (if (not (File exists? full)) ()
-            (let ((f (git-read-file full)) (st (File stat full)))
+            (let ((f (git-read-file full)))
               (list (list (first e) (git-hash "blob" (first f) 0 (rest f))
-                          (if (= (& (Assoc get (lit mode) st) 73) 0) "100644" "100755")))))))
+                          (git-work-mode full (first (rest e)) kept?)))))))
       (git-index-read gitdir))))
 
 ; A side's entry for path as (SHA MODE TEXT), its text from the blob or

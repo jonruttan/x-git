@@ -88,7 +88,9 @@ The detail of each command:
 - `ls-files [-c] [-s] [-o] [-i] [--exclude-standard]` and
   `status [-s | --porcelain] [--ignored[=traditional|matching|no]]` from
   the index, the untracked paths as `.gitignore` leaves them and, when
-  asked, the ignored ones
+  asked, the ignored ones; a file's execute bit a change, as in `diff`,
+  unless `core.fileMode` is false; git's hints left out when
+  `advice.statusHints` is false
 - `add [-A] <pathspec>...`: the blobs written, the index written (version 2)
 - `commit -m <message> [-a] [-q] [--no-edit]`: the trees from the index
   (with `-a`, the index first takes each tracked file as the working tree
@@ -113,7 +115,9 @@ The detail of each command:
   line git's default takes for a function; the edit script as git's
   xdiff makes it (Myers, its cut-offs for an expensive comparison, and
   its sliding of each change, by the indent heuristic where nothing else
-  decides); `--stat` fitted to 80 columns (or `COLUMNS`) as git fits it
+  decides); `--stat` fitted to 80 columns (or `COLUMNS`) as git fits it;
+  a mode changed alone, its `old mode` and `new mode` lines and nothing
+  more.  A symbolic link is followed, not read as a link
 - `init [-b <branch>] [<directory>]`, the first branch `init.defaultBranch`
   when no `-b` is given (the hints git prints for an unnamed first branch
   are not printed), `branch [-d] [<branch> [<start>]]`,

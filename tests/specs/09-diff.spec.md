@@ -164,3 +164,35 @@ line above being indented more.
 ```
 ---
     #t
+
+## modes
+
+### a mode changed alone: diff's two mode lines, status's modified, staged or not, its hints as advice.statusHints says; core.fileMode false keeps none
+
+```git
+(def %df (git-fixture))
+(def %mf (Str8 append %df "/moded"))
+(File write-all %mf "m\n")
+(git-oracle "add" "moded")
+(git-oracle "commit" "-q" "-m" "moded")
+(File chmod %mf 493)
+(def %md-work (list (git-text "diff" "moded")
+                    (equal? (git-text "status" "--porcelain") (git-oracle "status" "--porcelain"))
+                    (equal? (git-text "status") (git-oracle "status"))
+                    (do (git-oracle "config" "advice.statusHints" "false")
+                        (equal? (git-text "status") (git-oracle "status")))))
+(git-oracle "config" "--unset" "advice.statusHints")
+(git-oracle "add" "moded")
+(def %md-staged (list (equal? (git-text "diff" "--cached") (git-oracle "diff" "--cached"))
+                      (equal? (git-text "diff" "HEAD" "--stat") (git-oracle "diff" "HEAD" "--stat"))
+                      (equal? (git-text "status" "--porcelain") (git-oracle "status" "--porcelain"))))
+(git-oracle "commit" "-q" "-m" "exec")
+(git-oracle "config" "core.fileMode" "false")
+(File chmod %mf 420)
+(write (list %md-work %md-staged (equal? (git-text "status" "--porcelain") (git-oracle "status" "--porcelain"))
+             (Str8 index-of "moded" (rest (git-text "status" "--porcelain")))))
+(git-oracle "config" "core.fileMode" "true")
+(File chmod %mf 493)
+```
+---
+    (((0 . "diff --git a/moded b/moded\nold mode 100644\nnew mode 100755\n") #t #t #t) (#t #t #t) #t ())
