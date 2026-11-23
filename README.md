@@ -113,7 +113,7 @@ The detail of each command:
   a cherry-pick, a cherry-pick by the picked commit's author
 - status tells of a revert or a cherry-pick in progress, a sequence of
   them too, as git does
-- `diff [--cached] [--stat] [<revision> [<revision>]] [--] [<path>...]`:
+- `diff [--cached] [--stat] [<revision> [<revision>] | <A>..<B>] [--] [<path>...]`:
   git's unified form, hunks with three lines of context headed by the
   line git's default takes for a function; the edit script as git's
   xdiff makes it (Myers, its cut-offs for an expensive comparison, and
@@ -121,7 +121,9 @@ The detail of each command:
   decides); `--stat` fitted to 80 columns (or `COLUMNS`) as git fits it;
   a mode changed alone, its `old mode` and `new mode` lines and nothing
   more; a path turned from a link to a file or back, a deletion and a
-  creation, as git draws a typechange
+  creation, as git draws a typechange; operands placed as git places
+  them, one that is neither a revision nor a path in the working tree
+  refused in its words
 - `init [-b <branch>] [<directory>]`, the first branch `init.defaultBranch`
   when no `-b` is given (the hints git prints for an unnamed first branch
   are not printed), `branch [-d] [<branch> [<start>]]`,

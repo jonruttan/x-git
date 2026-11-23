@@ -914,18 +914,73 @@
       (Opts flag "--cached" "--staged" "The index against HEAD, not the working directory against the index")
       (Opts flag "--stat" "A row a file and the summary, not the changes"))))
 
+; git's refusal of an operand it cannot place, its hint lines after.
+(def %ambiguous
+  (fn (_ head)
+    (list (lit err)
+      (Str8 join "\n"
+        (list (Str8 append "fatal: " head)
+              "Use '--' to separate paths from revisions, like this:"
+              "'git <command> [<revision>...] -- [<file>...]'"
+              ""))
+      128)))
+
+; A revision operand as the revisions it names: "A..B" its two ends, an
+; end left empty HEAD; () when it names none.
+(def %revs-of
+  (fn (_ gitdir a)
+    (let ((i (Str8 index-of ".." a)))
+      (if (or (null? i) (Str8 includes? "..." a))
+        (if (null? (git-rev-parse gitdir a)) () (list a))
+        (let ((l (Str8 sub 0 i a)) (r (Str8 sub (int+ i 2) (int- (Str8 length a) (int+ i 2)) a)))
+          (let ((l (if (str=? l "") "HEAD" l)) (r (if (str=? r "") "HEAD" r)))
+            (if (or (null? (git-rev-parse gitdir l)) (null? (git-rev-parse gitdir r))) () (list l r))))))))
+
+; The operands split as git splits them: (#t REVS PATHS), or (#f REFUSAL).
+; Before a "--" each must be a revision, after it each is a path.
+; Without one, revisions run to the first operand that is none, which
+; and every one after must be in the working tree; a revision that is
+; also a file there is ambiguous.
+(def %diff-operands
+  (fn (_ wd gitdir operands dashed)
+    (def here? (fn (_ p) (git-work-exists? (Str8 append wd "/" p))))
+    (if (not (eq? dashed #f))
+      (let ((before (List take (int- (List length operands) (List length dashed)) operands)))
+        (let ((bad (List find (fn (_ a) (null? (%revs-of gitdir a))) before)))
+          (if (null? bad) (list #t (List flat-map (fn (_ a) (%revs-of gitdir a)) before) dashed)
+            (list #f (git-fatal (Str8 append "bad revision '" bad "'"))))))
+      (let go ((as operands) (revs ()))
+        (match
+          ((null? as) (list #t (List reverse revs) ()))
+          ((not (null? (%revs-of gitdir (first as))))
+            (if (here? (first as))
+              (list #f (%ambiguous (Str8 append "ambiguous argument '" (first as) "': both revision and filename")))
+              (go (rest as) (List append (List reverse (%revs-of gitdir (first as))) revs))))
+          ((not (here? (first as)))
+            (list #f (%ambiguous (Str8 append "ambiguous argument '" (first as) "': unknown revision or path not in the working tree."))))
+          (#t
+            (let ((gone (List find (fn (_ p) (not (here? p))) (rest as))))
+              (if (null? gone) (list #t (List reverse revs) as)
+                (list #f (list (lit err)
+                           (Str8 append "fatal: " gone ": no such path in the working tree.\n"
+                                        "Use 'git <command> -- <path>...' to specify paths that do not exist locally.\n")
+                           128))))))))))
+
 (def git-diff
   (fn (_ wd gitdir ops)
     (def o (Opts parse git-diff-options ops))
     (def operands (Opts operands o))
+    ; what follows a "--", all of it paths; #f when there is none
+    (def dashed
+      (let seek ((os ops)) (match ((null? os) #f) ((str=? (first os) "--") (rest os)) (#t (seek (rest os))))))
+    (def split (if (null? gitdir) () (%diff-operands wd gitdir operands dashed)))
     (match
       ((Opts help? git-diff-options ops) (list (lit out) (Opts usage git-diff-options) 0))
       ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-diff-options)))
       ((null? gitdir) (git-no-repo))
+      ((not (first split)) (first (rest split)))
       (#t
-        ; the revisions among the operands: those that resolve; the rest are paths
-        (let ((revs (List filter (fn (_ a) (not (null? (git-rev-parse gitdir a)))) operands))
-              (paths (List filter (fn (_ a) (null? (git-rev-parse gitdir a))) operands)))
+        (let ((revs (first (rest split))) (paths (first (rest (rest split)))))
           (let ((bad (List find (fn (_ r) (null? (git-tree-of gitdir r))) revs)))
             (if (not (null? bad)) (git-fatal (Str8 append "bad revision '" bad "'"))
               (let ((sides
@@ -943,7 +998,7 @@
                 (let ((changes
                         (List filter
                           (fn (_ c) (or (null? paths)
-                                        (List any? (fn (_ p) (or (str=? p (first c)) (Str8 starts? (Str8 append p "/") (first c)))) paths)))
+                                        (List any? (fn (_ p) (or (str=? p ".") (str=? p (first c)) (Str8 starts? (Str8 append p "/") (first c)))) paths)))
                           (%changed wd gitdir (first sides) (first (rest sides)) (first (rest (rest sides)))))))
                   (list (lit out)
                     (if (null? changes) ""

@@ -81,6 +81,31 @@ fixture is fresh for this file and its state is cumulative.
 ---
     (#t #t #t (0 . ""))
 
+### A..B and its open ends; an operand neither revision nor path refused, in git's words
+
+Before a `--` each operand must be a revision; without one, revisions
+run to the first operand that is none, which and every one after must be
+in the working tree.  A branch named like a file there is ambiguous.
+
+```git
+(def %rf (git-fixture-refs))
+(def %rf-same? (fn (_ . ops) (equal? (apply git-text-in (pair %rf (pair "diff" ops))) (apply git-oracle-in (pair %rf (pair "diff" ops))))))
+(File write-all (Str8 append %rf "/f.txt") "changed\n")
+(File write-all (Str8 append %rf "/side") "a file\n")
+(write (list (List map (fn (_ ops) (apply %rf-same? ops))
+               (list (list "HEAD~1..HEAD") (list "HEAD~1..") (list "..HEAD~1") (list "--stat" "v1..main")
+                     (list "f.txt") (list ".") (list "HEAD" "f.txt") (list "HEAD~1" "--" "nope")
+                     (list "nope") (list "HEAD" "nope") (list "nope" "HEAD") (list "--cached" "nope")
+                     (list "HEAD~9") (list "nope..HEAD") (list "f.txt" "nope") (list "nope" "--")
+                     (list "side") (list "side" "--")))
+             (git-text-in %rf "diff" "nope")
+             (git-text-in %rf "diff" "f.txt" "HEAD")
+             (git-text-in %rf "diff" "nope" "--" "f.txt")
+             (git-text-in %rf "diff" "side")))
+```
+---
+    ((#t #t #t #t #t #t #t #t #t #t #t #t #t #t #t #t #t #t) (128 . "fatal: ambiguous argument 'nope': unknown revision or path not in the working tree.\nUse '--' to separate paths from revisions, like this:\n'git <command> [<revision>...] -- [<file>...]'\n") (128 . "fatal: HEAD: no such path in the working tree.\nUse 'git <command> -- <path>...' to specify paths that do not exist locally.\n") (128 . "fatal: bad revision 'nope'\n") (128 . "fatal: ambiguous argument 'side': both revision and filename\nUse '--' to separate paths from revisions, like this:\n'git <command> [<revision>...] -- [<file>...]'\n"))
+
 ### a deleted file
 
 ```git
