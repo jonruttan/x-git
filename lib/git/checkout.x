@@ -19,7 +19,7 @@
 (import git/opts git-opts-parse)
 (import x/sys/file File)
 (import git/objects git-object-read git-tree-entries git-write-file! git-read-file git-hash)
-(import git/commands git-fatal git-no-repo git-unknown-option)
+(import git/commands git-fatal git-no-repo git-unknown-option git-strip-slash)
 (import git/refs git-ref-read git-rev-parse git-tree-of git-commit-of git-headers git-previous-branch)
 (import git/index git-index-read git-status-lists)
 (import git/stage git-index-write! git-read-entries git-merge-state-clear!)
@@ -301,24 +301,71 @@
                         (%detached-note rev gitdir sha (and (not detach?) (not (null? current)))))
                       (%changes wd gitdir)))))))))))
 
-; Paths put back from the index; one the index lacks stops it all.
+; Does a path fall under one of the pathspecs: the path itself, a
+; directory holding it, or "."?
+(def %under?
+  (fn (_ path specs)
+    (List any? (fn (_ s) (or (str=? path s) (str=? s ".") (Str8 starts? (Str8 append s "/") path))) specs)))
+
+; A mode's text as the index keeps it, a number.
+(def %mode-number
+  (fn (_ mode) (match ((str=? mode "100755") 33261) ((str=? mode "120000") 40960) (#t 33188))))
+
+; And back: a mode number spelled as a tree spells it.
+(def %mode-text
+  (fn (_ n) (match ((= n 33261) "100755") ((= n 40960) "120000") ((= n 57344) "160000") (#t "100644"))))
+
+; Paths put back, as restore puts them: from source, a tree's name, or
+; the index when it is (); into the working directory, the index, or
+; both.  A path the source lacks goes from where it is put back.  A
+; pathspec that matches nothing either has stops it all, as does a path
+; in conflict when the working directory takes it from the index.
 (def %restore!
-  (fn (_ wd gitdir paths)
-    (def index (git-index-read gitdir))
-    (def missing (List find (fn (_ p) (null? (List find (fn (_ e) (str=? (first e) p)) index))) paths))
-    ; a path in conflict has no one blob to put back: each is told
-    (def unmerged (List filter (fn (_ p) (List any? (fn (_ u) (str=? u p)) (%unmerged-paths gitdir))) paths))
+  (fn (_ wd gitdir specs source staged? worktree?)
+    (def entries (git-read-entries gitdir))
+    ; the source's files, (PATH SHA MODE-TEXT) each
+    (def from
+      (if (null? source)
+        (List flat-map (fn (_ e) (if (= (first (rest (rest (rest (rest (rest e)))))) 0)
+                                   (list (list (first e) (first (rest (rest e))) (%mode-text (first (rest e))))) ()))
+          entries)
+        (%tree-files gitdir source "")))
+    (def known (List append (List map first entries) (List map first from)))
+    (def missing (List find (fn (_ s) (not (List any? (fn (_ p) (%under? p (list s))) known))) specs))
+    (def paths
+      (List sort (fn (_ a b) (Str8 <? a b))
+        ((fn (self ps acc) (if (null? ps) acc (self (rest ps) (if (List any? (fn (_ a) (str=? a (first ps))) acc) acc (pair (first ps) acc)))))
+         (List filter (fn (_ p) (%under? p specs)) known) ())))
+    (def unmerged
+      (if (null? source) (List filter (fn (_ p) (List any? (fn (_ u) (str=? u p)) (%unmerged-paths gitdir))) paths) ()))
+    (def in-from (fn (_ p) (List find (fn (_ x) (str=? (first x) p)) from)))
     (match
       ((not (null? missing))
         (%error (Str8 append "pathspec '" missing "' did not match any file(s) known to git")))
       ((not (null? unmerged))
         (list (lit err) (Str8 join "" (List map (fn (_ p) (Str8 append "error: path '" p "' is unmerged\n")) unmerged)) 1))
       (#t
-        (do (List for-each
-              (fn (_ p)
-                (let ((e (List find (fn (_ x) (str=? (first x) p)) index)))
-                  (%write-blob! wd gitdir p (first (rest (rest e))) (first (rest e)))))
-              paths)
+        (do (when worktree?
+              (List for-each
+                (fn (_ p)
+                  (let ((s (in-from p)))
+                    (if (null? s) (%remove! wd p) (%write-blob! wd gitdir p (first (rest s)) (first (rest (rest s)))))))
+                paths))
+            ; the index's entries for the paths, a conflict's stages and
+            ; all, replaced by the source's; stat taken from a file just
+            ; written, else left for git to look at again
+            (when staged?
+              (git-index-write! gitdir
+                (List append
+                  (List filter (fn (_ e) (not (List any? (fn (_ p) (str=? p (first e))) paths))) entries)
+                  (List flat-map
+                    (fn (_ p)
+                      (let ((s (in-from p)))
+                        (match
+                          ((null? s) ())
+                          (worktree? (list (%entry-of wd p (first (rest s)) (first (rest (rest s))))))
+                          (#t (list (list p (%mode-number (first (rest (rest s)))) (first (rest s)) 0 0))))))
+                    paths))))
             (list (lit out) "" 0))))))
 
 ; --- the commands ---
@@ -386,7 +433,7 @@
       ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-checkout-options)))
       ((null? gitdir) (git-no-repo))
       ((Opts on? o "-d") (%detach wd gitdir o operands "-b" #t))
-      (dashes? (%restore! wd gitdir operands))
+      (dashes? (%restore! wd gitdir operands () #f #t))
       ((not (null? (Opts value o "-b" ())))
         (%hush o (%switch! wd gitdir (Opts value o "-b" ()) #t (if (null? operands) () (first operands)))))
       ; no operand, or HEAD: nothing moves
@@ -394,7 +441,7 @@
       ((and (null? (git-ref-read gitdir (Str8 append "refs/heads/" (first operands))))
             (null? (git-commit-of gitdir (first operands)))
             (not (null? (List find (fn (_ e) (str=? (first e) (first operands))) (git-index-read gitdir)))))
-        (%restore! wd gitdir operands))
+        (%restore! wd gitdir operands () #f #t))
       (#t (%hush o (%switch! wd gitdir (first operands) #f ()))))))
 
 (def git-switch-options
@@ -430,18 +477,30 @@
       (#t (%hush o (%switch! wd gitdir (first operands) #f ()))))))
 
 (def git-restore-options
-  (Opts declare "git restore" "[-q] <path>..." ()
-    (list (Opts flag "-q" "--quiet" "Say nothing when it works"))))
+  (Opts declare "git restore" "[-s <tree>] [-S] [-W] [-q] <path>..." ()
+    (list
+      (Opts arg "-s" "--source" "<tree>" "Take the paths from this commit or tree: HEAD with --staged, else the index")
+      (Opts flag "-S" "--staged" "Put the paths back in the index")
+      (Opts flag "-W" "--worktree" "Put the paths back in the working directory, as with neither")
+      (Opts flag "-q" "--quiet" "Say nothing when it works"))))
 
 (def git-restore
   (fn (_ wd gitdir ops)
     (def o (git-opts-parse git-restore-options ops))
+    (def staged? (Opts on? o "-S"))
+    (def worktree? (or (Opts on? o "-W") (not staged?)))
+    ; the source: the one named, HEAD for the index, else the index
+    (def named (Opts value o "-s" ()))
+    (def rev (or named (if staged? "HEAD" ())))
+    (def source (if (or (null? rev) (null? gitdir)) () (git-tree-of gitdir rev)))
+    (def paths (List map (fn (_ p) (git-strip-slash p)) (Opts operands o)))
     (match
       ((Opts help? git-restore-options ops) (list (lit out) (Opts usage git-restore-options) 0))
       ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-restore-options)))
       ((null? gitdir) (git-no-repo))
-      ((null? (Opts operands o)) (list (lit err) "fatal: you must specify path(s) to restore\n" 128))
-      (#t (%restore! wd gitdir (Opts operands o))))))
+      ((null? paths) (list (lit err) "fatal: you must specify path(s) to restore\n" 128))
+      ((and (not (null? rev)) (null? source)) (git-fatal (Str8 append "could not resolve '" rev "'")))
+      (#t (%restore! wd gitdir paths source staged? worktree?)))))
 
 ; The working directory and index moved to a commit's tree from HEAD's,
 ; for merge's fast-forward;
