@@ -34,7 +34,7 @@
 (def %ref-file
   (fn (_ gitdir name)
     (def path (Str8 append gitdir "/" name))
-    (if (File exists? path) (Str8 trim (File read-all path)) ())))
+    (if (and (File exists? path) (not (eq? (File type path) (lit dir)))) (Str8 trim (File read-all path)) ())))
 
 ; packed-refs as ((NAME . SHA) ...), a tag's peeled line folded into its
 ; entry's cdr as (SHA . PEELED).
