@@ -38,6 +38,7 @@
 (import git/reset git-reset)
 (import git/revert git-revert)
 (import git/pick git-cherry-pick)
+(import git/describe git-describe)
 
 (import x/core/doors str-byte-len)
 
@@ -87,7 +88,8 @@
         (pair "reset" git-reset)
         (pair "revert" git-revert)
         (pair "cherry-pick" git-cherry-pick)
-        (pair "reflog" git-reflog)))
+        (pair "reflog" git-reflog)
+        (pair "describe" git-describe)))
 
 ; The command a name runs, or ().
 (def %command
