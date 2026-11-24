@@ -221,3 +221,43 @@ line above being indented more.
 ```
 ---
     (((0 . "diff --git a/moded b/moded\nold mode 100644\nnew mode 100755\n") #t #t #t) (#t #t #t) #t ())
+
+## names, numbers and raw lines
+
+A repository of its own: a binary file changed and one deleted, a file
+changed, one deleted, one made executable, a link made a file, a file
+staged and changed again, and one new and staged.  Each form is asked of
+the working directory, of the index (`--cached`), of HEAD, and of two
+commits.
+
+### --name-only, --name-status, --numstat, --raw, and --stat beside them, as git gives them
+
+```git
+(def %fm (let ((t (File temp "/tmp/x-git-fm-"))) (do (File close (first t)) (File unlink (rest t)) (File mkdir (rest t)) (rest t))))
+(def %fm-sh
+  (fn (_ script)
+    (Proc capture (list "/bin/sh" "-c"
+      (Str8 append "export GIT_AUTHOR_NAME=A GIT_AUTHOR_EMAIL=a@b.c GIT_COMMITTER_NAME=C GIT_COMMITTER_EMAIL=c@d.e; cd \"$0\" && " script) %fm))))
+(%fm-sh (Str8 append "git init -q -b main && printf 'a\\nb\\nc\\n' > f && echo c > g && mkdir d && echo x > d/h && printf 'one\\ntwo\\n' > m"
+          " && ln -s f l && printf 'a\\0b' > bin && printf 'x\\0' > gone && git add . && git commit -qm one"
+          " && echo z >> f && git commit -qam two"
+          " && echo zz >> f && rm g gone && chmod +x m && printf 'a\\0cde' > bin && rm l && echo l > l"
+          " && echo y >> d/h && git add d/h && echo w >> d/h && echo n > n && git add n"))
+(def %fm-same? (fn (_ . ops) (equal? (apply git-text-in (pair %fm (pair "diff" ops))) (apply git-oracle-in (pair %fm (pair "diff" ops))))))
+(write (list
+  (List map
+    (fn (_ form)
+      (List map (fn (_ side) (apply %fm-same? (List append side form)))
+        (list () (list "--cached") (list "HEAD") (list "HEAD~1" "HEAD"))))
+    (list (list "--name-only") (list "--name-status") (list "--numstat") (list "--raw") (list "--stat")
+          (list "--raw" "--numstat" "--stat") (list "--name-only" "--stat") (list "--name-status" "--raw")
+          ()))
+  (%fm-same? "--raw" "--" "f" "m")
+  (git-text-in %fm "diff" "--name-status")
+  (git-text-in %fm "diff" "--numstat" "--" "bin" "f")
+  (git-text-in %fm "diff" "--raw" "HEAD" "--" "bin" "d" "n")
+  (git-text-in %fm "diff" "--stat" "--" "bin" "f")
+  (git-text-in %fm "diff" "--name-only" "--name-status")))
+```
+---
+    (((#t #t #t #t) (#t #t #t #t) (#t #t #t #t) (#t #t #t #t) (#t #t #t #t) (#t #t #t #t) (#t #t #t #t) (#t #t #t #t) (#t #t #t #t)) #t (0 . "M\tbin\nM\td/h\nM\tf\nD\tg\nD\tgone\nT\tl\nM\tm\n") (0 . "-\t-\tbin\n1\t0\tf\n") (0 . ":100644 100644 20b5be9 0000000 M\tbin\n:100644 100644 587be6b 0000000 M\td/h\n:000000 100644 0000000 8ba3a16 A\tn\n") (0 . " bin | Bin 3 -> 5 bytes\n f   |   1 +\n 2 files changed, 1 insertion(+)\n") (128 . "fatal: options '--name-only', '--name-status', '--check', and '-s' cannot be used together\n"))
