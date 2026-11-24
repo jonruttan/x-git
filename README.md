@@ -113,12 +113,17 @@ The detail of each command:
   a cherry-pick, a cherry-pick by the picked commit's author
 - status tells of a revert or a cherry-pick in progress, a sequence of
   them too, as git does
-- `diff [--cached] [--stat] [<revision> [<revision>] | <A>..<B>] [--] [<path>...]`:
+- `diff [--cached] [--stat] [--numstat] [--raw] [--name-only | --name-status] [<revision> [<revision>] | <A>..<B>] [--] [<path>...]`:
   git's unified form, hunks with three lines of context headed by the
   line git's default takes for a function; the edit script as git's
   xdiff makes it (Myers, its cut-offs for an expensive comparison, and
   its sliding of each change, by the indent heuristic where nothing else
-  decides); `--stat` fitted to 80 columns (or `COLUMNS`) as git fits it;
+  decides); `--stat` fitted to 80 columns (or `COLUMNS`) as git fits it,
+  a binary file its `Bin OLD -> NEW bytes` row; `--numstat` (a binary
+  file `-` and `-`) and `--raw` (a working file named by zeros unless it
+  is the index's) printed before it, `--name-only` or `--name-status` in
+  place of them all; a binary file, a NUL in its first 8000 bytes,
+  `Binary files ... differ` in the patch;
   a mode changed alone, its `old mode` and `new mode` lines and nothing
   more; a path turned from a link to a file or back, a deletion and a
   creation, as git draws a typechange; operands placed as git places

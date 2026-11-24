@@ -603,15 +603,19 @@
 
 ; --- one file ---
 
-; Does a text look binary to git: a NUL in its first 8000 bytes.
-(def %binary?
-  (fn (_ s)
-    (def n (Str8 length s))
+; Do n bytes from start of region r look binary to git: a NUL among the
+; first 8000.  Read as bytes, for a text's own length stops at a NUL.
+(def %nul-in?
+  (fn (_ r start n)
     (def lim (if (> n 8000) 8000 n))
-    ((fn (self i) (if (>= i lim) #f (if (= (Char ->int (Str8 ref i s)) 0) #t (self (int+ i 1))))) 0)))
+    (def p (str->ptr r))
+    ((fn (self i) (if (>= i lim) #f (if (= (ptr-ref p (int+ start i) 1) 0) #t (self (int+ i 1))))) 0)))
 
-; A side of a file in a diff: (SHA MODE TEXT), or () for no file.
+; A side of a file in a diff: (SHA MODE TEXT BINARY? SIZE), or () for no
+; file.
 (def %side-text (fn (_ side) (first (rest (rest side)))))
+(def %binary? (fn (_ side) (if (null? side) #f (first (rest (rest (rest side)))))))
+(def %side-size (fn (_ side) (if (null? side) 0 (List ref 4 side))))
 
 ; One file's diff as git prints it.  A path that turned from a link to a
 ; file or back -- a typechange -- is two: the old one deleted, the new one
@@ -649,7 +653,7 @@
       ; the mode alone changed: its two lines are the whole of it
       ((and (not (null? old)) (not (null? new)) (str=? (first old) (first new)))
         (Str8 append header "old mode " (first (rest old)) "\nnew mode " (first (rest new)) "\n"))
-      ((or (%binary? a-text) (%binary? b-text))
+      ((or (%binary? old) (%binary? new))
       (Str8 append header modes "Binary files " (if (null? old) "/dev/null" a-name)
                    " and " (if (null? new) "/dev/null" b-name) " differ\n"))
       (#t
@@ -694,16 +698,21 @@
                           (git-work-mode full (first (rest e)) kept?)))))))
       (git-index-read gitdir))))
 
-; A side's entry for path as (SHA MODE TEXT), its text from the blob or
-; the working file; () when the side lacks it.
+; A side's entry for path as (SHA MODE TEXT BINARY? SIZE), its text from
+; the blob or the working file; () when the side lacks it.
 (def %with-text
   (fn (_ wd gitdir side path work?)
     (def e (List find (fn (_ x) (str=? (first x) path)) side))
     (if (null? e) ()
-      (list (first (rest e)) (first (rest (rest e)))
-        (if work?
-          (let ((f (git-work-read (Str8 append wd "/" path)))) (Str8 sub 0 (rest f) (first f)))
-          (let ((o (git-object-read gitdir (first (rest e))))) (if (null? o) "" (git-object-text o))))))))
+      (if work?
+        (let ((f (git-work-read (Str8 append wd "/" path))))
+          (list (first (rest e)) (first (rest (rest e))) (Str8 sub 0 (rest f) (first f))
+                (%nul-in? (first f) 0 (rest f)) (rest f)))
+        (let ((o (git-object-read gitdir (first (rest e)))))
+          (if (null? o) (list (first (rest e)) (first (rest (rest e))) "" #f 0)
+            (list (first (rest e)) (first (rest (rest e))) (git-object-text o)
+                  (%nul-in? (first (rest (rest o))) (first (rest (rest (rest o)))) (first (rest o)))
+                  (first (rest o)))))))))
 
 ; The paths that differ between two sides, in order, with their entries:
 ; ((PATH OLD NEW) ...).
@@ -747,11 +756,15 @@
   (fn (_ changes)
     (List map
       (fn (_ c)
-        (let ((old (first (rest c))) (new (first (rest (rest c)))))
-          (let ((la (%lines (if (null? old) "" (%side-text old))))
-                (lb (%lines (if (null? new) "" (%side-text new)))))
-            (let ((k (%counts (%text-script la lb))))
-              (list (if (null? (rest (rest (rest c)))) (git-quote-path (first c)) (List ref 3 c)) (first k) (rest k))))))
+        (let ((old (first (rest c))) (new (first (rest (rest c))))
+              (name (if (null? (rest (rest (rest c)))) (git-quote-path (first c)) (List ref 3 c))))
+          ; a binary file counts no lines; its sizes go along, (OLD . NEW)
+          (if (or (%binary? old) (%binary? new))
+            (list name 0 0 (pair (%side-size old) (%side-size new)))
+            (let ((la (%lines (if (null? old) "" (%side-text old))))
+                  (lb (%lines (if (null? new) "" (%side-text new)))))
+              (let ((k (%counts (%text-script la lb))))
+                (list name (first k) (rest k)))))))
       changes)))
 
 ; The columns --stat fits in, as git's term_columns finds them: COLUMNS
@@ -783,7 +796,11 @@
     (def total (fn (_ c) (int+ (first (rest c)) (first (rest (rest c))))))
     (def max-len (List fold (fn (_ w c) (if (> (Str8 length (first c)) w) (Str8 length (first c)) w)) 0 counts))
     (def max-change (List fold (fn (_ m c) (if (> (total c) m) (total c) m)) 0 counts))
-    (def number-width (Str8 length (Str8 str max-change)))
+    (def bin? (fn (_ c) (not (null? (rest (rest (rest c)))))))
+    ; as wide as the largest count, or as "Bin" when a file is binary
+    (def number-width
+      (let ((w (Str8 length (Str8 str max-change))))
+        (if (and (< w 3) (List any? bin? counts)) 3 w)))
     (def width (let ((w (%stat-columns))) (if (< w (int+ 22 number-width)) (int+ 22 number-width) w)))
     (def fixed (int+ number-width 6))
     (def fits? (<= (int+ (int+ max-len fixed) max-change) width))
@@ -816,12 +833,18 @@
         (List map
           (fn (_ c)
             (let ((b (bar (first (rest c)) (first (rest (rest c))))))
+              (if (bin? c)
+                (let ((sizes (List ref 3 c)))
+                  (Str8 append " " (name-cell (first c)) " | " (Str8 pad-left number-width #\space "Bin")
+                    (if (and (= (first sizes) 0) (= (rest sizes) 0)) ""
+                      (Str8 append " " (Str8 str (first sizes)) " -> " (Str8 str (rest sizes)) " bytes"))
+                    "\n"))
               (Str8 append " " (name-cell (first c)) " | "
                 (Str8 pad-left number-width #\space (Str8 str (total c)))
                 ; a row with no lines changed has no bar
                 (if (= (total c) 0) ""
                   (Str8 append " " (Str8 repeat (first b) "+") (Str8 repeat (rest b) "-")))
-                "\n")))
+                "\n"))))
           counts))
       (%summary-line (List length counts) ins del))))
 
@@ -909,10 +932,67 @@
 ; --- diff ---
 
 (def git-diff-options
-  (Opts declare "git diff" "[--cached] [--stat] [<revision> [<revision>]] [--] [<path>...]" ()
+  (Opts declare "git diff" "[--cached] [--stat] [--numstat] [--raw] [--name-only | --name-status] [<revision> [<revision>]] [--] [<path>...]" ()
     (list
       (Opts flag "--cached" "--staged" "The index against HEAD, not the working directory against the index")
-      (Opts flag "--stat" "A row a file and the summary, not the changes"))))
+      (Opts flag "--stat" "A row a file and the summary, not the changes")
+      (Opts flag "--numstat" "Lines added and removed a file, as numbers, and its name")
+      (Opts flag "--raw" "A line a file: both modes, both blobs, the change's letter, the name")
+      (Opts flag "--name-only" "Only the names of the files changed")
+      (Opts flag "--name-status" "The names of the files changed, each after its change's letter"))))
+
+; A change's letter: A added, D deleted, T a link become a file or back,
+; else M.
+(def %change-letter
+  (fn (_ old new)
+    (match
+      ((null? old) "A")
+      ((null? new) "D")
+      ((not (eq? (str=? (first (rest old)) "120000") (str=? (first (rest new)) "120000"))) "T")
+      (#t "M"))))
+
+; The changes in each form asked for: --name-only or --name-status alone,
+; else --raw, --numstat and --stat in that order, else the patch.  A
+; working-directory side is named by its blob only when it is the
+; index's, as git names it; else by zeros.
+(def %diff-forms
+  (fn (_ gitdir o changes work?)
+    (def index (if work? (git-index-read gitdir) ()))
+    (def zeros "0000000")
+    (def short (fn (_ sha) (Str8 sub 0 7 sha)))
+    (def raw-line
+      (fn (_ c)
+        (let ((old (first (rest c))) (new (first (rest (rest c)))))
+          (let ((e (List find (fn (_ x) (str=? (first x) (first c))) index)))
+            (Str8 append ":" (if (null? old) "000000" (first (rest old))) " " (if (null? new) "000000" (first (rest new)))
+              " " (if (null? old) zeros (short (first old)))
+              " " (match
+                    ((null? new) zeros)
+                    ((not work?) (short (first new)))
+                    ((and (not (null? e)) (str=? (first (rest (rest e))) (first new)) (str=? (first (rest e)) (first (rest new))))
+                      (short (first new)))
+                    (#t zeros))
+              " " (%change-letter old new) "\t" (git-quote-path (first c)) "\n")))))
+    (def numstat-line
+      (fn (_ c k)
+        (let ((old (first (rest c))) (new (first (rest (rest c)))))
+          (if (or (%binary? old) (%binary? new))
+            (Str8 append "-\t-\t" (first k) "\n")
+            (Str8 append (Str8 str (first (rest k))) "\t" (Str8 str (first (rest (rest k)))) "\t" (first k) "\n")))))
+    (def each (fn (_ f) (Str8 join "" (List map f changes))))
+    (match
+      ((null? changes) "")
+      ((Opts on? o "--name-only") (each (fn (_ c) (Str8 append (git-quote-path (first c)) "\n"))))
+      ((Opts on? o "--name-status")
+        (each (fn (_ c) (Str8 append (%change-letter (first (rest c)) (first (rest (rest c)))) "\t" (git-quote-path (first c)) "\n"))))
+      ((or (Opts on? o "--raw") (Opts on? o "--numstat") (Opts on? o "--stat"))
+        (Str8 append
+          (if (Opts on? o "--raw") (each raw-line) "")
+          (if (Opts on? o "--numstat")
+            (Str8 join "" (List map (fn (_ c) (numstat-line c (first (%change-counts (list c))))) changes))
+            "")
+          (if (Opts on? o "--stat") (%stat-text changes) "")))
+      (#t (each (fn (_ c) (%file-diff (first c) (first (rest c)) (first (rest (rest c))))))))))
 
 ; git's refusal of an operand it cannot place, its hint lines after.
 (def %ambiguous
@@ -979,6 +1059,8 @@
       ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-diff-options)))
       ((null? gitdir) (git-no-repo))
       ((not (first split)) (first (rest split)))
+      ((and (Opts on? o "--name-only") (Opts on? o "--name-status"))
+        (git-fatal "options '--name-only', '--name-status', '--check', and '-s' cannot be used together"))
       (#t
         (let ((revs (first (rest split))) (paths (first (rest (rest split)))))
           (let ((bad (List find (fn (_ r) (null? (git-tree-of gitdir r))) revs)))
@@ -1000,10 +1082,6 @@
                           (fn (_ c) (or (null? paths)
                                         (List any? (fn (_ p) (or (str=? p ".") (str=? p (first c)) (Str8 starts? (Str8 append p "/") (first c)))) paths)))
                           (%changed wd gitdir (first sides) (first (rest sides)) (first (rest (rest sides)))))))
-                  (list (lit out)
-                    (if (null? changes) ""
-                      (if (Opts on? o "--stat") (%stat-text changes)
-                        (Str8 join "" (List map (fn (_ c) (%file-diff (first c) (first (rest c)) (first (rest (rest c))))) changes))))
-                    0))))))))))
+                  (list (lit out) (%diff-forms gitdir o changes (first (rest (rest sides)))) 0))))))))))
 
 (provide git/diff git-diff git-diff-options git-edit-script git-hunks git-commit-summary git-tree-diffstat git-tree-patch)
