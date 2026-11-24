@@ -69,6 +69,9 @@
                 (do (when (> version 3)
                       (Err raise (lit value) (Str8 append "git: index version " (Str8 str version) " is not read") ()))
                     ((fn (self i k acc)
+                       ; x collects only when asked: an entry's names and
+                       ; numbers leave some thousand objects behind
+                       (when (= (& k 63) 63) (Heap collect))
                        (if (>= k count) (List reverse acc)
                          (let ((flags (%u16 p (int+ i 60))))
                            (let ((extended? (and (= version 3) (not (= (& flags 16384) 0)))))
@@ -252,9 +255,22 @@
   (fn (_ old-mode new-mode)
     (if (eq? (str=? old-mode "120000") (str=? new-mode "120000")) "M" "T")))
 
-(def git-status-lists
-  (fn (_ wd gitdir . ignored-mode)
-    (def mode (if (null? ignored-mode) (lit no) (first ignored-mode)))
+; A tracked file read for its hash.  x collects only when asked, and a
+; file read and hashed leaves its bytes and the digest's working behind:
+; collected past 256 KB of them, so a tree of any size reads in bounded
+; memory.
+(def %read-bytes 0)
+(def %read-churned!
+  (fn (_ full)
+    (def f (git-work-read full))
+    (set! %read-bytes (int+ %read-bytes (rest f)))
+    (when (>= %read-bytes 262144) (do (Heap collect) (set! %read-bytes 0)))
+    f))
+
+; The tracked paths' changes: (STAGED UNSTAGED UNMERGED ALL), ALL the
+; index read.  No walk of the untracked: what describe --dirty asks.
+(def git-tracked-changes
+  (fn (_ wd gitdir)
     (def all (git-index-read gitdir))
     (def unmerged (%unmerged all))
     ; a path in conflict is shown as unmerged and nowhere else
@@ -281,18 +297,23 @@
         (fn (_ e)
           (let ((full (Str8 append wd "/" (first e))))
             (if (not (git-work-exists? full)) (list (pair "D" (first e)))
-              (let ((f (git-work-read full)))
+              (let ((f (%read-churned! full)))
                 (if (and (str=? (git-hash "blob" (first f) 0 (rest f)) (first (rest (rest e))))
                          (str=? (git-work-mode full (first (rest e)) modes?) (first (rest e))))
                   ()
                   (list (pair (%change-code (first (rest e)) (git-work-mode full (first (rest e)) modes?)) (first e))))))))
         index))
-    (def others (%walk wd (List map (fn (_ e) (first e)) all) (git-ignorer wd gitdir) mode))
     (list (List sort (fn (_ a b) (Str8 <? (rest a) (rest b))) staged)
           (List sort (fn (_ a b) (Str8 <? (rest a) (rest b))) unstaged)
-          (first others)
           unmerged
-          (rest others))))
+          all)))
+
+(def git-status-lists
+  (fn (_ wd gitdir . ignored-mode)
+    (def mode (if (null? ignored-mode) (lit no) (first ignored-mode)))
+    (def tracked (git-tracked-changes wd gitdir))
+    (def others (%walk wd (List map (fn (_ e) (first e)) (List ref 3 tracked)) (git-ignorer wd gitdir) mode))
+    (list (first tracked) (first (rest tracked)) (first others) (List ref 2 tracked) (rest others))))
 
 (def %branch-line
   (fn (_ gitdir)
@@ -537,5 +558,5 @@
 (def git-untracked-with
   (fn (_ wd tracked ignored?) (%untracked wd tracked ignored?)))
 
-(provide git/index git-index-read git-status-lists git-status git-ls-files git-tree-files git-untracked
+(provide git/index git-index-read git-tracked-changes git-status-lists git-status git-ls-files git-tree-files git-untracked
   git-untracked-with git-long-status git-modes-kept? git-work-mode)

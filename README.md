@@ -24,13 +24,13 @@ the kernel and x are installed (x-os).
 |---|---|
 | Repositories | `init`, `clone`, `config` |
 | Changes | `status`, `add`, `rm`, `mv`, `commit`, `restore`, `reset`, `clean` |
-| History | `log`, `show`, `diff`, `reflog` |
+| History | `log`, `show`, `diff`, `reflog`, `describe` |
 | Branches and tags | `branch`, `tag`, `checkout`, `switch`, `merge`, `revert`, `cherry-pick` |
 | Remotes | `fetch`, `pull`, `push`, `ls-remote`, over a path, `file://`, ssh and smart http(s) |
 | Plumbing | `cat-file`, `hash-object`, `rev-parse`, `ls-tree`, `ls-files`, `check-ignore` |
 | Services | `upload-pack`, `receive-pack` |
 
-Not served: `rebase`, `stash`, `blame`, `bisect`, `grep`, `describe`,
+Not served: `rebase`, `stash`, `blame`, `bisect`, `grep`,
 `remote`, `submodule`, `worktree`, `gc` and `repack`, `apply`, `am` and
 `format-patch`, `archive`, `notes`, and annotated or signed tags (`tag`
 makes lightweight ones).  Repositories are SHA-1; the index is written at
@@ -294,6 +294,7 @@ DIR holds this tree and x-ssh, each found by the name its bundle.xon gives.
     lib/git/opts.x        a command's options read as git reads them
     lib/git/commands.x    cat-file, hash-object, rev-parse
     lib/git/history.x     ls-tree, log, show, reflog
+    lib/git/describe.x    describe: a commit named from its nearest tag
     lib/git/index.x       the index read; ls-files, status
     lib/git/stage.x       the index written; add, commit
     lib/git/ident.x       who and when, for commits and the reflog
