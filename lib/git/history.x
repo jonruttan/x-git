@@ -121,12 +121,14 @@
 ; --- log ---
 
 (def git-log-options
-  (Opts declare "git log" "[--oneline | --format=<format>] [-<number> | -n <number>] [<revision>]" ()
+  (Opts declare "git log" "[-p] [--stat] [--oneline | --format=<format>] [-<number> | -n <number>] [<revision>]" ()
     (list
       (Opts flag "--oneline" "One line a commit: the abbreviated name and the subject")
       (Opts arg "--format" "<format>" "A commit as the format says")
       (Opts arg "--pretty" "<format>" "oneline, short, medium, full, fuller, format:<format> or tformat:<format>")
-      (Opts arg "-n" "--max-count" "<number>" "Show at most <number> commits; -<number> the same"))))
+      (Opts arg "-n" "--max-count" "<number>" "Show at most <number> commits; -<number> the same")
+      (Opts flag "-p" "--patch" "Each commit's change against its first parent; a merge's not drawn")
+      (Opts flag "--stat" "Each commit's change as a row a file and the summary"))))
 
 ; git's -<number>, spelled as -n <number>, up to a --.
 (def %counts
@@ -278,6 +280,8 @@
     ; the last count given
     (def limit (let ((vs (Opts values o "-n"))) (if (null? vs) () (%str->number (List last vs) 10))))
     (def pretty (%pretty o))
+    (def patch? (Opts on? o "-p"))
+    (def stat? (Opts on? o "--stat"))
     (match
       ((Opts help? git-log-options ops) (list (lit out) (Opts usage git-log-options) 0))
       ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-log-options)))
@@ -300,15 +304,16 @@
               (#t
                 (let ((commits (%walk gitdir (list sha) () limit)))
                   (list (lit out)
-                    (Str8 join (if (%apart? pretty) "\n" "") (List map (fn (_ c) (%pretty-text gitdir c pretty)) commits))
+                    (Str8 join (if (%apart? pretty) "\n" "") (List map (fn (_ c) (%show-commit gitdir c pretty patch? stat? #f)) commits))
                     0))))))))))
 
 ; --- show ---
 
 (def git-show-options
-  (Opts declare "git show" "[-s] [--stat] [--oneline | --format=<format>] [<object>...]" ()
+  (Opts declare "git show" "[-s] [-p] [--stat] [--oneline | --format=<format>] [<object>...]" ()
     (list
       (Opts flag "-s" "--no-patch" "The commit alone, no change")
+      (Opts flag "-p" "--patch" "The patch, as without --stat; with it, both")
       (Opts flag "--stat" "The change as a row a file and the summary")
       (Opts flag "--oneline" "One line a commit: the abbreviated name and the subject")
       (Opts arg "--format" "<format>" "A commit as the format says")
@@ -422,17 +427,28 @@
 ; change against its first parent -- the patch, or the --stat -- after
 ; the separator git puts there.  A merge's patch is its combined diff,
 ; which is not drawn: the header and the blank line git ends it with.
+; log draws no change for a merge at all (merges? #f).  The --stat and
+; the patch both: `---` (none in a form of one line), the stat, a blank
+; line, the patch.
 (def %show-commit
-  (fn (_ gitdir sha pretty patch? stat?)
+  (fn (_ gitdir sha pretty patch? stat? merges?)
     (def kind (first pretty))
     (def parents (List map rest (List filter (fn (_ kv) (str=? (first kv) "parent")) (git-headers gitdir sha))))
     (def head (%pretty-text gitdir sha pretty))
     (def gap (if (or (eq? kind (lit oneline)) (eq? kind (lit line))) "" "\n"))
+    (def old (if (null? parents) () (git-tree-of gitdir (first parents))))
+    (def new (git-tree-of gitdir sha))
     (match
       ((not (or patch? stat?)) head)
+      ((and (not merges?) (< 1 (List length parents))) head)
       ((and (not stat?) (< 1 (List length parents))) (Str8 append head gap))
+      ; both, of a commit not a merge (a merge's patch is not drawn)
+      ((and patch? stat? (< (List length parents) 2))
+        (let ((st (git-tree-patch gitdir old new #t)))
+          (if (= (Str8 length st) 0) head
+            (Str8 append head (if (str=? gap "") "" "---\n") st "\n" (git-tree-patch gitdir old new #f)))))
       (#t
-        (let ((change (git-tree-patch gitdir (if (null? parents) () (git-tree-of gitdir (first parents))) (git-tree-of gitdir sha) stat?)))
+        (let ((change (git-tree-patch gitdir old new stat?)))
           (if (= (Str8 length change) 0) head (Str8 append head gap change)))))))
 
 ; A tag as show prints it: its name, its tagger and date, its message
@@ -461,7 +477,7 @@
     (def o (Opts parse git-show-options ops))
     (def names (if (null? (Opts operands o)) (list "HEAD") (Opts operands o)))
     (def stat? (and (Opts on? o "--stat") (not (Opts on? o "-s"))))
-    (def patch? (not (or (Opts on? o "-s") (Opts on? o "--stat"))))
+    (def patch? (and (not (Opts on? o "-s")) (or (Opts on? o "-p") (not (Opts on? o "--stat")))))
     (def pretty (%pretty o))
     (match
       ((Opts help? git-show-options ops) (list (lit out) (Opts usage git-show-options) 0))
@@ -497,12 +513,12 @@
                          (sep (if (and after-commit? (%apart? pretty)) "\n" "")))
                      (match
                        ((str=? type "commit")
-                         (self (rest ns) (pair (Str8 append sep (%show-commit gitdir sha pretty patch? stat?)) acc) #t))
+                         (self (rest ns) (pair (Str8 append sep (%show-commit gitdir sha pretty patch? stat? #t)) acc) #t))
                        ((str=? type "tag")
                          (let ((target (git-commit-of gitdir sha)))
                            (self (rest ns)
                                  (pair (Str8 append sep (%show-tag gitdir sha)
-                                         (if (null? target) "" (%show-commit gitdir target pretty patch? stat?)))
+                                         (if (null? target) "" (%show-commit gitdir target pretty patch? stat? #t)))
                                        acc)
                                  (not (null? target)))))
                        ((str=? type "tree") (self (rest ns) (pair (%show-tree gitdir sha (first (first ns))) acc) #f))

@@ -76,12 +76,14 @@ The detail of each command:
   as git prints one
 - `rev-parse <revision>...`
 - `ls-tree [-r] [-t] [-l] [--name-only] <tree-ish> [<path>...]`
-- `log [--oneline | --pretty=<format> | --format=<format>] [-<number> |
+- `log [-p] [--stat] [--oneline | --pretty=<format> | --format=<format>] [-<number> |
   -n <number>] [<revision>]`, newest committer time first, in show's
   forms, a user's format ending each commit (`--format`, `tformat:`) or
-  set between them (`format:`)
-- `show [-s] [--stat] [--oneline | --pretty=<format> | --format=<format>]
-  [<object>...]`: a commit with its patch or --stat against its first
+  set between them (`format:`); with `-p` or `--stat` each commit's change
+  as show draws it, a merge's not drawn
+- `show [-s] [-p] [--stat] [--oneline | --pretty=<format> | --format=<format>]
+  [<object>...]`: a commit with its patch or --stat (both with `-p --stat`:
+  `---`, the stat, a blank line, the patch) against its first
   parent, an annotated tag then what it tags, a tree's entries, a blob's
   text; git's forms (oneline, short, medium, full, fuller) and its
   placeholders for a format of one's own (%H %h %T %t %P %p %s %b %B %an

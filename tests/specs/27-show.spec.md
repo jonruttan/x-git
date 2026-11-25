@@ -93,6 +93,34 @@ with is compared.
 ---
     ()
 
+### log -p and --stat, and both with show: each commit's change, a merge's not drawn by log
+
+The root commit's change is against nothing; with both, `---` (none in a
+form of one line), the stat, a blank line, then the patch.
+
+```git
+(write
+  (%sw-steps
+    (list (list "log" "-p")
+          (list "log" "--patch" "-2")
+          (list "log" "--stat")
+          (list "log" "-p" "--stat")
+          (list "log" "--oneline" "-p")
+          (list "log" "--oneline" "-p" "--stat")
+          (list "log" "--pretty=oneline" "--stat")
+          (list "log" "--pretty=short" "-p")
+          (list "log" "--pretty=fuller" "--stat" "-p")
+          (list "log" "--format=%s" "-p")
+          (list "log" "--format=tformat:%h %s" "-p" "--stat")
+          (list "log" "-p" "-n" "1" "side")
+          (list "show" "-p" "--stat" "HEAD~1")
+          (list "show" "--stat" "-p" "HEAD")
+          (list "show" "--oneline" "-p" "--stat" "HEAD~1")
+          (list "show" "-p" "HEAD~2"))))
+```
+---
+    ()
+
 ## refusals
 
 ### no such revision, no such path, no such format
