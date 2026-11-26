@@ -977,13 +977,17 @@
       (Str8 append (%stat-text (List map (fn (_ r) (first (rest r))) rows))
         (Str8 join "" (List map (fn (_ r) (first (rest (rest r)))) rows))))))
 
+; One tree's changes against another, renames found.  A tree of () is the
+; empty tree, a root commit's parent.
+(def %tree-changes
+  (fn (_ gitdir old-tree new-tree)
+    (%renamed "" gitdir (%changed "" gitdir (%tree-side gitdir old-tree) (%tree-side gitdir new-tree) #f) #f)))
 
 ; One tree against another as show prints a commit's change: the patch,
 ; or with stat? the --stat rows and summary; "" when they are the same.
-; A tree of () is the empty tree, a root commit's parent.
 (def git-tree-patch
   (fn (_ gitdir old-tree new-tree stat?)
-    (def changes (%renamed "" gitdir (%changed "" gitdir (%tree-side gitdir old-tree) (%tree-side gitdir new-tree) #f) #f))
+    (def changes (%tree-changes gitdir old-tree new-tree))
     (match
       ((null? changes) "")
       (stat? (%stat-text changes))
@@ -1160,4 +1164,10 @@
                   (let ((changes (%renamed wd gitdir changes (first (rest (rest sides))))))
                     (list (lit out) (%diff-forms gitdir o changes (first (rest (rest sides)))) 0)))))))))))
 
-(provide git/diff git-diff git-diff-options git-edit-script git-hunks git-commit-summary git-tree-diffstat git-tree-patch)
+; One tree against another as --raw draws it, a line a file; "" when
+; they are the same.
+(def git-tree-raw
+  (fn (_ gitdir old-tree new-tree)
+    (%diff-forms gitdir (Opts parse git-diff-options (list "--raw")) (%tree-changes gitdir old-tree new-tree) #f)))
+
+(provide git/diff git-diff git-diff-options git-edit-script git-hunks git-commit-summary git-tree-diffstat git-tree-patch git-tree-raw)

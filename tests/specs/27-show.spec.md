@@ -121,6 +121,37 @@ form of one line), the stat, a blank line, then the patch.
 ---
     ()
 
+### --raw, and the empty format: the change alone, no separator before it
+
+The raw lines first, then the stat, then a blank line and the patch; a
+merge's raw lines, of its combined diff, not drawn.  `--format=` (and
+`tformat:` and `format:` with nothing after) draws no header, and no
+blank line or `---` after it.
+
+```git
+(write
+  (%sw-steps
+    (list (list "show" "--raw" "HEAD~1")
+          (list "show" "--raw" "-p" "HEAD~1")
+          (list "show" "--raw" "--stat" "-p" "HEAD~1")
+          (list "show" "--oneline" "--raw" "--stat" "-p" "HEAD~1")
+          (list "show" "--raw" "HEAD")
+          (list "show" "--raw" "--stat" "HEAD")
+          (list "show" "--raw" "-s" "HEAD~1")
+          (list "log" "--raw")
+          (list "log" "--oneline" "--raw" "--stat")
+          (list "log" "--format=%s" "--raw" "-p" "-3")
+          (list "show" "--format=" "HEAD~1")
+          (list "show" "--format=" "--stat" "HEAD" "HEAD~1")
+          (list "show" "--format=" "-s" "HEAD~2" "HEAD~1")
+          (list "show" "--pretty=format:" "HEAD~2" "HEAD~1")
+          (list "log" "--format=" "--stat")
+          (list "log" "--pretty=tformat:" "--raw")
+          (list "log" "--format=format:" "-p" "--stat"))))
+```
+---
+    ()
+
 ## refusals
 
 ### no such revision, no such path, no such format
