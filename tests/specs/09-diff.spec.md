@@ -1,4 +1,5 @@
 # @weight 2
+# @timeout-scale 2
 
 diff, against git itself: the working directory against the index, the
 index against HEAD, revisions against each other, --stat.  The loose
@@ -273,7 +274,7 @@ against HEAD, of the index, and of the two commits; log and show draw
 them too.  Then x-git and git each commit the staged renames, in copies
 of the repository of their own.
 
-### a file deleted and one added that is the same or alike, one change: as git shows it in each form, in log and show, and in commit's summary
+### a file deleted and one added that is the same or alike, one change: as git shows it in each form, against the working directory and HEAD
 
 ```git
 (Sys setenv "GIT_AUTHOR_NAME" "A")
@@ -291,32 +292,43 @@ of the repository of their own.
     " && cd .. && cp -R r x && cp -R r g")
   %rn))
 (def %rn-r (Str8 append %rn "/r"))
-; the lines whose answers differ
+; the lines whose answers differ; each line's garbage collected after it
 (def %rn-steps
   (fn (_ lines)
     (List flat-map
-      (fn (_ ops) (if (equal? (apply git-text-in (pair %rn-r ops)) (apply git-oracle-in (pair %rn-r ops))) () (list ops)))
+      (fn (_ ops)
+        (let ((same? (equal? (apply git-text-in (pair %rn-r ops)) (apply git-oracle-in (pair %rn-r ops)))))
+          (do (Heap collect) (if same? () (list ops)))))
       lines)))
-(def %rn-summary
-  (fn (_ r) (rest (Str8 split "\n" (rest r)))))
+(def %rn-forms
+  (fn (_ sides)
+    (List flat-map
+      (fn (_ form) (List map (fn (_ side) (pair "diff" (List append side form))) sides))
+      (list (list "--name-only") (list "--name-status") (list "--numstat") (list "--raw") (list "--stat")
+            (list "--raw" "--numstat" "--stat") ()))))
+(write (%rn-steps (%rn-forms (list () (list "HEAD")))))
+```
+---
+    ()
+
+### and against the index and between two commits, a path limiting them
+
+```git
+(write (%rn-steps (List append (%rn-forms (list (list "--cached") (list "HEAD~1" "HEAD")))
+                    (list (list "diff" "--cached" "--" "s 2") (list "diff" "HEAD~1" "HEAD" "--" "b" "e")))))
+```
+---
+    ()
+
+### in log and show, and in commit's summary, made by x-git and by git in copies
+
+```git
+(def %rn-summary (fn (_ r) (rest (Str8 split "\n" (rest r)))))
 (def %rn-x (%rn-summary (git-text-in (Str8 append %rn "/x") "commit" "-m" "three")))
 (def %rn-g (%rn-summary (git-oracle-in (Str8 append %rn "/g") "commit" "-m" "three")))
 (write (list
   (%rn-steps
-    (List append
-      (List flat-map
-        (fn (_ form)
-          (List map (fn (_ side) (pair "diff" (List append side form)))
-            (list () (list "HEAD") (list "--cached") (list "HEAD~1" "HEAD"))))
-        (list (list "--name-only") (list "--name-status") (list "--numstat") (list "--raw") (list "--stat")
-              (list "--raw" "--numstat" "--stat") ()))
-      (list (list "diff" "--cached" "--" "s 2")
-            (list "diff" "HEAD~1" "HEAD" "--" "b" "e")
-            (list "log" "-p")
-            (list "log" "--stat")
-            (list "log" "--oneline" "--stat")
-            (list "show" "HEAD")
-            (list "show" "--stat" "HEAD"))))
+    (list (list "log" "-p") (list "log" "--stat") (list "log" "--oneline" "--stat") (list "show" "HEAD") (list "show" "--stat" "HEAD")))
   (equal? %rn-x %rn-g)
   %rn-x))
 ```
