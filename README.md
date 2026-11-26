@@ -76,19 +76,21 @@ The detail of each command:
   as git prints one
 - `rev-parse <revision>...`
 - `ls-tree [-r] [-t] [-l] [--name-only] <tree-ish> [<path>...]`
-- `log [-p] [--stat] [--oneline | --pretty=<format> | --format=<format>] [-<number> |
+- `log [-p] [--stat] [--raw] [--oneline | --pretty=<format> | --format=<format>] [-<number> |
   -n <number>] [<revision>]`, newest committer time first, in show's
   forms, a user's format ending each commit (`--format`, `tformat:`) or
-  set between them (`format:`); with `-p` or `--stat` each commit's change
-  as show draws it, a merge's not drawn
-- `show [-s] [-p] [--stat] [--oneline | --pretty=<format> | --format=<format>]
-  [<object>...]`: a commit with its patch or --stat (both with `-p --stat`:
-  `---`, the stat, a blank line, the patch) against its first
-  parent, an annotated tag then what it tags, a tree's entries, a blob's
-  text; git's forms (oneline, short, medium, full, fuller) and its
-  placeholders for a format of one's own (%H %h %T %t %P %p %s %b %B %an
-  %ae %ad %cn %ce %cd %n %%), any other spec refused as git refuses it.
-  A merge's combined diff is not drawn
+  set between them (`format:`); with `-p`, `--stat` or `--raw` each
+  commit's change as show draws it, a merge's not drawn
+- `show [-s] [-p] [--stat] [--raw] [--oneline | --pretty=<format> | --format=<format>]
+  [<object>...]`: a commit with its patch, `--stat` or `--raw` lines
+  against its first parent (with more than one: the raw lines, the
+  stat, a blank line, the patch, `---` before them when the stat and
+  the patch are both drawn), an annotated tag then what it tags, a
+  tree's entries, a blob's text; git's forms (oneline, short, medium,
+  full, fuller) and its placeholders for a format of one's own (%H %h
+  %T %t %P %p %s %b %B %an %ae %ad %cn %ce %cd %n %%), an empty format
+  drawing no header and no separator, any other spec refused as git
+  refuses it.  A merge's combined diff is not drawn, nor its raw lines
 - `ls-files [-c] [-s] [-o] [-i] [--exclude-standard]` and
   `status [-s | --porcelain] [--ignored[=traditional|matching|no]]` from
   the index, the untracked paths as `.gitignore` leaves them and, when
