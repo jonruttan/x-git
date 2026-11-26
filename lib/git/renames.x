@@ -38,6 +38,10 @@
     (if (null? o) ()
       (pair (int->ptr (int+ (ptr->int (str->ptr (first (rest (rest o))))) (first (rest (rest (rest o))))))
             (first (rest o))))))
+(def git-blob-bytes %bytes)
+
+; An entry (PATH MODE SHA) of a regular file, not a link or a submodule.
+(def %regular? (fn (_ e) (Str8 starts? "100" (first (rest e)))))
 
 (def %binary?
   (fn (_ p n)
@@ -76,11 +80,10 @@
              (self (rest cs) (List map (fn (_ a) (if (eq? a hit) (pair (first a) (int+ (rest a) (rest (first cs)))) a)) acc))))))
      counts ())))
 
-; How alike two blobs are, 0 to git-max-score.
-(def git-similarity
-  (fn (_ gitdir src dst)
-    (def a (%bytes gitdir src))
-    (def b (%bytes gitdir dst))
+; How alike two files are, each its bytes as (PTR . N) or () when missing,
+; 0 to git-max-score.
+(def git-similarity-of
+  (fn (_ a b)
     (if (or (null? a) (null? b)) 0
       (let ((na (rest a)) (nb (rest b)))
         (let ((max-size (if (> na nb) na nb)) (base-size (if (< na nb) na nb)))
@@ -94,10 +97,21 @@
                                 0 sa)))
                   (int/ (int* copied git-max-score) max-size))))))))))
 
+; How alike two blobs are.
+(def git-similarity
+  (fn (_ gitdir src dst) (git-similarity-of (%bytes gitdir src) (%bytes gitdir dst))))
+
 ; The renames from the sources to the destinations, each (PATH MODE SHA):
-; ((SRC DST SCORE) ...), SRC and DST the entries.
+; ((SRC DST SCORE) ...), SRC and DST the entries, their bytes as the
+; blobs in gitdir hold them.
 (def git-find-renames
   (fn (_ gitdir sources destinations)
+    (git-find-renames-of (fn (_ e) (%bytes gitdir (first (rest (rest e))))) sources destinations)))
+
+; The same, each entry's bytes as bytes-of gives them, (PTR . N) or ().
+; A pair not both regular files is scored none, as git scores it.
+(def git-find-renames-of
+  (fn (_ bytes-of sources destinations)
     ; exact: the same blob, each file taken once
     (def exact
       ((fn (self ds used acc)
@@ -117,7 +131,7 @@
       (List sort (fn (_ x y) (> (first (rest (rest x))) (first (rest (rest y)))))
         (List filter (fn (_ r) (>= (first (rest (rest r))) %minimum-score))
           (List flat-map
-            (fn (_ d) (List map (fn (_ s) (list s d (git-similarity gitdir (first (rest (rest s))) (first (rest (rest d)))))) srcs))
+            (fn (_ d) (List map (fn (_ s) (list s d (if (and (%regular? s) (%regular? d)) (git-similarity-of (bytes-of s) (bytes-of d)) 0))) srcs))
             dsts))))
     (def inexact
       ((fn (self rs used-s used-d acc)
@@ -162,4 +176,4 @@
         (Str8 sub prefix (int- (int- lb prefix) suffix) b) "}"
         (Str8 sub (int- la suffix) suffix a)))))
 
-(provide git/renames git-find-renames git-similarity git-rename-name git-max-score)
+(provide git/renames git-find-renames git-find-renames-of git-similarity git-similarity-of git-blob-bytes git-rename-name git-max-score)
