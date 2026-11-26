@@ -278,9 +278,13 @@ It needs x-lang at the release `bundle.xon` declares.
     make install          # into <share>/bundles/git
     make test             # the spec suite
     make check            # the suite against tests/contract/known-failures.txt
+    make card             # docs/card.md: its format, its row and its programs
 
 Set `X=/path/to/x` to use a particular x.  The suite needs `git` on the
 path for its fixture and as the reference.
+
+[docs/card.md](docs/card.md) is the card: the commands in tables, and
+programs of them that `make card` runs, each in a repository it makes.
 
 `tests/oracle/ssh.sh` is the live test over ssh, x at every hop: x-git
 clones, fetches and pushes through x-ssh's client and server, with
