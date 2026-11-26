@@ -26,7 +26,7 @@
 (import git/refs git-tree-of git-rev-parse)
 (import git/index git-index-read git-tree-files git-modes-kept? git-work-mode)
 (import git/work git-work-exists? git-work-read)
-(import git/renames git-find-renames git-rename-name git-max-score)
+(import git/renames git-find-renames git-find-renames-of git-blob-bytes git-rename-name git-max-score)
 (import git/quote git-quote-path)
 
 (import x/core/doors int+ int- int* int>> str-byte-len str-byte-ref str-byte-sub char->int int<< ptr-ref ptr-set! str-make str->ptr int/)
@@ -617,26 +617,46 @@
 (def %binary? (fn (_ side) (if (null? side) #f (first (rest (rest (rest side)))))))
 (def %side-size (fn (_ side) (if (null? side) 0 (List ref 4 side))))
 
-; One file's diff as git prints it.  A path that turned from a link to a
-; file or back -- a typechange -- is two: the old one deleted, the new one
-; created.
+; A rename's similarity as git prints it, a percent rounded down.
+(def %percent (fn (_ c) (Str8 str (int/ (int* (List ref 5 c) 100) git-max-score))))
+(def %rename? (fn (_ c) (= (List length c) 6)))
+
+; One change's diff as git prints it, c as %changed or %renamed gives it.
+; A path that turned from a link to a file or back -- a typechange -- is
+; two: the old one deleted, the new one created.
 (def %file-diff
-  (fn (_ path old new)
-    (if (and (not (null? old)) (not (null? new))
-             (not (eq? (str=? (first (rest old)) "120000") (str=? (first (rest new)) "120000"))))
-      (Str8 append (%file-diff-one path old ()) (%file-diff-one path () new))
-      (%file-diff-one path old new))))
+  (fn (_ c)
+    (def path (first c))
+    (def old (first (rest c)))
+    (def new (first (rest (rest c))))
+    (match
+      ((%rename? c) (%file-diff-one path old new (pair (List ref 4 c) (%percent c))))
+      ((and (not (null? old)) (not (null? new))
+            (not (eq? (str=? (first (rest old)) "120000") (str=? (first (rest new)) "120000"))))
+        (Str8 append (%file-diff-one path old () ()) (%file-diff-one path () new ())))
+      (#t (%file-diff-one path old new ())))))
 
 ; One side's diff: the header, the modes and index line, then the hunks.
 ; a/PATH and b/PATH are quoted whole when the path needs it, and on the
-; ---/+++ lines a tab follows a name with a space in it.
+; ---/+++ lines a tab follows a name with a space in it.  A rename, from
+; as (SRC . PERCENT), is from SRC: after its header any change of mode,
+; its similarity and both names; then, when its blob changed, the index
+; line and the hunks.
 (def %file-diff-one
-  (fn (_ path old new)
+  (fn (_ path old new from)
     (def short (fn (_ sha) (Str8 sub 0 7 sha)))
-    (def a-name (git-quote-path (Str8 append "a/" path)))
+    (def src (if (null? from) path (first from)))
+    (def a-name (git-quote-path (Str8 append "a/" src)))
     (def b-name (git-quote-path (Str8 append "b/" path)))
-    (def tab (if (null? (Str8 index-of " " path)) "" "\t"))
-    (def header (Str8 append "diff --git " a-name " " b-name "\n"))
+    (def tab (fn (_ p) (if (null? (Str8 index-of " " p)) "" "\t")))
+    (def mode-lines
+      (if (or (null? old) (null? new) (str=? (first (rest old)) (first (rest new)))) ""
+        (Str8 append "old mode " (first (rest old)) "\nnew mode " (first (rest new)) "\n")))
+    (def header
+      (Str8 append "diff --git " a-name " " b-name "\n"
+        (if (null? from) ""
+          (Str8 append mode-lines "similarity index " (rest from) "%\n"
+            "rename from " (git-quote-path src) "\nrename to " (git-quote-path path) "\n"))))
     (def modes
       (match
         ((null? old) (Str8 append "new file mode " (first (rest new)) "\n"
@@ -645,21 +665,21 @@
                                   "index " (short (first old)) "..0000000\n"))
         ((str=? (first (rest old)) (first (rest new)))
           (Str8 append "index " (short (first old)) ".." (short (first new)) " " (first (rest old)) "\n"))
-        (#t (Str8 append "old mode " (first (rest old)) "\nnew mode " (first (rest new)) "\n"
-                         "index " (short (first old)) ".." (short (first new)) "\n"))))
+        ((not (null? from)) (Str8 append "index " (short (first old)) ".." (short (first new)) "\n"))
+        (#t (Str8 append mode-lines "index " (short (first old)) ".." (short (first new)) "\n"))))
     (def a-text (if (null? old) "" (%side-text old)))
     (def b-text (if (null? new) "" (%side-text new)))
     (match
-      ; the mode alone changed: its two lines are the whole of it
+      ; the same blob: the header, with a mode's two lines, is the whole of it
       ((and (not (null? old)) (not (null? new)) (str=? (first old) (first new)))
-        (Str8 append header "old mode " (first (rest old)) "\nnew mode " (first (rest new)) "\n"))
+        (if (null? from) (Str8 append header mode-lines) header))
       ((or (%binary? old) (%binary? new))
       (Str8 append header modes "Binary files " (if (null? old) "/dev/null" a-name)
                    " and " (if (null? new) "/dev/null" b-name) " differ\n"))
       (#t
         (Str8 append header modes
-          "--- " (if (null? old) "/dev/null" (Str8 append a-name tab)) "\n"
-          "+++ " (if (null? new) "/dev/null" (Str8 append b-name tab)) "\n"
+          "--- " (if (null? old) "/dev/null" (Str8 append a-name (tab src))) "\n"
+          "+++ " (if (null? new) "/dev/null" (Str8 append b-name (tab path))) "\n"
           (git-hunks a-text b-text))))))
 
 ; --- the sides ---
@@ -733,6 +753,44 @@
             ()
             (list (list path (%with-text wd gitdir old-side path #f) (%with-text wd gitdir new-side path new-work?))))))
       paths)))
+
+; The changes with renames found as git finds them: a file deleted and
+; one added that is the same or alike are one change, (DST OLD NEW NAME
+; SRC SCORE), NAME as --stat names it, in the added one's place.  A
+; side's bytes are its blob's, or, a working file not yet one, the
+; file's.
+(def %renamed
+  (fn (_ wd gitdir changes work?)
+    (def old-of (fn (_ c) (first (rest c))))
+    (def new-of (fn (_ c) (first (rest (rest c)))))
+    (def gone (List filter (fn (_ c) (and (not (null? (old-of c))) (null? (new-of c)))) changes))
+    (def added (List filter (fn (_ c) (and (null? (old-of c)) (not (null? (new-of c))))) changes))
+    ; as git/renames takes it: (PATH MODE SHA)
+    (def entry (fn (_ path side) (list path (first (rest side)) (first side))))
+    (def bytes-of
+      (fn (_ e)
+        (let ((b (git-blob-bytes gitdir (first (rest (rest e))))))
+          (if (or (not (null? b)) (not work?)) b
+            (let ((f (git-work-read (Str8 append wd "/" (first e)))))
+              (pair (str->ptr (first f)) (rest f)))))))
+    (def renames
+      (if (or (null? gone) (null? added)) ()
+        (git-find-renames-of bytes-of
+          (List map (fn (_ c) (entry (first c) (old-of c))) gone)
+          (List map (fn (_ c) (entry (first c) (new-of c))) added))))
+    (if (null? renames) changes
+      (List flat-map
+        (fn (_ c)
+          (let ((as-src (List find (fn (_ r) (str=? (first (first r)) (first c))) renames))
+                (as-dst (List find (fn (_ r) (str=? (first (first (rest r))) (first c))) renames)))
+            (match
+              ((and (not (null? as-src)) (null? (new-of c))) ())
+              ((and (not (null? as-dst)) (null? (old-of c)))
+                (let ((src (first (first as-dst))))
+                  (list (list (first c) (old-of (List find (fn (_ x) (str=? (first x) src)) gone)) (new-of c)
+                              (git-rename-name src (first c)) src (first (rest (rest as-dst)))))))
+              (#t (list c)))))
+        changes))))
 
 ; --- --stat, and commit's summary ---
 
@@ -849,15 +907,13 @@
       (%summary-line (List length counts) ins del))))
 
 ; commit's lines after its header: the summary, then a line a file
-; created, deleted or changed in mode, in path order, from two trees (the
-; first () for a root commit).
+; created, deleted, renamed or changed in mode, in path order, from two
+; trees (the first () for a root commit).  A rename's change of mode
+; follows it, without a name.
 (def git-commit-summary
   (fn (_ gitdir old-tree new-tree)
-    (def old-side (%tree-side gitdir old-tree))
-    (def new-side (%tree-side gitdir new-tree))
-    (def changes (%changed "" gitdir old-side new-side #f))
+    (def changes (%renamed "" gitdir (%changed "" gitdir (%tree-side gitdir old-tree) (%tree-side gitdir new-tree) #f) #f))
     (def counts (%change-counts changes))
-    (def mode-in (fn (_ side path) (first (rest (rest (List find (fn (_ x) (str=? (first x) path)) side))))))
     (Str8 append
       (%summary-line (List length counts)
         (List fold (fn (_ a c) (int+ a (first (rest c)))) 0 counts)
@@ -865,12 +921,16 @@
       (Str8 join ""
         (List map
           (fn (_ c)
-            (let ((path (first c)))
+            (let ((path (first c)) (old (first (rest c))) (new (first (rest (rest c)))))
               (match
-                ((null? (first (rest c))) (Str8 append " create mode " (mode-in new-side path) " " (git-quote-path path) "\n"))
-                ((null? (first (rest (rest c)))) (Str8 append " delete mode " (mode-in old-side path) " " (git-quote-path path) "\n"))
-                ((not (str=? (mode-in old-side path) (mode-in new-side path)))
-                  (Str8 append " mode change " (mode-in old-side path) " => " (mode-in new-side path) " " (git-quote-path path) "\n"))
+                ((null? old) (Str8 append " create mode " (first (rest new)) " " (git-quote-path path) "\n"))
+                ((null? new) (Str8 append " delete mode " (first (rest old)) " " (git-quote-path path) "\n"))
+                ((%rename? c)
+                  (Str8 append " rename " (List ref 3 c) " (" (%percent c) "%)\n"
+                    (if (str=? (first (rest old)) (first (rest new))) ""
+                      (Str8 append " mode change " (first (rest old)) " => " (first (rest new)) "\n"))))
+                ((not (str=? (first (rest old)) (first (rest new))))
+                  (Str8 append " mode change " (first (rest old)) " => " (first (rest new)) " " (git-quote-path path) "\n"))
                 (#t ""))))
           changes)))))
 
@@ -923,11 +983,11 @@
 ; A tree of () is the empty tree, a root commit's parent.
 (def git-tree-patch
   (fn (_ gitdir old-tree new-tree stat?)
-    (def changes (%changed "" gitdir (%tree-side gitdir old-tree) (%tree-side gitdir new-tree) #f))
+    (def changes (%renamed "" gitdir (%changed "" gitdir (%tree-side gitdir old-tree) (%tree-side gitdir new-tree) #f) #f))
     (match
       ((null? changes) "")
       (stat? (%stat-text changes))
-      (#t (Str8 join "" (List map (fn (_ c) (%file-diff (first c) (first (rest c)) (first (rest (rest c))))) changes))))))
+      (#t (Str8 join "" (List map (fn (_ c) (%file-diff c)) changes))))))
 
 ; --- diff ---
 
@@ -951,15 +1011,29 @@
       ((not (eq? (str=? (first (rest old)) "120000") (str=? (first (rest new)) "120000"))) "T")
       (#t "M"))))
 
+; A change as --raw and --name-status end it: its letter, a tab, its
+; name; a rename's R and its similarity in three digits, then both names.
+(def %status-names
+  (fn (_ c)
+    (if (%rename? c)
+      (Str8 append "R" (Str8 pad-left 3 #\0 (%percent c)) "\t" (git-quote-path (List ref 4 c)) "\t" (git-quote-path (first c)))
+      (Str8 append (%change-letter (first (rest c)) (first (rest (rest c)))) "\t" (git-quote-path (first c))))))
+
 ; The changes in each form asked for: --name-only or --name-status alone,
 ; else --raw, --numstat and --stat in that order, else the patch.  A
 ; working-directory side is named by its blob only when it is the
-; index's, as git names it; else by zeros.
+; index's, as git names it, or when renames were looked for, which hash
+; each file added; else by zeros.
 (def %diff-forms
   (fn (_ gitdir o changes work?)
     (def index (if work? (git-index-read gitdir) ()))
     (def zeros "0000000")
     (def short (fn (_ sha) (Str8 sub 0 7 sha)))
+    (def added? (fn (_ c) (or (%rename? c) (null? (first (rest c))))))
+    (def looked?
+      (or (List any? %rename? changes)
+          (and (List any? (fn (_ c) (null? (first (rest c)))) changes)
+               (List any? (fn (_ c) (null? (first (rest (rest c))))) changes))))
     (def raw-line
       (fn (_ c)
         (let ((old (first (rest c))) (new (first (rest (rest c)))))
@@ -969,10 +1043,11 @@
               " " (match
                     ((null? new) zeros)
                     ((not work?) (short (first new)))
+                    ((and looked? (added? c)) (short (first new)))
                     ((and (not (null? e)) (str=? (first (rest (rest e))) (first new)) (str=? (first (rest e)) (first (rest new))))
                       (short (first new)))
                     (#t zeros))
-              " " (%change-letter old new) "\t" (git-quote-path (first c)) "\n")))))
+              " " (%status-names c) "\n")))))
     (def numstat-line
       (fn (_ c k)
         (let ((old (first (rest c))) (new (first (rest (rest c)))))
@@ -984,7 +1059,7 @@
       ((null? changes) "")
       ((Opts on? o "--name-only") (each (fn (_ c) (Str8 append (git-quote-path (first c)) "\n"))))
       ((Opts on? o "--name-status")
-        (each (fn (_ c) (Str8 append (%change-letter (first (rest c)) (first (rest (rest c)))) "\t" (git-quote-path (first c)) "\n"))))
+        (each (fn (_ c) (Str8 append (%status-names c) "\n"))))
       ((or (Opts on? o "--raw") (Opts on? o "--numstat") (Opts on? o "--stat"))
         (Str8 append
           (if (Opts on? o "--raw") (each raw-line) "")
@@ -992,7 +1067,7 @@
             (Str8 join "" (List map (fn (_ c) (numstat-line c (first (%change-counts (list c))))) changes))
             "")
           (if (Opts on? o "--stat") (%stat-text changes) "")))
-      (#t (each (fn (_ c) (%file-diff (first c) (first (rest c)) (first (rest (rest c))))))))))
+      (#t (each (fn (_ c) (%file-diff c)))))))
 
 ; git's refusal of an operand it cannot place, its hint lines after.
 (def %ambiguous
@@ -1082,6 +1157,7 @@
                           (fn (_ c) (or (null? paths)
                                         (List any? (fn (_ p) (or (str=? p ".") (str=? p (first c)) (Str8 starts? (Str8 append p "/") (first c)))) paths)))
                           (%changed wd gitdir (first sides) (first (rest sides)) (first (rest (rest sides)))))))
-                  (list (lit out) (%diff-forms gitdir o changes (first (rest (rest sides)))) 0))))))))))
+                  (let ((changes (%renamed wd gitdir changes (first (rest (rest sides))))))
+                    (list (lit out) (%diff-forms gitdir o changes (first (rest (rest sides)))) 0)))))))))))
 
 (provide git/diff git-diff git-diff-options git-edit-script git-hunks git-commit-summary git-tree-diffstat git-tree-patch)

@@ -1,4 +1,5 @@
 # @weight 2
+# @timeout-scale 2
 
 diff, against git itself: the working directory against the index, the
 index against HEAD, revisions against each other, --stat.  The loose
@@ -261,3 +262,75 @@ commits.
 ```
 ---
     (((#t #t #t #t) (#t #t #t #t) (#t #t #t #t) (#t #t #t #t) (#t #t #t #t) (#t #t #t #t) (#t #t #t #t) (#t #t #t #t) (#t #t #t #t)) #t (0 . "M\tbin\nM\td/h\nM\tf\nD\tg\nD\tgone\nT\tl\nM\tm\n") (0 . "-\t-\tbin\n1\t0\tf\n") (0 . ":100644 100644 20b5be9 0000000 M\tbin\n:100644 100644 587be6b 0000000 M\td/h\n:000000 100644 0000000 8ba3a16 A\tn\n") (0 . " bin | Bin 3 -> 5 bytes\n f   |   1 +\n 2 files changed, 1 insertion(+)\n") (128 . "fatal: options '--name-only', '--name-status', '--check', and '-s' cannot be used together\n"))
+
+## renames
+
+A repository of its own: a file renamed and changed, one moved within a
+directory, one renamed and made executable, a binary file renamed to a
+name with a space and changed, committed by git; then a rename staged
+to a name that needs quoting and its file changed after, and one staged
+changed and changed again.  Each form is asked of the working directory
+against HEAD, of the index, and of the two commits; log and show draw
+them too.  Then x-git and git each commit the staged renames, in copies
+of the repository of their own.
+
+### a file deleted and one added that is the same or alike, one change: as git shows it in each form, against the working directory and HEAD
+
+```git
+(Sys setenv "GIT_AUTHOR_NAME" "A")
+(Sys setenv "GIT_AUTHOR_EMAIL" "a@b.c")
+(Sys setenv "GIT_COMMITTER_NAME" "C")
+(Sys setenv "GIT_COMMITTER_EMAIL" "c@d.e")
+(def %rn (let ((t (File temp "/tmp/x-git-rn-"))) (do (File close (first t)) (File unlink (rest t)) (File mkdir (rest t)) (rest t))))
+(Proc capture (list "/bin/sh" "-c"
+  (Str8 append "cd \"$0\" && git init -q -b main r && cd r && seq 1 10 > a && mkdir d && printf 'x\\ny\\nz\\n' > d/f && echo keep > k && echo m > m"
+    " && printf 'bin\\0ary\\n%.0s' 1 2 3 4 5 6 7 8 > bin && seq 1 20 > s && git add . && git commit -qm one"
+    " && git mv a b && seq 1 9 > b && echo ten >> b && git mv d/f d/g && git mv m e && chmod +x e"
+    " && git mv bin 'sp ace' && printf X >> 'sp ace' && git add . && git commit -qm two"
+    " && e=$(printf '\\303\\251') && git mv k \"$e\" && echo more >> \"$e\""
+    " && git mv s 's 2' && echo 21 >> 's 2' && git add 's 2' && echo 22 >> 's 2'"
+    " && cd .. && cp -R r x && cp -R r g")
+  %rn))
+(def %rn-r (Str8 append %rn "/r"))
+; the lines whose answers differ; each line's garbage collected after it
+(def %rn-steps
+  (fn (_ lines)
+    (List flat-map
+      (fn (_ ops)
+        (let ((same? (equal? (apply git-text-in (pair %rn-r ops)) (apply git-oracle-in (pair %rn-r ops)))))
+          (do (Heap collect) (if same? () (list ops)))))
+      lines)))
+(def %rn-forms
+  (fn (_ sides)
+    (List flat-map
+      (fn (_ form) (List map (fn (_ side) (pair "diff" (List append side form))) sides))
+      (list (list "--name-only") (list "--name-status") (list "--numstat") (list "--raw") (list "--stat")
+            (list "--raw" "--numstat" "--stat") ()))))
+(write (%rn-steps (%rn-forms (list () (list "HEAD")))))
+```
+---
+    ()
+
+### and against the index and between two commits, a path limiting them
+
+```git
+(write (%rn-steps (List append (%rn-forms (list (list "--cached") (list "HEAD~1" "HEAD")))
+                    (list (list "diff" "--cached" "--" "s 2") (list "diff" "HEAD~1" "HEAD" "--" "b" "e")))))
+```
+---
+    ()
+
+### in log and show, and in commit's summary, made by x-git and by git in copies
+
+```git
+(def %rn-summary (fn (_ r) (rest (Str8 split "\n" (rest r)))))
+(def %rn-x (%rn-summary (git-text-in (Str8 append %rn "/x") "commit" "-m" "three")))
+(def %rn-g (%rn-summary (git-oracle-in (Str8 append %rn "/g") "commit" "-m" "three")))
+(write (list
+  (%rn-steps
+    (list (list "log" "-p") (list "log" "--stat") (list "log" "--oneline" "--stat") (list "show" "HEAD") (list "show" "--stat" "HEAD")))
+  (equal? %rn-x %rn-g)
+  %rn-x))
+```
+---
+    (() #t (" Author: A <a@b.c>" " 2 files changed, 1 insertion(+)" " rename s => s 2 (94%)" " rename k => \"\\303\\251\" (100%)" ""))

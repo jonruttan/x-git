@@ -123,9 +123,16 @@ The detail of each command:
   decides); `--stat` fitted to 80 columns (or `COLUMNS`) as git fits it,
   a binary file its `Bin OLD -> NEW bytes` row; `--numstat` (a binary
   file `-` and `-`) and `--raw` (a working file named by zeros unless it
-  is the index's) printed before it, `--name-only` or `--name-status` in
+  is the index's, or is added where renames were looked for) printed
+  before it, `--name-only` or `--name-status` in
   place of them all; a binary file, a NUL in its first 8000 bytes,
   `Binary files ... differ` in the patch;
+  renames found as git finds them -- a file deleted and one added that
+  is the same blob, else half or more alike -- one change: `similarity
+  index`, `rename from` and `rename to` in the patch, `OLD => NEW` in
+  `--stat` and `--numstat`, `R` and the similarity in `--raw` and
+  `--name-status` (and in `log -p`, `log --stat`, `show`, and commit's
+  summary, its `rename` line);
   a mode changed alone, its `old mode` and `new mode` lines and nothing
   more; a path turned from a link to a file or back, a deletion and a
   creation, as git draws a typechange; operands placed as git places
