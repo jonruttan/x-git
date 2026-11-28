@@ -152,6 +152,37 @@ blank line or `---` after it.
 ---
     ()
 
+### --numstat, --name-only and --name-status, and -s read in order
+
+`--numstat` between the raw lines and the stat; a name form in place of
+every other, the patch too, and a merge's not drawn; a merge's counts
+against its first parent.  `-s` clears the forms before it, not those
+after; a name form after it, or both name forms, refused.
+
+```git
+(write
+  (%sw-steps
+    (list (list "show" "--numstat" "HEAD~1")
+          (list "show" "--raw" "--numstat" "--stat" "-p" "HEAD~1")
+          (list "show" "--name-only" "HEAD~1")
+          (list "show" "--name-status" "-p" "--stat" "HEAD~1")
+          (list "show" "--oneline" "--name-status" "HEAD~2" "HEAD~1")
+          (list "show" "--numstat" "HEAD")
+          (list "show" "--name-status" "HEAD")
+          (list "log" "--name-status")
+          (list "log" "--oneline" "--name-only")
+          (list "log" "--format=%s" "--numstat" "--stat")
+          (list "show" "-s" "--stat" "HEAD~1")
+          (list "show" "--stat" "-s" "HEAD~1")
+          (list "show" "-s" "-p" "HEAD~1")
+          (list "show" "--name-only" "-s" "HEAD~1")
+          (list "log" "-p" "-s" "-1")
+          (list "show" "-s" "--name-status" "HEAD~1")
+          (list "log" "--name-only" "--name-status"))))
+```
+---
+    ()
+
 ## refusals
 
 ### no such revision, no such path, no such format

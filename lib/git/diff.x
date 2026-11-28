@@ -1164,10 +1164,11 @@
                   (let ((changes (%renamed wd gitdir changes (first (rest (rest sides))))))
                     (list (lit out) (%diff-forms gitdir o changes (first (rest (rest sides)))) 0)))))))))))
 
-; One tree against another as --raw draws it, a line a file; "" when
-; they are the same.
-(def git-tree-raw
-  (fn (_ gitdir old-tree new-tree)
-    (%diff-forms gitdir (Opts parse git-diff-options (list "--raw")) (%tree-changes gitdir old-tree new-tree) #f)))
+; One tree against another in the forms diff takes as flags -- --raw,
+; --numstat, --stat, --name-only or --name-status -- as diff draws them;
+; "" when the trees are the same.
+(def git-tree-forms
+  (fn (_ gitdir old-tree new-tree flags)
+    (%diff-forms gitdir (Opts parse git-diff-options flags) (%tree-changes gitdir old-tree new-tree) #f)))
 
-(provide git/diff git-diff git-diff-options git-edit-script git-hunks git-commit-summary git-tree-diffstat git-tree-patch git-tree-raw)
+(provide git/diff git-diff git-diff-options git-edit-script git-hunks git-commit-summary git-tree-diffstat git-tree-patch git-tree-forms)

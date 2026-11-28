@@ -22,7 +22,7 @@
 (import git/refs git-tree-of git-commit-of git-headers git-rev-parse git-rev-path-missing git-rev-trouble git-log-ref
   git-previous-branch)
 (import git/reflog git-reflog-entries)
-(import git/diff git-tree-patch git-tree-raw)
+(import git/diff git-tree-patch git-tree-forms)
 (import git/quote git-quote-path)
 
 (import x/core/doors int+ int-)
@@ -121,15 +121,19 @@
 ; --- log ---
 
 (def git-log-options
-  (Opts declare "git log" "[-p] [--stat] [--raw] [--oneline | --format=<format>] [-<number> | -n <number>] [<revision>]" ()
+  (Opts declare "git log" "[-s] [-p] [--stat] [--numstat] [--raw] [--name-only | --name-status] [--oneline | --format=<format>] [-<number> | -n <number>] [<revision>]" ()
     (list
       (Opts flag "--oneline" "One line a commit: the abbreviated name and the subject")
       (Opts arg "--format" "<format>" "A commit as the format says")
       (Opts arg "--pretty" "<format>" "oneline, short, medium, full, fuller, format:<format> or tformat:<format>")
       (Opts arg "-n" "--max-count" "<number>" "Show at most <number> commits; -<number> the same")
+      (Opts flag "-s" "--no-patch" "No change drawn, of what is asked before it")
       (Opts flag "-p" "--patch" "Each commit's change against its first parent; a merge's not drawn")
       (Opts flag "--stat" "Each commit's change as a row a file and the summary")
-      (Opts flag "--raw" "Each commit's change as a line a file: both modes, both blobs, the letter, the name"))))
+      (Opts flag "--raw" "Each commit's change as a line a file: both modes, both blobs, the letter, the name")
+      (Opts flag "--numstat" "Each commit's lines added and removed a file, as numbers, and its name")
+      (Opts flag "--name-only" "Only the names of the files each commit changed")
+      (Opts flag "--name-status" "The names of the files each commit changed, each after its change's letter"))))
 
 ; git's -<number>, spelled as -n <number>, up to a --.
 (def %counts
@@ -281,14 +285,15 @@
     ; the last count given
     (def limit (let ((vs (Opts values o "-n"))) (if (null? vs) () (%str->number (List last vs) 10))))
     (def pretty (%pretty o))
-    (def patch? (Opts on? o "-p"))
-    (def stat? (Opts on? o "--stat"))
-    (def raw? (Opts on? o "--raw"))
+    (def drawing (%drawing ops))
+    (def patch? (first (rest drawing)))
+    (def forms (first (rest (rest drawing))))
     (match
       ((Opts help? git-log-options ops) (list (lit out) (Opts usage git-log-options) 0))
       ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-log-options)))
       ((null? gitdir) (git-no-repo))
       ((eq? (first pretty) (lit bad)) (%bad-pretty pretty))
+      ((not (null? (%drawing-refusal drawing))) (%drawing-refusal drawing))
       (#t
         (let ((rev (if (null? operands) "HEAD" (first operands))))
           (let ((sha (git-commit-of gitdir rev)))
@@ -306,18 +311,21 @@
               (#t
                 (let ((commits (%walk gitdir (list sha) () limit)))
                   (list (lit out)
-                    (Str8 join (if (%apart? pretty) "\n" "") (List map (fn (_ c) (%show-commit gitdir c pretty patch? stat? raw? #f)) commits))
+                    (Str8 join (if (%apart? pretty) "\n" "") (List map (fn (_ c) (%show-commit gitdir c pretty patch? forms #f)) commits))
                     0))))))))))
 
 ; --- show ---
 
 (def git-show-options
-  (Opts declare "git show" "[-s] [-p] [--stat] [--raw] [--oneline | --format=<format>] [<object>...]" ()
+  (Opts declare "git show" "[-s] [-p] [--stat] [--numstat] [--raw] [--name-only | --name-status] [--oneline | --format=<format>] [<object>...]" ()
     (list
-      (Opts flag "-s" "--no-patch" "The commit alone, no change")
-      (Opts flag "-p" "--patch" "The patch, as without --stat or --raw; with them, all")
+      (Opts flag "-s" "--no-patch" "No change drawn, of what is asked before it")
+      (Opts flag "-p" "--patch" "The patch, as without another form; with them, all")
       (Opts flag "--stat" "The change as a row a file and the summary")
       (Opts flag "--raw" "The change as a line a file: both modes, both blobs, the letter, the name")
+      (Opts flag "--numstat" "Lines added and removed a file, as numbers, and its name")
+      (Opts flag "--name-only" "Only the names of the files changed")
+      (Opts flag "--name-status" "The names of the files changed, each after its change's letter")
       (Opts flag "--oneline" "One line a commit: the abbreviated name and the subject")
       (Opts arg "--format" "<format>" "A commit as the format says")
       (Opts arg "--pretty" "<format>" "oneline, short, medium, full, fuller, format:<format> or tformat:<format>"))))
@@ -432,33 +440,66 @@
 ; none of its own.
 (def %apart? (fn (_ pretty) (not (List any? (fn (_ k) (eq? k (first pretty))) (list (lit oneline) (lit line) (lit tformat))))))
 
+; How a change is asked to be drawn, the options read in order as git
+; reads them, up to a `--`: -s (--no-patch) clears what came before it,
+; and a form after it is drawn still.  (QUIET? PATCH? FORMS): whether a
+; -s was given, whether the patch stands, and the other forms, as diff's
+; flags.
+(def %form-flags (list "--raw" "--numstat" "--stat" "--name-only" "--name-status"))
+(def %drawing
+  (fn (_ ops)
+    (def one-of? (fn (_ s l) (List any? (fn (_ x) (str=? x s)) l)))
+    (let go ((os ops) (quiet? #f) (patch? #f) (forms ()))
+      (match
+        ((or (null? os) (str=? (first os) "--"))
+          (list quiet? patch? (List filter (fn (_ f) (one-of? f forms)) %form-flags)))
+        ((one-of? (first os) (list "-s" "--no-patch")) (go (rest os) #t #f ()))
+        ((one-of? (first os) (list "-p" "--patch")) (go (rest os) quiet? #t forms))
+        ((one-of? (first os) %form-flags) (go (rest os) quiet? patch? (pair (first os) forms)))
+        (#t (go (rest os) quiet? patch? forms))))))
+
+; The refusal of forms that cannot be drawn together: both name forms,
+; or either after a -s; () when there is none.
+(def %drawing-refusal
+  (fn (_ d)
+    (def forms (first (rest (rest d))))
+    (def has? (fn (_ f) (List any? (fn (_ x) (str=? x f)) forms)))
+    (if (or (and (has? "--name-only") (has? "--name-status"))
+            (and (first d) (or (has? "--name-only") (has? "--name-status"))))
+      (git-fatal "options '--name-only', '--name-status', '--check', and '-s' cannot be used together")
+      ())))
+
 ; A commit as show prints it: its header in the pretty form, then its
-; change against its first parent -- the --raw lines, the --stat, the
-; patch, as asked -- after the separator git puts there: a blank line,
-; or `---` when the stat and the patch are both drawn; none in a form of
+; change against its first parent -- the --raw lines, the --numstat, the
+; --stat, the patch, as asked, or --name-only or --name-status in place
+; of them all -- after the separator git puts there: a blank line, or
+; `---` when the stat and the patch are both drawn; none in a form of
 ; one line or an empty format.  A blank line between the lines before
 ; the patch and the patch.  A merge's patch is its combined diff, which
-; is not drawn, nor its raw lines: the header and the blank line git
-; ends it with, and its stat against its first parent.  log draws no
-; change for a merge at all (merges? #f).
+; is not drawn, nor its raw lines or names: the header and the blank
+; line git ends it with, and its --numstat and --stat against its first
+; parent.  log draws no change for a merge at all (merges? #f).
 (def %show-commit
-  (fn (_ gitdir sha pretty patch? stat? raw? merges?)
+  (fn (_ gitdir sha pretty patch? forms merges?)
     (def kind (first pretty))
     (def parents (List map rest (List filter (fn (_ kv) (str=? (first kv) "parent")) (git-headers gitdir sha))))
     (def merge? (< 1 (List length parents)))
+    (def on? (fn (_ f) (List any? (fn (_ x) (str=? x f)) forms)))
+    (def names? (or (on? "--name-only") (on? "--name-status")))
+    (def stat? (and (on? "--stat") (not names?)))
+    ; what a merge draws: its counts against its first parent
+    (def drawn (List filter (fn (_ f) (or (not merge?) (str=? f "--numstat") (str=? f "--stat"))) forms))
     (def head (%pretty-text gitdir sha pretty))
     (def gap (if (or (eq? kind (lit oneline)) (eq? kind (lit line)) (%empty-format? pretty)) "" "\n"))
     (def old (if (null? parents) () (git-tree-of gitdir (first parents))))
     (def new (git-tree-of gitdir sha))
-    (def lead
-      (Str8 append (if (and raw? (not merge?)) (git-tree-raw gitdir old new) "")
-                   (if stat? (git-tree-patch gitdir old new #t) "")))
-    (def patch (if (and patch? (not merge?)) (git-tree-patch gitdir old new #f) ""))
+    (def lead (if (null? drawn) "" (git-tree-forms gitdir old new drawn)))
+    (def patch (if (and patch? (not merge?) (not names?)) (git-tree-patch gitdir old new #f) ""))
     (def none? (fn (_ s) (= (Str8 length s) 0)))
     (match
-      ((not (or patch? stat? raw?)) head)
+      ((and (not patch?) (null? forms)) head)
       ((and (not merges?) merge?) head)
-      ((and merge? (not stat?)) (Str8 append head gap))
+      ((and merge? (null? drawn)) (Str8 append head gap))
       ((and (none? lead) (none? patch)) head)
       (#t (Str8 append head
             (if (and patch? stat? (not merge?) (not (str=? gap ""))) "---\n" gap)
@@ -489,15 +530,17 @@
   (fn (_ wd gitdir ops)
     (def o (Opts parse git-show-options ops))
     (def names (if (null? (Opts operands o)) (list "HEAD") (Opts operands o)))
-    (def stat? (and (Opts on? o "--stat") (not (Opts on? o "-s"))))
-    (def raw? (and (Opts on? o "--raw") (not (Opts on? o "-s"))))
-    (def patch? (and (not (Opts on? o "-s")) (or (Opts on? o "-p") (not (or (Opts on? o "--stat") (Opts on? o "--raw"))))))
+    (def drawing (%drawing ops))
+    (def forms (first (rest (rest drawing))))
+    ; the patch, unless something else was asked for, or nothing (-s)
+    (def patch? (or (first (rest drawing)) (and (not (first drawing)) (null? forms))))
     (def pretty (%pretty o))
     (match
       ((Opts help? git-show-options ops) (list (lit out) (Opts usage git-show-options) 0))
       ((not (null? (Opts unknown o))) (git-unknown-option (Opts unknown o) (Opts usage git-show-options)))
       ((null? gitdir) (git-no-repo))
       ((eq? (first pretty) (lit bad)) (%bad-pretty pretty))
+      ((not (null? (%drawing-refusal drawing))) (%drawing-refusal drawing))
       (#t
         ; each name resolved once, all before anything is shown
         (let ((shas (List map (fn (_ n) (git-rev-parse gitdir n)) names)))
@@ -527,12 +570,12 @@
                          (sep (if (and after-commit? (%apart? pretty)) "\n" "")))
                      (match
                        ((str=? type "commit")
-                         (self (rest ns) (pair (Str8 append sep (%show-commit gitdir sha pretty patch? stat? raw? #t)) acc) #t))
+                         (self (rest ns) (pair (Str8 append sep (%show-commit gitdir sha pretty patch? forms #t)) acc) #t))
                        ((str=? type "tag")
                          (let ((target (git-commit-of gitdir sha)))
                            (self (rest ns)
                                  (pair (Str8 append sep (%show-tag gitdir sha)
-                                         (if (null? target) "" (%show-commit gitdir target pretty patch? stat? raw? #t)))
+                                         (if (null? target) "" (%show-commit gitdir target pretty patch? forms #t)))
                                        acc)
                                  (not (null? target)))))
                        ((str=? type "tree") (self (rest ns) (pair (%show-tree gitdir sha (first (first ns))) acc) #f))
